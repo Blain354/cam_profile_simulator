@@ -1,0 +1,14 @@
+{
+  "motor_speed": 100.0,
+  "height": 1.24,
+  "thickness": 2.5,
+  "K": 3.9,
+  "deadband": 2.6,
+  "default_distance": 0.35,
+  "bushing_diameter": 3.0,
+  "lead_screw_pitch": 0.5,
+  "tube_id": 2.0,
+  "tube_od": 3.0,
+  "input_pressure_psi": 25.0,
+  "compliance": 0.64
+}

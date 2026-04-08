@@ -1,0 +1,1546 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.3 20210610//EN" "JATS-journalpublishing1-3.dtd">
+<article xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article" dtd-version="1.3" xml:lang="en">
+  <front>
+    <journal-meta>
+      <journal-id journal-id-type="publisher-id">processes</journal-id>
+      <journal-title-group>
+        <journal-title>Processes</journal-title>
+        <abbrev-journal-title abbrev-type="publisher">Processes</abbrev-journal-title>
+        <abbrev-journal-title abbrev-type="pubmed">Processes</abbrev-journal-title>
+      </journal-title-group>
+      <issn pub-type="epub">2227-9717</issn>
+      <publisher>
+        <publisher-name>MDPI</publisher-name>
+      </publisher>
+    </journal-meta>
+    <article-meta>
+      <article-id pub-id-type="doi">10.3390/pr11071897</article-id>
+      <article-id pub-id-type="publisher-id">processes-11-01897</article-id>
+      <article-categories>
+        <subj-group>
+          <subject>Article</subject>
+        </subj-group>
+      </article-categories>
+      <title-group>
+        <article-title>Comparative Analysis of the Performance Characteristics of Butterfly and Pinch Valves</article-title>
+      </title-group>
+      <contrib-group>
+        <contrib contrib-type="author">
+          <name>
+            <surname>Alkhulaifi</surname>
+            <given-names>Khalid</given-names>
+          </name>
+          <xref rid="af1-processes-11-01897" ref-type="aff">1</xref>
+          <xref rid="c1-processes-11-01897" ref-type="corresp">*</xref>
+        </contrib>
+        <contrib contrib-type="author">
+          <name>
+            <surname>Alharbi</surname>
+            <given-names>Ali</given-names>
+          </name>
+          <xref rid="af1-processes-11-01897" ref-type="aff">1</xref>
+        </contrib>
+        <contrib contrib-type="author">
+          <name>
+            <surname>Alardhi</surname>
+            <given-names>Mohsen</given-names>
+          </name>
+          <role vocab="credit" vocab-identifier="https://credit.niso.org/" vocab-term="Investigation" vocab-term-identifier="https://credit.niso.org/contributor-roles/investigation/">Investigation</role>
+          <xref rid="af2-processes-11-01897" ref-type="aff">2</xref>
+        </contrib>
+        <contrib contrib-type="author">
+          <name>
+            <surname>Alrajhi</surname>
+            <given-names>Jasem</given-names>
+          </name>
+          <role vocab="credit" vocab-identifier="https://credit.niso.org/" vocab-term="Resources" vocab-term-identifier="https://credit.niso.org/contributor-roles/resources/">Resources</role>
+          <xref rid="af2-processes-11-01897" ref-type="aff">2</xref>
+        </contrib>
+        <contrib contrib-type="author">
+          <name>
+            <surname>Almutairi</surname>
+            <given-names>Hamad H.</given-names>
+          </name>
+          <role vocab="credit" vocab-identifier="https://credit.niso.org/" vocab-term="Writing &#x2013; review &amp; editing" vocab-term-identifier="https://credit.niso.org/contributor-roles/writing-review-editing/">Writing &#x2013; review &amp; editing</role>
+          <xref rid="af1-processes-11-01897" ref-type="aff">1</xref>
+        </contrib>
+      </contrib-group>
+      <contrib-group>
+        <contrib contrib-type="editor">
+          <name>
+            <surname>Corriou</surname>
+            <given-names>Jean-Pierre</given-names>
+          </name>
+          <role>Academic Editor</role>
+        </contrib>
+      </contrib-group>
+      <aff id="af1-processes-11-01897"><label>1</label>Mechanical Power and Refrigeration Department, College of Technological Studies, PAAET, Kuwait City 70654, Kuwait; <email>ay.alharbi@paaet.edu.kw</email> (A.A.); <email>hhh.almutairi@paaet.edu.kw</email> (H.H.A.)</aff>
+      <aff id="af2-processes-11-01897"><label>2</label>Automotive and Marine Department, College of Technological Studies, PAAET, Kuwait City 70654, Kuwait; <email>alardhi@paaet.edu.kw</email> (M.A.); <email>jm.alrajhi@paaet.edu.kw</email> (J.A.)</aff>
+      <author-notes>
+        <corresp id="c1-processes-11-01897"><label>*</label>Correspondence: <email>ka.alkhulaifi@paaet.edu.kw</email></corresp>
+      </author-notes>
+      <pub-date pub-type="epub">
+        <day>24</day>
+        <month>06</month>
+        <year>2023</year>
+      </pub-date>
+      <pub-date pub-type="collection">
+        <month>07</month>
+        <year>2023</year>
+      </pub-date>
+      <volume>11</volume>
+      <issue>7</issue>
+      <elocation-id>1897</elocation-id>
+      <history>
+        <date date-type="received">
+          <day>05</day>
+          <month>05</month>
+          <year>2023</year>
+        </date>
+        <date date-type="rev-recd">
+          <day>01</day>
+          <month>06</month>
+          <year>2023</year>
+        </date>
+        <date date-type="accepted">
+          <day>17</day>
+          <month>06</month>
+          <year>2023</year>
+        </date>
+      </history>
+      <permissions>
+        <copyright-statement>&#xA9; 2023 by the authors.</copyright-statement>
+        <copyright-year>2023</copyright-year>
+        <license license-type="open-access">
+          <license-p>Licensee MDPI, Basel, Switzerland. This article is an open access article distributed under the terms and conditions of the Creative Commons Attribution (CC BY) license (<ext-link ext-link-type="uri" xlink:href="https://creativecommons.org/licenses/by/4.0/">https://creativecommons.org/licenses/by/4.0/</ext-link>).</license-p>
+        </license>
+      </permissions>
+      <abstract>
+        <p>Valves are important components in controlling the amount of fluid going to devices. One of these types is the butterfly valve (BFV) that adjusts the amount of flow by rotating the valve disk by means of its shafts which is usually located in the middle of the flow. Despite its common usage in various applications, the BFV is known to cause a high-pressure drop. Conversely, the pinch valve is another type of flow control device that uses a pinching mechanism to open and close the inner tube by pinching at different degrees. The absence of flow-controlling mechanisms in the flow path, such as the valve disk and its shaft, contribute to the minimal pressure drop in pinch valves. The high-pressure drop in BFVs and the minimal pressure drop in pinch valve flow make it worthwhile to investigate and compare their flow at all opening positions of the two valves. Therefore, this work numerically explores the potential of using the pinch valve as an alternative to the BFV in terms of its ability to attain a lower pressure loss, hence better flow rate. The influence of various BFV parameters such as shaft diameter, valve thickness, and valve disk edge were examined. The performance characteristics of both valves were obtained using CFD models formed on the SolidWorks program. This CFD model solves the differential equations using the finite element method. Moreover, a mathematical model to determine the area of the pinch valve at various pinching degrees was developed and compared with the results obtained from other mathematical models and CFD. It was shown that using a flat 1 mm valve disk thickness with round edges resulted in a 7.5% increase in mass flow rate compared to standard BFVs. On the other hand, using the pinch valve resulted in over a 700% mass flow rate compared to the BFV at a 25% opening position and a 49% increase in flow rate at a 75% opening position. Thus, the pinch valve has the potential to replace the BFV due to its better flow characteristics in any application.</p>
+      </abstract>
+      <kwd-group>
+        <kwd>throttle valve</kwd>
+        <kwd>butterfly valve</kwd>
+        <kwd>pinch valve</kwd>
+        <kwd>computational fluid dynamics</kwd>
+        <kwd>numerical analysis</kwd>
+      </kwd-group>
+      <funding-group>
+        <funding-statement>This research received no external funding.</funding-statement>
+      </funding-group>
+    </article-meta>
+  </front>
+  <body>
+    <sec id="sec1-processes-11-01897" sec-type="intro">
+      <title>1. Introduction</title>
+      <p>It is well known that a butterfly valve is widely used in the industrial pipeline systems because of its smaller pressure loss and simple structure [<xref ref-type="bibr" rid="B1-processes-11-01897">1</xref>,<xref ref-type="bibr" rid="B2-processes-11-01897">2</xref>]. In the past decades, numerous researchers have focused on the optimization of butterfly valve structure and the analysis of flow characteristics in order to reduce its pressure drop. Kimura et al. [<xref ref-type="bibr" rid="B3-processes-11-01897">3</xref>] established the theoretical prediction equations for the pressure loss coefficients of the butterfly valve and found that the theoretical predictions and experimental values were in good agreement. Kim et al. [<xref ref-type="bibr" rid="B4-processes-11-01897">4</xref>] conducted preliminary numerical simulation to analyze the internal flow field of the butterfly valve but did not quantify the regulating characteristics. Corbera et al. [<xref ref-type="bibr" rid="B5-processes-11-01897">5</xref>,<xref ref-type="bibr" rid="B6-processes-11-01897">6</xref>] used genetic algorithms to optimize the design of butterfly valve plates to improve the regulating characteristics of butterfly valves. The results proved the ability of the techniques to improve the valve disc, thereby improving the control of the flow. Cui et al. [<xref ref-type="bibr" rid="B7-processes-11-01897">7</xref>] improved the butterfly plate structure to reduce the resistance coefficient. The results show that when the valve opening is 100%, the resistance coefficient decreases by 12%. Sun et al. [<xref ref-type="bibr" rid="B8-processes-11-01897">8</xref>] found that an increase in the roughness height significantly increased the frictional pressure drop. Liu et al. [<xref ref-type="bibr" rid="B9-processes-11-01897">9</xref>] changed the tri-eccentric butterfly from a full-axis type to a double-end-axis and reduced the valve pressure drop at a small opening, but this does not work when the valve is fully opened. Banis [<xref ref-type="bibr" rid="B10-processes-11-01897">10</xref>] investigated and evaluated the idle speed parameters of a novel throttle body. The advantages of his novel design include no obstructions or resistances in the flow path at the fully open throttle position. However, his novel throttle body required alteration in fuel injector angle, a different idle air bypass system, and increased leakage at fully closed throttle position. Danbon and Solliec [<xref ref-type="bibr" rid="B11-processes-11-01897">11</xref>] compared the effect of a straight pipe with that of an elbow on the flow through a butterfly valve. The comparison showed that the installation of the elbow ahead of the valve might produce significant fluctuations in flow, especially when the valve is fully open. The influence ceased to be visible on the far side at eight times the pipe diameter when the flow became steady.</p>
+      <p>The flow coefficients of various types of butterfly valves were also studied by Kim and Yoon [<xref ref-type="bibr" rid="B12-processes-11-01897">12</xref>], and their results showed that the eccentric valve produces a greater flow coefficient than the concentric valve. In the most recent work, Nguyen et al. [<xref ref-type="bibr" rid="B13-processes-11-01897">13</xref>] studied the relationship between the flow coefficient of a globe valve and the Reynolds number. The flow coefficient increases steadily before becoming convergent, and it remains at a constant level when the Reynolds number is 105.</p>
+      <p>Park et al. [<xref ref-type="bibr" rid="B14-processes-11-01897">14</xref>] evaluated the effects of different flow characteristics of various valves in order to reduce water hammer in seawater treatment piping. They suggested that an equal-percentage butterfly valve be used to mitigate the pressure oscillation of the system during the time the valve was being closed.</p>
+      <p>Using CFD in analyzing the flow characteristics of BFV and predicting the flow behavior based on valve geometry was also investigated by many scholars. Kapri [<xref ref-type="bibr" rid="B15-processes-11-01897">15</xref>] and Balaji et al. [<xref ref-type="bibr" rid="B16-processes-11-01897">16</xref>] numerically investigated the pressure drop passing through the BFV. They conducted a comparative study of the throttle body with different shaft profiles using CFD analysis. They simulated a steady flow of air passing through the BFV using different shaft profiles. Their conclusion was that the rectangular shaft of the BFV creates less of a pressure drop than the circular shaft, and thus improves the engine performance, fuel economy and emissions. The prediction equations were functions of the valve&#x2019;s opening angle, thickness, and the diameter of the valve disc. Changchun and Haengmuk [<xref ref-type="bibr" rid="B17-processes-11-01897">17</xref>] and Chang Chun et al. [<xref ref-type="bibr" rid="B18-processes-11-01897">18</xref>] carried out numerous investigations to obtain the best design to reduce pressure drop across the BFV by analyzing the flow based on mathematical models, CFD and experimental results. Leutwyler and Dalton [<xref ref-type="bibr" rid="B19-processes-11-01897">19</xref>,<xref ref-type="bibr" rid="B20-processes-11-01897">20</xref>] performed a CFD study in two and three dimensions for symmetric butterfly valves in compressible fluids at various angles and over a range of pressure ratios. FLUENT software was used with the different turbulence models. They favored the k-&#x3B5; turbulence model for its well-rounded capabilities and moderate computational costs. In addition, they also validated grid refinement, coefficients for lift, drag and torque against experimental values. Said et al. [<xref ref-type="bibr" rid="B21-processes-11-01897">21</xref>] also investigated, both numerically and experimentally, the flow characteristics of the butterfly valve using Fluent. The simulation succeeded in predicting the flow coefficient; however, at small angles, care must be paid.</p>
+      <p>Although the above studies have improved the regulating characteristics of the butterfly valve to a certain extent, the structural pressure drop cannot be completely eliminated for the condition of large-valve opening, that is, the valve stem and the valve plate in the butterfly valve assembly are always in the flow field, which obstructs the fluid flow.</p>
+      <p>On the other hand, pinch valves are a type of flow control device that use a pinching mechanism to open and close the inner tube that is in contact with the fluid [<xref ref-type="bibr" rid="B22-processes-11-01897">22</xref>]. This mechanism can be operated manually, pneumatically, or electrically. The main benefits of pinch valves are that they have no flow control mechanism in the fluid flow path in which dead zones or fluid pockets can be trapped, and they create minimal turbulence in the flow compared to other types of valves. Little work has been carried out in the pinch valve area, experimentally or numerically. In an effort to evaluate the flow characteristics through pinch valves and the profile area while pinching, Chaudhari [<xref ref-type="bibr" rid="B23-processes-11-01897">23</xref>] carried out a numerical simulation to determine the pressure drop, volumetric flow rate, and flow coefficient of a pinch valve at several valve openings. The shape of the cross-section of the pinched area was assumed to be elliptical. Hirtum [<xref ref-type="bibr" rid="B24-processes-11-01897">24</xref>] formulated three quasi-analytical geometrical ring models, namely, ellipse, stadium, and peanut, to serve as a low-cost ring shape estimation as a function of the pinching degree. A circular elastic tube was compressed between two parallel bars for pinching efforts between 40 and 95 percent. The stadium ring model showed a characteristic error of less than 4 percent of the tube diameter when compared to the experimental results.</p>
+      <p>It is evident that many scholars have extensively investigated BFVs, both experimentally and numerically, and little work has been carried out on pinch valves, especially regarding their flow characteristics. Therefore, based on the literature survey, no previous attempts have been made to assess the flow characteristics of pinch valves at various pinching degrees versus BFVs in steady flow applications. Therefore, this work aims to fill this research gap by investigating the flow characteristics of air through butterfly valves with different design parameters and pinch valves at different pinching degrees using CFD software. Furthermore, a new mathematical model to estimate the profile area of a pinch valve at various pinching degrees is developed and compared with the CFD analysis. Thus, the following items summarize the aim of this work:<list list-type="bullet"><list-item><p>Numerically investigate air flow characteristics of BFVs at various valve parameters, namely, shaft diameter, valve thickness, and valve disk edge.</p></list-item><list-item><p>Numerically investigate the air flow characteristics of pinch valves at various pinching degrees.</p></list-item><list-item><p>Develop a simple mathematical model for determining the area of the pinch valve at various pinching degrees.</p></list-item><list-item><p>Compare the air flow characteristics of BFVs and pinch valves.</p></list-item></list></p>
+    </sec>
+    <sec id="sec2-processes-11-01897">
+      <title>2. Numerical Simulation and Boundary Conditions</title>
+      <p>A steady-state fluid dynamics analysis was conducted using air as the fluid. The performed analysis used standard BFV and pinch valves for comparison. The SolidWorks 2020 software was used using its flow simulation module. Three boundaries were involved, namely, inlet, outlet, and wall. The inlet pressure boundary condition was set at 1 bar while outlet pressure was set at 0.9 bar. Walls were assumed to be adiabatic with no-slip condition while the standard k-&#x3B5; turbulence model was used. The analysis was carried out using air flowing at 20 &#xB0;C. These boundary conditions were also used for the pinch valve. Hence, the performance analysis was performed to compare the mass flow rate of air through BFV and pinch valve.</p>
+      <sec id="sec2dot1-processes-11-01897">
+        <title>2.1. Governing Equations</title>
+        <p>The standard k-&#x3B5; model in CFD was used which describes the flow characteristics in a pipe. The steady air flow in the pipe is governed by the momentum and continuity equations as expressed below.</p>
+        <p>Momentum Conservation equation
+        <disp-formula id="FD1-processes-11-01897"><mml:math id="mm1" display="block"><mml:semantics><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>&#x3C1;</mml:mi><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub><mml:msub><mml:mi>u</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow><mml:mo>)</mml:mo></mml:mrow></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mo>&#x2212;</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mi>&#x3C1;</mml:mi></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:mfrac><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x230A;</mml:mo><mml:mi>&#x3BC;</mml:mi><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mo>&#x230B;</mml:mo><mml:mo>&#x2212;</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>&#x3C1;</mml:mi><mml:msubsup><mml:mi>u</mml:mi><mml:mi>i</mml:mi><mml:mo>&#x2032;</mml:mo></mml:msubsup><mml:msubsup><mml:mi>u</mml:mi><mml:mi>j</mml:mi><mml:mo>&#x2032;</mml:mo></mml:msubsup></mml:mrow><mml:mo>)</mml:mo></mml:mrow></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:msub><mml:mi>F</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:semantics></mml:math></disp-formula></p>
+        <p>Continuity equation
+        <disp-formula id="FD2-processes-11-01897"><mml:math id="mm2" display="block"><mml:semantics><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mi>&#x3C1;</mml:mi><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mn>0</mml:mn></mml:mrow></mml:semantics></mml:math></disp-formula></p>
+        <p>k equation
+        <disp-formula id="FD3-processes-11-01897"><mml:math id="mm3" display="block"><mml:semantics><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>&#x3C1;</mml:mi><mml:mi>k</mml:mi><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mo>)</mml:mo></mml:mrow></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mfrac><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x230A;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:msub><mml:mi>&#x3BC;</mml:mi><mml:mi>t</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:msub><mml:mi>&#x3C3;</mml:mi><mml:mi>k</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:mi>&#x3BC;</mml:mi></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mi>k</mml:mi></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x230B;</mml:mo><mml:mo>+</mml:mo><mml:msub><mml:mi>&#x3BC;</mml:mi><mml:mi>t</mml:mi></mml:msub><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x2212;</mml:mo><mml:mi>&#x3C1;</mml:mi><mml:mi>&#x3B5;</mml:mi></mml:mrow></mml:semantics></mml:math></disp-formula></p>
+        <p>&#x3B5; equation
+        <disp-formula id="FD4-processes-11-01897"><mml:math id="mm4" display="block"><mml:semantics><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>&#x3C1;</mml:mi><mml:mi>&#x3B5;</mml:mi><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mo>)</mml:mo></mml:mrow></mml:mrow><mml:mrow><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>=</mml:mo><mml:mfrac><mml:mo>&#x2202;</mml:mo><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x230A;</mml:mo><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:msub><mml:mi>&#x3BC;</mml:mi><mml:mi>t</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:msub><mml:mi>&#x3C3;</mml:mi><mml:mi>&#x3B5;</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:mi>&#x3BC;</mml:mi></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:mi>&#x3B5;</mml:mi></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x230B;</mml:mo><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:msub><mml:mi>C</mml:mi><mml:mn>1</mml:mn></mml:msub><mml:mi>&#x3B5;</mml:mi><mml:msub><mml:mi>&#x3BC;</mml:mi><mml:mi>t</mml:mi></mml:msub></mml:mrow><mml:mi>k</mml:mi></mml:mfrac><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>+</mml:mo><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow></mml:mfrac></mml:mrow><mml:mo>)</mml:mo></mml:mrow><mml:mfrac><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>u</mml:mi><mml:mi>i</mml:mi></mml:msub></mml:mrow><mml:mrow><mml:mo>&#x2202;</mml:mo><mml:msub><mml:mi>x</mml:mi><mml:mi>j</mml:mi></mml:msub></mml:mrow></mml:mfrac><mml:mo>&#x2212;</mml:mo><mml:msub><mml:mi>C</mml:mi><mml:mn>2</mml:mn></mml:msub><mml:mi>&#x3C1;</mml:mi><mml:mfrac><mml:mrow><mml:msup><mml:mi>&#x3B5;</mml:mi><mml:mn>2</mml:mn></mml:msup></mml:mrow><mml:mi>k</mml:mi></mml:mfrac></mml:mrow></mml:semantics></mml:math></disp-formula></p>
+        <p>SolidWorks uses the Finite Volume Method (FVM) to solve the Navier&#x2013;Stokes equations which is considered to be more accurate especially when having structured mesh such as cartesian mesh which is used in SolidWorks.</p>
+      </sec>
+      <sec id="sec2dot2-processes-11-01897">
+        <title>2.2. The Butterfly Valve Model</title>
+        <p>The model is based on the steady flow of air passing through a standard BFV in a 400 mm length pipe with an inner diameter of 100 mm and zero roughness. The butterfly valve has a diameter of 100 mm, valve shaft diameter of 10 mm, and a thickness of 3 mm. The BFV is located in the middle of the pipe with a 200 mm pipe on each side of the throttle valve. The opening angle of the BFV varied from 10 degrees to fully open in increments of 10 degrees while the BFV rest angle was set at 5 degrees. The geometry of the BFV and its meshing (global and local) were carried out with the assumption of gas-tight, meaning that there is zero leakage at the fully closed position. It is important to note that since this is a numerical study, manufacturing inconsistencies and tolerances are not considered.</p>
+        <sec id="sec2dot2dot1-processes-11-01897">
+          <title>2.2.1. Mesh Independence Test for BFV</title>
+          <p>The most frequent challenge in simulated engineering cases using CFD is the meshing resolution. It has a strong influence on the quality of the numerical results and computational time required. In this case, the pressure drop across the BFV of a 0.1 bar throughout the 400 mm length pipe was tested numerically versus number of cells while keeping the BFV at 60&#xB0; opening position. The global meshing was started from a level of 3 for the mesh until a maximum level of 7 which corresponds to 126,354 cells. Using the parametric study option in the SolidWorks 2020 software, the number of mesh elements was increased gradually until the maximum setting of the mesh level of 7 was reached.</p>
+          <p>As illustrated in <xref ref-type="table" rid="processes-11-01897-t001">Table 1</xref>, as the mesh level increases, the error in the numerical solution decreases. Although the error at mesh level 5 is less than 1%, all results obtained in this study were conducted at mesh level 6, as this would result in a more accurate result.</p>
+          <p>Since air is in direct contact with the BFV as it passes through the valve, it is necessary to provide a local mesh in order to capture the behavior of air through the short distance of the valve. Therefore, a local mesh of 6 cells across the gap with a refinement level 4 was used to carry out this study. This refinement level corresponds to a mesh size of 0.3125 mm which resulted in 67,856 number of cells. <xref ref-type="fig" rid="processes-11-01897-f001">Figure 1</xref> shows the cell size based on refinement level:</p>
+        </sec>
+        <sec id="sec2dot2dot2-processes-11-01897">
+          <title>2.2.2. Model Validation</title>
+          <p>In order to evaluate the accuracy of the CFD results for BFV, model validation was performed with the published experimental data in [<xref ref-type="bibr" rid="B25-processes-11-01897">25</xref>]. The experiment was performed using a steady-state air flow passing through a single cylinder engine bench at different throttle opening positions. This throttle body bore was 30 mm. These data were all used in the SolidWorks flow simulation module to validate the results. <xref ref-type="fig" rid="processes-11-01897-f002">Figure 2</xref> shows that the CFD predicted values are in reasonably good agreement with those of experimental results within an error of about 5%.</p>
+        </sec>
+      </sec>
+      <sec id="sec2dot3-processes-11-01897">
+        <title>2.3. The Pinch Valve Model</title>
+        <p>The pinch valve model is based on the steady flow of air passing through a flexible rubber (sleeve). Two parallel plates which are made of aluminum (1060 aluminum alloy) and have a thickness of 5 mm are used to pinch the valve from the middle section of the sleeve as shown in <xref ref-type="fig" rid="processes-11-01897-f003">Figure 3</xref>. The height of the aluminum plates is assumed to be 155 mm which is higher than the flexible rubber when fully pinched.</p>
+        <p>The length of the sleeve (L) is 400 mm, its internal diameter (D) is 100 mm, and its thickness is 3 mm. The material of the pinch valve sleeve was assumed to be natural rubber with elastic behavior. Material properties of the sleeve are shown in <xref ref-type="table" rid="processes-11-01897-t002">Table 2</xref>.</p>
+        <p>Nonlinear static analysis of the pinching process was performed with the activation of Large Deformation Formulation. The Newton&#x2013;Raphson iterative technique and Newmark integration method were selected while the time increment was set to auto-stepping. There was no penetration contact type between the pinching plates and the valve sleeve and a friction value of 0.05 was used. Standard mesh method was applied. The final refined mesh created 49,324 nodes and 25,386 elements. The pinching degree started at zero to 49 mm with 1 mm step increment from both sides. <xref ref-type="fig" rid="processes-11-01897-f004">Figure 4</xref> shows the meshed valve sleeve and pinching plates.</p>
+        <sec id="sec2dot3dot1-processes-11-01897">
+          <title>2.3.1. Mesh Independence Test for the Pinch Valve</title>
+          <p>As in the case of BFV in which mesh independence was tested, the pinch valve test was also carried out for mesh independence. A pressure drop across the pinch valve of 0.1 bar throughout the 400 mm length sleeve was tested numerically versus number of cells while keeping the pinching degree at 20 mm from both sides of the sleeve using the type of material mentioned in <xref ref-type="table" rid="processes-11-01897-t002">Table 2</xref>. The global meshing started from level 3 with 3148 cells until a maximum level of 7 with 96,294 cells which corresponds to the most accurate result. Using the parametric study option in the SolidWorks 2020 software, the number of mesh elements was increased gradually until the maximum setting of the automatic mesh level 7 was reached. As illustrated in <xref ref-type="table" rid="processes-11-01897-t003">Table 3</xref>, as the level of meshing was increased, the error in the numerical solution decreased. Although the error at mesh level 5 is less than 1%, all results obtained in this study were conducted at mesh level 6, which would result in a more accurate result. The mesh level of 6 created 34,749 cells. No local mesh was used in the pinch valve flow simulation since flow goes through a smooth convergence and divergence of the sleeve.</p>
+        </sec>
+        <sec id="sec2dot3dot2-processes-11-01897">
+          <title>2.3.2. Model Validation</title>
+          <p>Validating the CFD model is crucial and must be performed in accordance with various characteristics and specifications for the studied valve. Thus, for better accuracy of the CFD results, the flow coefficient (C<sub>V</sub>) obtained numerically for the pinch valve was validated against available manufacturer data sheets [<xref ref-type="bibr" rid="B26-processes-11-01897">26</xref>]. The pinch pipe modeled in CFD was nine inches in length with a 2D pipe length upstream and 6D downstream. The flow was assumed to be fully developed with a constant flow rate of 0.1 m<sup>3</sup>/s for all pinching degrees. The surface roughness for the material was assumed to be 10 micron and the material used was ethylene propylene (EDPM) rubber which is in accordance with the material mentioned in the experimental data. <xref ref-type="fig" rid="processes-11-01897-f005">Figure 5</xref> shows that the CFD results match well with the available data for the flow coefficients with error of less than 2%.</p>
+        </sec>
+        <sec id="sec2dot3dot3-processes-11-01897">
+          <title>2.3.3. Pinch Valve Area Model</title>
+          <p>In order to formulate the mathematical model for determining the pinch valve area at various pinching degrees, the main assumption made here is that the pinch valve sleeve is in direct contact with the aluminum squeezing plates and is assumed to follow the shape of these pinching horizontal parallel plates which forms the horizontal lengths while the non-contact rubber forms a semi-circle on each side of the profile as shown in <xref ref-type="fig" rid="processes-11-01897-f006">Figure 6</xref>. The upper and lower horizontal length (<inline-formula><mml:math id="mm5"><mml:semantics><mml:mover accent="true"><mml:mi>x</mml:mi><mml:mo>&#x2DC;</mml:mo></mml:mover></mml:semantics></mml:math></inline-formula>) sides that are in contact with the pinching plates while the vertical length (<italic>r</italic>) represents the radius of the semi-circle. Therefore, the final shape of the squeezed profile forms a rectangle and a circle.</p>
+          <p>The resulting profile is usually referred to as the stadium or disco rectangle [<xref ref-type="bibr" rid="B27-processes-11-01897">27</xref>,<xref ref-type="bibr" rid="B28-processes-11-01897">28</xref>]. The results from the new method will be compared later with the CFD results. At each step of pinching degree, the perimeter of the valve sleeve remains constant throughout. Based on this assumption, the area and perimeter of a stadium shape are given by
+          <disp-formula id="FD5-processes-11-01897"><label>(1)</label><mml:math id="mm6" display="block"><mml:semantics><mml:mrow><mml:mi>A</mml:mi><mml:mo>=</mml:mo><mml:mi>&#x3C0;</mml:mi><mml:msup><mml:mi>r</mml:mi><mml:mn>2</mml:mn></mml:msup><mml:mo>+</mml:mo><mml:mn>2</mml:mn><mml:mi>r</mml:mi><mml:mover accent="true"><mml:mi>x</mml:mi><mml:mo>&#x2DC;</mml:mo></mml:mover></mml:mrow></mml:semantics></mml:math></disp-formula>
+          <disp-formula id="FD6-processes-11-01897"><label>(2)</label><mml:math id="mm7" display="block"><mml:semantics><mml:mrow><mml:mi>P</mml:mi><mml:mo>=</mml:mo><mml:mn>2</mml:mn><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>&#x3C0;</mml:mi><mml:mi>r</mml:mi><mml:mo>+</mml:mo><mml:mover accent="true"><mml:mi>x</mml:mi><mml:mo>&#x2DC;</mml:mo></mml:mover></mml:mrow><mml:mo>)</mml:mo></mml:mrow></mml:mrow></mml:semantics></mml:math></disp-formula></p>
+          <p>These two equations need to be modified to account for the distance the pinching plates travel from each side (<italic>h</italic>). The undeformed and deformed pinch valve sleeve of a stadium profile with the new variable <italic>h</italic> are shown in <xref ref-type="fig" rid="processes-11-01897-f007">Figure 7</xref>.</p>
+          <p>The area of the two semi-circles at both ends where the pinching plates are not in contact with the valve is
+          <disp-formula id="FD7-processes-11-01897"><label>(3)</label><mml:math id="mm8" display="block"><mml:semantics><mml:mrow><mml:msub><mml:mi>A</mml:mi><mml:mrow><mml:mi>s</mml:mi><mml:mi>e</mml:mi><mml:mi>m</mml:mi><mml:mi>i</mml:mi><mml:mtext>-</mml:mtext><mml:mi>c</mml:mi><mml:mi>i</mml:mi><mml:mi>r</mml:mi><mml:mi>c</mml:mi><mml:mi>l</mml:mi><mml:mi>e</mml:mi></mml:mrow></mml:msub><mml:mo>=</mml:mo><mml:mi>&#x3C0;</mml:mi><mml:msup><mml:mrow><mml:mrow><mml:mo>(</mml:mo><mml:mrow><mml:mi>R</mml:mi><mml:mo>&#x2212;</mml:mo><mml:mi>h</mml:mi></mml:mrow><mml:mo>)</mml:mo></mml:mrow></mml:mrow><mml:mn>2</mml:mn></mml:msup></mml:mrow></mml:semantics></mml:math></disp-formula>
+          <disp-formula id="FD8-processes-11-01897"><label>(4)</label><mml:math id="mm9" display="block"><mml:semantics><mml:mrow><mml:mi>P</mml:mi><mml:mo>=</mml:mo><mml:mn>2</mml:mn><mml:mi>&#x3C0;</mml:mi><mml:mi>R</mml:mi></mml:mrow></mml:semantics></mml:math></disp-formula>
+          and the perimeter of the two semi-circles is</p>
+          <p>The total deformed area could be expressed in terms of the semi-minor axis <italic>b</italic>, where </p>
+          <p><italic>b</italic> = <italic>R</italic> &#x2212; <italic>h</italic>
+          <disp-formula id="FD9-processes-11-01897"><label>(5)</label><mml:math id="mm10" display="block"><mml:semantics><mml:mrow><mml:msub><mml:mi>A</mml:mi><mml:mrow><mml:mi>d</mml:mi><mml:mi>e</mml:mi><mml:mi>f</mml:mi><mml:mi>o</mml:mi><mml:mi>r</mml:mi><mml:mi>m</mml:mi><mml:mi>e</mml:mi><mml:mi>d</mml:mi></mml:mrow></mml:msub><mml:mo>=</mml:mo><mml:mi>&#x3C0;</mml:mi><mml:msup><mml:mi>b</mml:mi><mml:mn>2</mml:mn></mml:msup><mml:mo>+</mml:mo><mml:mn>2</mml:mn><mml:mi>&#x3C0;</mml:mi><mml:mi>h</mml:mi><mml:mi>b</mml:mi></mml:mrow></mml:semantics></mml:math></disp-formula></p>
+        </sec>
+      </sec>
+    </sec>
+    <sec id="sec3-processes-11-01897" sec-type="methods">
+      <title>3. Research Procedures and Data Analysis</title>
+      <p>This work used a numerical analysis approach to compare the performance of the BFV and pinch valve in terms of mass flow rate and pressure drop. The methodology involved data collection through simulation, data analysis, and the development of a mathematical model to determine the area of the pinch valve at various pinching degrees. The research procedures used in the study can be described in the following steps:<list list-type="roman-lower"><list-item><label>i</label><p>Validating the predictions of CFD models against published data in the literature.</p></list-item><list-item><label>ii</label><p>Analyzing the data obtained from the simulation to examine the effect of various valve parameters on the performance of the BFV and pinch valve.</p></list-item><list-item><label>iii</label><p>Comparing the performance characteristics of the BFV and pinch valve with respect to the parameters investigated.</p></list-item></list></p>
+      <p>The parameters calculated in this work are defined in this section.</p>
+      <list list-type="simple">
+        <list-item>
+          <p>Flow Coefficient</p>
+        </list-item>
+      </list>
+      <p>The flow coefficient K<sub>v</sub> is a version of coefficient C<sub>v</sub> in mixed SI units. It states the number of cubic meters per hour of water at a temperature between 5 &#xB0;C and 40 &#xB0;C that will flow through the valve with a pressure loss of one bar at a specific opening position, as defined by the equation [<xref ref-type="bibr" rid="B29-processes-11-01897">29</xref>]:<disp-formula id="FD10-processes-11-01897"><mml:math id="mm11" display="block"><mml:semantics><mml:mrow><mml:msub><mml:mi>K</mml:mi><mml:mi>v</mml:mi></mml:msub><mml:mo>=</mml:mo><mml:mover accent="true"><mml:mi>Q</mml:mi><mml:mo>&#x2D9;</mml:mo></mml:mover><mml:msqrt><mml:mrow><mml:mfrac><mml:mrow><mml:mi>S</mml:mi><mml:mi>G</mml:mi></mml:mrow><mml:mrow><mml:mo>&#x394;</mml:mo><mml:mi>P</mml:mi></mml:mrow></mml:mfrac></mml:mrow></mml:msqrt></mml:mrow></mml:semantics></mml:math></disp-formula>
+      where <list list-type="simple"><list-item><p><inline-formula><mml:math id="mm12"><mml:semantics><mml:mover accent="true"><mml:mi>Q</mml:mi><mml:mo>&#x2D9;</mml:mo></mml:mover></mml:semantics></mml:math></inline-formula>: is volume flow rate in m<sup>3</sup>/h.</p></list-item><list-item><p><italic>SG</italic>: is specific gravity (1).</p></list-item><list-item><p><inline-formula><mml:math id="mm13"><mml:semantics><mml:mrow><mml:mo>&#x394;</mml:mo><mml:mi>P</mml:mi></mml:mrow></mml:semantics></mml:math></inline-formula>: is the pressure difference between upstream and downstream in BAR.</p></list-item></list>
+      <disp-formula>C<sub>v</sub> = 0.865 K<sub>v</sub></disp-formula>
+      Reynolds number
+      <disp-formula id="FD11-processes-11-01897"><mml:math id="mm14" display="block"><mml:semantics><mml:mrow><mml:mi>R</mml:mi><mml:mi>e</mml:mi><mml:mo>=</mml:mo><mml:mfrac><mml:mrow><mml:mi>&#x3C1;</mml:mi><mml:mo>&#xA0;</mml:mo><mml:mo>&#xB7;</mml:mo><mml:mi>D</mml:mi><mml:mo>&#xB7;</mml:mo><mml:mi>V</mml:mi></mml:mrow><mml:mi>&#x3BC;</mml:mi></mml:mfrac></mml:mrow></mml:semantics></mml:math></disp-formula>
+      where<list list-type="simple"><list-item><p><inline-formula><mml:math id="mm15"><mml:semantics><mml:mi>&#x3C1;</mml:mi></mml:semantics></mml:math></inline-formula>: density of air at 20 &#xB0;C (kg/m<sup>3</sup>).</p></list-item><list-item><p><italic>D</italic>: pipe diameter which is equal to 100 mm.</p></list-item><list-item><p><italic>V</italic>: air velocity (m/s).</p></list-item><list-item><p><inline-formula><mml:math id="mm16"><mml:semantics><mml:mi>&#x3BC;</mml:mi></mml:semantics></mml:math></inline-formula>: dynamics viscosity (Pa&#xB7;S).</p></list-item></list></p>
+    </sec>
+    <sec id="sec4-processes-11-01897" sec-type="results">
+      <title>4. Results and Discussion</title>
+      <sec id="sec4dot1-processes-11-01897">
+        <title>4.1. Butterfly Valve Analysis</title>
+        <p>The geometrical opening area of BFV has been calculated in SolidWorks by projecting the throttle valve opening on a plane perpendicular to the direction of air flow. The opening area at all throttle valve positions was calculated numerically as shown in <xref ref-type="table" rid="processes-11-01897-t004">Table 4</xref>.</p>
+        <p>A numerical study of air flow passing through a straight pipe with no restriction (no throttle valve in the middle) with an inner diameter of 100 mm and 400 mm long was studied. This will provide the flow characteristics such as mass flow rate and air velocity which will be used as a reference for comparison. The mass flow rate and average velocity in the straight pipe are 1.142 kg/s and 135.2 m/s, respectively, while total opening area of the straight pipe with no restrictions is 7854 mm<sup>2</sup>. At the full opening position of a BFV, the valve shaft and valve disk areas reduce the total area of the pipe compared with a pipe of no restriction by 12.7%.</p>
+        <p>This results in a maximum mass flow rate of 1.06 kg/s and 125.8 m/s for the air velocity. <xref ref-type="table" rid="processes-11-01897-t005">Table 5</xref> summarizes the calculated flow characteristics of air through standard BFV at all opening positions.</p>
+        <p><xref ref-type="fig" rid="processes-11-01897-f008">Figure 8</xref> shows numerical results for the air velocity streamlines passing through a standard BFV at four opening positions: 25%, 50%, 75%, and 100% with a pressure difference of 0.1 bar between the two ends of the pipe.</p>
+        <p>From the above figures, the air distortion downstream of the valve at 25% and 50% is clear due to turbulence. This distortion not only causes a high reduction in the incoming mass flow rate of air, but it is also expected to create noise in the air flow. However, with an opening angle above 75% and full opening, its drawback seems to disappear. These streamlines are plotted at the middle section of the pipe. However, looking at the streamlines closer to the pipe wall at the 75% position, the air turbulence due to the effect of the valve edge is obvious as shown in <xref ref-type="fig" rid="processes-11-01897-f009">Figure 9</xref>.</p>
+        <p>Moreover, even at the 100% opening position of the BFV, some air turbulence can still be seen at the upper and lower edges of the valve due to flow separation once the air passes the valve disk as shown in <xref ref-type="fig" rid="processes-11-01897-f010">Figure 10</xref>.</p>
+        <p>At the 50% opening positions, as the air flow passes the valve disk, it creates a vena contracta phenomenon especially at the leading tip of the BFV as well as some vortices behind the valve disk as shown in <xref ref-type="fig" rid="processes-11-01897-f011">Figure 11</xref>.</p>
+        <p>This vena contracta was also found at 75% opening position of the BFV; however, its location was caused by the trailing edges and away from the valve disk as shown in <xref ref-type="fig" rid="processes-11-01897-f012">Figure 12</xref>.</p>
+        <p>At the 100% opening position of the throttle and at the leading edge of the valve disk, a stagnation region is formed, which can be seen clearly in <xref ref-type="fig" rid="processes-11-01897-f013">Figure 13</xref>. Moreover, the valve shaft creates a pressure drop due to its thickness, which will be discussed in detail later. This was also found in Kumar&#x2019;s [<xref ref-type="bibr" rid="B25-processes-11-01897">25</xref>] CFD results. In general, the presence of a throttle valve in the air flow path is responsible for a pressure drop which results in a reduced flow rate.</p>
+        <p>The effect of valve shaft diameter has been studied and <xref ref-type="fig" rid="processes-11-01897-f014">Figure 14</xref> shows its effect on mass flow rate. Valve shaft diameter has a significant effect on mass flow rate starting from a 78% opening position and onward. This is because the valve disk diameter becomes more parallel to the incoming flow, where the area of the valve shaft becomes more dominant in obstructing the incoming air flow and its obstruction greatly grows at the full opening position of the throttle.</p>
+        <p>Therefore, reducing the valve shaft diameter or even removing its extrusion (using flat valve surface) can increase the incoming flow rate by 4.3% at full throttle while a valve shaft with a diameter that is  20% bigger (i.e., 12 mm) can reduce the mass flow rate by 2.3%. Valve disk thickness also has a small effect on mass flow rate. <xref ref-type="fig" rid="processes-11-01897-f015">Figure 15</xref> shows the mass flow rate at all throttle opening positions for different thicknesses of the BFV disk.</p>
+        <p>From <xref ref-type="fig" rid="processes-11-01897-f015">Figure 15</xref>, the mass flow rate increases as the valve disk thickness is reduced. This is expected to be seen due to the smaller area obstructing the air flow rate. However, at around 95% of the BFV opening position, the 5 mm valve thickness results in a higher flow rate than the 1 mm thickness. This is because the extruded area of the valve shaft obstructing air flow is small compared to the extruded area when using 1 mm valve thickness. In the case of the 5 mm thickness and full throttle, there is less distortion of air as it passes the valve shaft which would eventually result in a higher mass flow rate. <xref ref-type="table" rid="processes-11-01897-t006">Table 6</xref> shows the mass flow rate for different valve disk thicknesses compared to the standard BFV valve disk thickness (3 mm). In general, a thicker valve disk will create more obstruction to the flow, which can result in a larger pressure drop across the valve and reduced flow rate.</p>
+        <p>Another important BFV geometry which needs to be looked at is the effect of the throttle valve edge on mass flow rate. A comparison between the standard and flat BFVs was performed to understand the effect of the valve&#x2019;s edge on the flow as shown in <xref ref-type="fig" rid="processes-11-01897-f016">Figure 16</xref>.</p>
+        <p>Using round edges in the standard BFV showed an increase in mass flow rate by 15% more than the standard BFV with sharp edges at the 55% opening position. At the full throttle position, the increase in mass flow rate was less than 1%. On the other hand, at full throttle, the flat BFV with round edges shows a 6.2% increase in mass flow rate compared to the standard BFV with round edges. This increase in mass flow rate using round edges is a result of less turbulence in the downstream flow. From the previous results, in the standard BFV, air distortion occurs in up to 50 degrees of the throttle opening positions which results in a lower mass flow rate. The edge of the BFV has a significant impact on the flow through than any other valve geometry. In general, the round edges of the BFVs at all angles result in an increase in flow rate compared to the sharp edges due to less flow turbulence which causes less pressure drop and less noise levels compared to sharp edges for the same type of BFV. Moreover, sharp edges on the BFV can cause damage to the valve body and disc due to its sharp contact area, which can lead to leakage and reduced valve performance over time while the rounded edges BFVs can reduce wear and tear on the valve and increase its overall lifespan. Therefore, using a flat BFV with a valve disk thickness of 1 mm would give the maximum mass flow rate compared to all other configurations. <xref ref-type="table" rid="processes-11-01897-t007">Table 7</xref> shows the mass flow rate of air passing through different configurations of BFVs at all throttle opening positions.</p>
+        <p>It is evident that using the minimum thickness of BFV with round edges would give the maximum flow rate for any application using this type of BFV. However, a valve disk thickness of 1 mm would raise questions of whether this thickness could withstand the heat and torsion during operation.</p>
+      </sec>
+      <sec id="sec4dot2-processes-11-01897">
+        <title>4.2. Pinch Valve Analysis</title>
+        <p><xref ref-type="fig" rid="processes-11-01897-f017">Figure 17</xref> shows the velocity streamlines of the pinch valve at four opening positions with a pressure difference of 0.1 bar between the two ends of the valve.</p>
+        <p>The vortex that can be seen in a 25% opening position is due to a low-pressure region at the exit side of the pinch valve which causes the outside air to enter the pinch valve at that location. This vortex can be eliminated by changing the pinch valve diameter (D) or its total length (L). The CFD analysis was performed with gradual increase in pinching degree. The results for area, semi-major axis, and shape of the deformed pipe were obtained between a minimum and maximum pinching degree (PD) of 0.0366 and 0.7416, respectively. The new model and ellipse model were applied to the pinch valve sleeve, pinching at a 1 mm increment from both sides. Calculations of area, semi-major axis, and shape of the deformed pipe were obtained and compared with the numerical results. It is clear from <xref ref-type="fig" rid="processes-11-01897-f018">Figure 18</xref> that the new stadium model has a high agreement with the CFD results.</p>
+        <p>The difference in area between numerical results and the new stadium model results ranged between 0.35% and 1.9%. Furthermore, it was found that the maximum difference in the semi-major axis between the numerical and new stadium model results was about 4% while the difference between the ellipse model and numerical results reached almost 9%.</p>
+      </sec>
+      <sec id="sec4dot3-processes-11-01897">
+        <title>4.3. Pinch Valve Flow Characteristics</title>
+        <p>It is worthwhile to investigate the flow characteristics in the pinch valve while varying the valve diameter-to-length ratio. <xref ref-type="fig" rid="processes-11-01897-f019">Figure 19</xref> shows flow coefficient values (Cv) against the valve diameter-to-length ratio (D/L) for three valve opening positions: 25, 50, and 75%. In general, the flow coefficient increases as the opening position increases. Furthermore, the flow coefficient increases as the D/L increases up to a certain point, then it depends on the opening position of the valve after which the flow coefficient decreases as the D/L increases. As the D/L increases, the length of divergence becomes shorter which results in a sudden expansion of area, hence lower flow velocity and a higher pressure drop. On the other hand, as the D/L decreases, this results in a longer pipe and higher friction and as a result, lower flow coefficient.</p>
+      </sec>
+      <sec id="sec4dot4-processes-11-01897">
+        <title>4.4. Comparison between BFVs and Pinch Valves</title>
+        <p>Although standard BFVs are still widely used in many applications, it has been shown numerically that it causes a reduction in mass flow rate by 7% at full throttle due to the valve mechanism which obstructs the flow path. The velocity contours of both valves can be seen in <xref ref-type="fig" rid="processes-11-01897-f020">Figure 20</xref>. It is clear that a  pinch valve would cause less disturbance in downstream air than a BFV since no obstruction is in the air path. As a result, it would require less energy for pumping fluids in pipes, and hence better performance for the equipment and less energy consumption. Moreover, the pinch valve has a better shutoff capability than the BFV as the sleeve can completely close off the flow path. In contrast, butterfly valves typically have some residual leakage even when fully closed.</p>
+        <p>At the 25% opening positions, the flow area available for the air to pass through in both valves is restricted. This causes an acceleration in the airflow to maintain the mass flow rate. Consequently, the air velocity increases near the valve&#x2019;s narrow region to maximum values. In the case of the BFV, as the air flows downstream away from the valve, the sudden expansion of the area causes a high reduction in velocity, especially behind the valve disk which results in a pressure drop. In the case of the pinch valve at a 25% opening position, the sharp edge between the convergence and divergence causes the air velocity to reach its maximum near the wall while a smooth velocity gradient occurs away from the valve wall. At the 50% opening position, the flow area is larger compared to the 25% position and as a result, the air velocity near the valve&#x2019;s leading edge is lower compared to the previous opening position. The velocity gradient as the air passes the valve disk is due to air distortion due to turbulence. This distortion not only causes a high reduction in the incoming mass flow rate of air, but it is also expected to create noise in the air flow. At these partial openings of the throttle, the valve&#x2019;s ability to regulate flow is expected to be reduced due to nonlinear flow behavior. However, at the 50% opening position, the pinch valve shows a uniform velocity gradient throughout the restriction with a smaller high velocity zone than BFV. This is also true at the 75% opening position. Finally, at the 100% opening position, the high velocity contours in both valves are relatively uniform across the entire flow passage. However, in BFV, the presence of the throttle valve and its shaft cause a low velocity region behind the valve which is expected to cause a pressure drop of the incoming air resulting in a low flow rate. On the other hand, the velocity in the pinch valve is more uniform throughout the pipe while the effect of the no-slip condition can be seen near the wall. Moreover, the velocity distribution in the pinch valve can be seen clearly with the thickness of each layer of air. These results of velocity contours at the four opening positions of the BFV are in accordance with the numerical results obtained by Kumar et al. [<xref ref-type="bibr" rid="B25-processes-11-01897">25</xref>] for circular throttle valve shafts.</p>
+        <p>Based on previous results, pinch valves can be a better choice in replacing BFVs due to their low-pressure loss with uniform velocity distribution which results in a higher mass flow rate. <xref ref-type="fig" rid="processes-11-01897-f021">Figure 21</xref> shows the mass flow rate for two types of BFVs and the pinch valve over the full range of normalized opening area.</p>
+        <p>The pinch valve shows a linear relation of almost 50% of its opening position which would give a better throttling response. This linear relation would offer accurate flow control by means of adjusting the valve pinching degree to achieve and maintain the desired flow rate. At the 25% opening position, the pinch valve allows a 700% greater flow rate than the BFV for the same opening position and a 49% greater flow rate than the BFV at the 75% opening position. This mean that the pipe diameter of a pinch valve can be reduced and still deliver the same flow rate as a BFV with a bigger pipe diameter. The high flow rate that a pinch valve offers is due to the low-pressure drop compared to BFV which can be seen in <xref ref-type="fig" rid="processes-11-01897-f022">Figure 22</xref>.</p>
+      </sec>
+    </sec>
+    <sec id="sec5-processes-11-01897" sec-type="conclusions">
+      <title>5. Conclusions</title>
+      <p>The present study investigated the flow characteristics of BFVs and pinch valves using CFD analysis at all opening positions. The flow characteristics of BFVs was investigated with different valve shaft diameters, valve thicknesses, and sharp and round edges at different throttle positions. The standard BFV results showed a significant air distortion downstream from 25% up to 75% of the throttle position which caused a high reduction in the incoming mass flow rate of air and was expected to create noise. The results also showed that the edge of the BFV disk and its shaft diameter have a considerable effect on the flow rate. It was shown that use of the flat valve disk with a thickness of 1 mm and round edges resulted in a 7.5% increase in mass flow rate compared to the standard BFV. On the other hand, the pinch valve showed a great result in terms of low-pressure drop across the valve and higher flow rate with an almost linear relation up to 50% of its opening position. At a 25% opening position of both valves, the pinch valve attains a 700% greater mass flow rate than that of the BFV and a 49% greater flow rate than the BFV at a 75% opening position. In addition, the effect of the diameter to length ratio in the pinch valve was investigated. The flow coefficient increased as the D/L increased up to a certain point and then started to decrease. Furthermore, a new simple mathematical model was proposed to determine the opening area of the pinch valve at all pinching degrees. The new mathematical model resulted in high agreement with CFD results (2% difference) and in acceptable agreement with the ellipse model. The uniform velocity of flow in the pinch valve and its low-pressure drop makes it a potential choice to be used in controlling the incoming fluid flow in various applications. Moreover, the linear relation in the pinch valve means a better throttle response and accurate flow control.</p>
+    </sec>
+  </body>
+  <back>
+    <notes>
+      <title>Author Contributions</title>
+      <p>Conceptualization, formal analysis K.A. and A.A.; software, validation M.A. and J.A.; methodology, review and editing: H.H.A. All authors have read and agreed to the published version of the manuscript.</p>
+    </notes>
+    <notes>
+      <title>Institutional Review Board Statement</title>
+      <p>Not applicable.</p>
+    </notes>
+    <notes>
+      <title>Informed Consent Statement</title>
+      <p>Not applicable.</p>
+    </notes>
+    <notes>
+      <title>Data Availability Statement</title>
+      <p>The study did not report any data.</p>
+    </notes>
+    <notes notes-type="COI-statement">
+      <title>Conflicts of Interest</title>
+      <p>The authors declare no conflict of interest.</p>
+    </notes>
+    <ref-list>
+      <title>References</title>
+      <ref id="B1-processes-11-01897">
+        <label>1.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Song</surname>
+              <given-names>X.G.</given-names>
+            </name>
+            <name>
+              <surname>Wang</surname>
+              <given-names>L.</given-names>
+            </name>
+            <name>
+              <surname>Baek</surname>
+              <given-names>S.H.</given-names>
+            </name>
+            <name>
+              <surname>Park</surname>
+              <given-names>Y.C.</given-names>
+            </name>
+          </person-group>
+          <article-title>Multidisciplinary Optimization of a Butterfly Valve</article-title>
+          <source>ISA Trans.</source>
+          <year>2009</year>
+          <volume>48</volume>
+          <fpage>370</fpage>
+          <lpage>377</lpage>
+          <pub-id pub-id-type="doi">10.1016/j.isatra.2009.01.009</pub-id>
+          <pub-id pub-id-type="pmid">19261280</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B2-processes-11-01897">
+        <label>2.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Yang</surname>
+              <given-names>B.S.</given-names>
+            </name>
+            <name>
+              <surname>Hwang</surname>
+              <given-names>W.W.</given-names>
+            </name>
+            <name>
+              <surname>Ko</surname>
+              <given-names>M.H.</given-names>
+            </name>
+            <name>
+              <surname>Lee</surname>
+              <given-names>S.J.</given-names>
+            </name>
+          </person-group>
+          <article-title>Cavitation Detection of Butterfly Valve Using Support Vector Machines</article-title>
+          <source>J. Sound Vib.</source>
+          <year>2005</year>
+          <volume>287</volume>
+          <fpage>25</fpage>
+          <lpage>43</lpage>
+          <pub-id pub-id-type="doi">10.1016/j.jsv.2004.10.033</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B3-processes-11-01897">
+        <label>3.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Kimura</surname>
+              <given-names>T.</given-names>
+            </name>
+            <name>
+              <surname>Tanaka</surname>
+              <given-names>T.</given-names>
+            </name>
+            <name>
+              <surname>Fujimoto</surname>
+              <given-names>K.</given-names>
+            </name>
+            <name>
+              <surname>Ogawa</surname>
+              <given-names>K.</given-names>
+            </name>
+          </person-group>
+          <article-title>Hydrodynamic Characteristics of a Butterfly Valve-Prediction of Pressure Loss Characteristics</article-title>
+          <source>ISA Trans.</source>
+          <year>1995</year>
+          <volume>34</volume>
+          <fpage>319</fpage>
+          <lpage>326</lpage>
+          <pub-id pub-id-type="doi">10.1016/0019-0578(95)00024-0</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B4-processes-11-01897">
+        <label>4.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Kim</surname>
+              <given-names>S.</given-names>
+            </name>
+            <name>
+              <surname>Kim</surname>
+              <given-names>J.</given-names>
+            </name>
+            <name>
+              <surname>Choi</surname>
+              <given-names>J.</given-names>
+            </name>
+            <name>
+              <surname>Sung</surname>
+              <given-names>J.</given-names>
+            </name>
+          </person-group>
+          <article-title>Topological Flow Characteristics in a Butterfly Valve Used for a Spark Ignition Engine</article-title>
+          <source>J. Vis.-Jpn.</source>
+          <year>2006</year>
+          <volume>9</volume>
+          <fpage>291</fpage>
+          <lpage>299</lpage>
+          <pub-id pub-id-type="doi">10.1007/BF03181676</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B5-processes-11-01897">
+        <label>5.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Corbera</surname>
+              <given-names>S.</given-names>
+            </name>
+            <name>
+              <surname>Olazagoitia</surname>
+              <given-names>J.L.</given-names>
+            </name>
+            <name>
+              <surname>Lozano</surname>
+              <given-names>J.A.</given-names>
+            </name>
+          </person-group>
+          <article-title>Multi-Objective Global Optimization of a Butterfly Valve Using Genetic Algorithms</article-title>
+          <source>ISA Trans.</source>
+          <year>2016</year>
+          <volume>63</volume>
+          <fpage>401</fpage>
+          <lpage>412</lpage>
+          <pub-id pub-id-type="doi">10.1016/j.isatra.2016.03.008</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B6-processes-11-01897">
+        <label>6.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Corbera</surname>
+              <given-names>S.</given-names>
+            </name>
+            <name>
+              <surname>Olazagoitia</surname>
+              <given-names>J.L.</given-names>
+            </name>
+            <name>
+              <surname>Lozano</surname>
+              <given-names>J.A.</given-names>
+            </name>
+            <name>
+              <surname>A&#x2019;lvarez</surname>
+              <given-names>R.</given-names>
+            </name>
+          </person-group>
+          <article-title>Optimization of a Butterfly Valve Disc Using 3D Topology and Genetic Algorithms</article-title>
+          <source>Struct. Multidiscip. Optim.</source>
+          <year>2017</year>
+          <volume>56</volume>
+          <fpage>1</fpage>
+          <lpage>17</lpage>
+          <pub-id pub-id-type="doi">10.1007/s00158-017-1694-4</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B7-processes-11-01897">
+        <label>7.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Cui</surname>
+              <given-names>B.L.</given-names>
+            </name>
+            <name>
+              <surname>Shang</surname>
+              <given-names>Z.H.</given-names>
+            </name>
+            <name>
+              <surname>Shi</surname>
+              <given-names>K.</given-names>
+            </name>
+            <name>
+              <surname>Chen</surname>
+              <given-names>D.S.</given-names>
+            </name>
+            <name>
+              <surname>Lin</surname>
+              <given-names>Z.</given-names>
+            </name>
+          </person-group>
+          <article-title>Butterfly Disc Structure Improved Design and Numerical Analysis Based on CFD</article-title>
+          <source>J. Mech. Eng.</source>
+          <year>2013</year>
+          <volume>31</volume>
+          <fpage>524</fpage>
+          <lpage>527</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B8-processes-11-01897">
+        <label>8.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Sun</surname>
+              <given-names>X.</given-names>
+            </name>
+            <name>
+              <surname>Kim</surname>
+              <given-names>H.S.</given-names>
+            </name>
+            <name>
+              <surname>Yang</surname>
+              <given-names>S.D.</given-names>
+            </name>
+            <name>
+              <surname>Kim</surname>
+              <given-names>C.K.</given-names>
+            </name>
+            <name>
+              <surname>Yoon</surname>
+              <given-names>J.Y.</given-names>
+            </name>
+          </person-group>
+          <article-title>Numerical Investigation of the Effect of Surface Roughness on the Flow Coefficient of an Eccentric Butterfly Valve</article-title>
+          <source>J. Mech. Sci. Technol.</source>
+          <year>2017</year>
+          <volume>31</volume>
+          <fpage>2839</fpage>
+          <lpage>2848</lpage>
+          <pub-id pub-id-type="doi">10.1007/s12206-017-0527-0</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B9-processes-11-01897">
+        <label>9.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Liu</surname>
+              <given-names>F.S.</given-names>
+            </name>
+            <name>
+              <surname>Wang</surname>
+              <given-names>H.</given-names>
+            </name>
+            <name>
+              <surname>Zhang</surname>
+              <given-names>Q.Z.</given-names>
+            </name>
+          </person-group>
+          <article-title>Experimental Research on the Flow Resistance Characteristics of the Tri-eccentric Butterfly</article-title>
+          <source>Fluid Mach.</source>
+          <year>2020</year>
+          <volume>48</volume>
+          <fpage>12</fpage>
+          <lpage>16</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B10-processes-11-01897">
+        <label>10.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Banis</surname>
+              <given-names>K.</given-names>
+            </name>
+          </person-group>
+          <article-title>Numerical evaluation of idle parameters of novel throttle body for internal combustion engines</article-title>
+          <source>Eng. Rural. Dev.</source>
+          <year>2020</year>
+          <volume>19</volume>
+          <fpage>1926</fpage>
+          <lpage>1933</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B11-processes-11-01897">
+        <label>11.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Danbon</surname>
+              <given-names>F.</given-names>
+            </name>
+            <name>
+              <surname>Solliec</surname>
+              <given-names>C.</given-names>
+            </name>
+          </person-group>
+          <article-title>Aerodynamic Torque of a Butterfly Valve-influence of an Elbow on the Time-mean and Instantaneous Aerodynamic Torque</article-title>
+          <source>J. Fluids Eng.</source>
+          <year>2000</year>
+          <volume>122</volume>
+          <fpage>337</fpage>
+          <lpage>344</lpage>
+          <pub-id pub-id-type="doi">10.1115/1.483262</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B12-processes-11-01897">
+        <label>12.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Kim</surname>
+              <given-names>C.K.</given-names>
+            </name>
+            <name>
+              <surname>Yoon</surname>
+              <given-names>J.Y.</given-names>
+            </name>
+          </person-group>
+          <article-title>Experimental Study for Flow Characteristics of Eccentric Butterfly Valves</article-title>
+          <source>Proc. Inst. Mech. Eng. Part E J. Process Mech. Eng.</source>
+          <year>2014</year>
+          <volume>229</volume>
+          <fpage>309</fpage>
+          <lpage>314</lpage>
+          <pub-id pub-id-type="doi">10.1177/0954408914550495</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B13-processes-11-01897">
+        <label>13.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Nguyen</surname>
+              <given-names>Q.K.</given-names>
+            </name>
+            <name>
+              <surname>Jung</surname>
+              <given-names>K.H.</given-names>
+            </name>
+            <name>
+              <surname>Lee</surname>
+              <given-names>G.N.</given-names>
+            </name>
+            <name>
+              <surname>Suh</surname>
+              <given-names>S.B.</given-names>
+            </name>
+            <name>
+              <surname>To</surname>
+              <given-names>P.</given-names>
+            </name>
+          </person-group>
+          <article-title>Experimental Study on Pressure Distribution and Flow Coefficient of Globe Valve</article-title>
+          <source>Processes</source>
+          <year>2020</year>
+          <volume>8</volume>
+          <elocation-id>875</elocation-id>
+          <pub-id pub-id-type="doi">10.3390/pr8070875</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B14-processes-11-01897">
+        <label>14.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Park</surname>
+              <given-names>J.S.</given-names>
+            </name>
+            <name>
+              <surname>Nguyen</surname>
+              <given-names>Q.K.</given-names>
+            </name>
+            <name>
+              <surname>Lee</surname>
+              <given-names>G.N.</given-names>
+            </name>
+            <name>
+              <surname>Jung</surname>
+              <given-names>K.H.</given-names>
+            </name>
+            <name>
+              <surname>Park</surname>
+              <given-names>H.</given-names>
+            </name>
+            <name>
+              <surname>Suh</surname>
+              <given-names>S.B.</given-names>
+            </name>
+          </person-group>
+          <article-title>Evaluation of Water Hammer for Seawater Treatment System in Offshore Floating Production Unit</article-title>
+          <source>Processes</source>
+          <year>2020</year>
+          <volume>8</volume>
+          <elocation-id>1041</elocation-id>
+          <pub-id pub-id-type="doi">10.3390/pr8091041</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B15-processes-11-01897">
+        <label>15.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Kapre</surname>
+              <given-names>A.V.</given-names>
+            </name>
+            <name>
+              <surname>Dodia</surname>
+              <given-names>Y.</given-names>
+            </name>
+          </person-group>
+          <article-title>Flow Analysis of Butterfly Valve Using CFD</article-title>
+          <source>Int. J. Res. Eng. Technol.</source>
+          <year>2015</year>
+          <volume>4</volume>
+          <fpage>95</fpage>
+          <lpage>99</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B16-processes-11-01897">
+        <label>16.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Balaji</surname>
+              <given-names>M.</given-names>
+            </name>
+            <name>
+              <surname>Satheesh</surname>
+              <given-names>K.A.</given-names>
+            </name>
+            <name>
+              <surname>Sanjay</surname>
+              <given-names>G.</given-names>
+            </name>
+            <name>
+              <surname>Job</surname>
+              <given-names>H.K.</given-names>
+            </name>
+          </person-group>
+          <article-title>Design of Throttle Body: A Comparative Study of Different Shaft Profiles Using CFD Analysis</article-title>
+          <source>Int. J. Chem. Sci.</source>
+          <year>2016</year>
+          <volume>14</volume>
+          <fpage>681</fpage>
+          <lpage>686</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B17-processes-11-01897">
+        <label>17.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Xu</surname>
+              <given-names>C.</given-names>
+            </name>
+            <name>
+              <surname>Haengmuk</surname>
+              <given-names>C.</given-names>
+            </name>
+          </person-group>
+          <article-title>The Analysis of Influence of Throttle Body on Engine Intake System</article-title>
+          <source>Int. J. Eng. Technol.</source>
+          <year>2017</year>
+          <volume>9</volume>
+          <fpage>3481</fpage>
+          <lpage>3486</lpage>
+          <pub-id pub-id-type="doi">10.21817/ijet/2017/v9i5/170905048</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B18-processes-11-01897">
+        <label>18.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Chang</surname>
+              <given-names>C.</given-names>
+            </name>
+            <name>
+              <surname>Yang</surname>
+              <given-names>B.M.</given-names>
+            </name>
+            <name>
+              <surname>Xu</surname>
+              <given-names>H.C.</given-names>
+            </name>
+          </person-group>
+          <article-title>The Optimization Analysis of the Throttle Valve Shaft Shape in the Intake System of Engine</article-title>
+          <source>Int. J. Mech. Prod. Eng.</source>
+          <year>2017</year>
+          <volume>5</volume>
+          <fpage>46</fpage>
+          <lpage>49</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B19-processes-11-01897">
+        <label>19.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Leutwyler</surname>
+              <given-names>Z.</given-names>
+            </name>
+            <name>
+              <surname>Dalton</surname>
+              <given-names>C.</given-names>
+            </name>
+          </person-group>
+          <article-title>A Computational Study of Torque and Forces Due to Compressible Flow on a Butterfly Valve Disk in Mid-Stroke Position</article-title>
+          <source>J. Fluids Eng.</source>
+          <year>2006</year>
+          <volume>128</volume>
+          <fpage>1074</fpage>
+          <lpage>1082</lpage>
+          <pub-id pub-id-type="doi">10.1115/1.2236129</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B20-processes-11-01897">
+        <label>20.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Leutwyler</surname>
+              <given-names>Z.</given-names>
+            </name>
+            <name>
+              <surname>Dalton</surname>
+              <given-names>C.</given-names>
+            </name>
+          </person-group>
+          <article-title>A CFD Study of the Flow Field, Resultant Force, and Aerodynamic Torque on a Symmetric Disk Butterfly Valve in a Compressible Fluid</article-title>
+          <source>J. Press. Vessel Technol.</source>
+          <year>2008</year>
+          <volume>130</volume>
+          <fpage>021302</fpage>
+          <pub-id pub-id-type="doi">10.1115/1.2891929</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B21-processes-11-01897">
+        <label>21.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Said</surname>
+              <given-names>M.M.</given-names>
+            </name>
+            <name>
+              <surname>AbdelMeguid</surname>
+              <given-names>H.</given-names>
+            </name>
+            <name>
+              <surname>Hassan Rabie Sakr</surname>
+              <given-names>L.</given-names>
+            </name>
+          </person-group>
+          <article-title>A Comparison Study between 3-D CFD and Experimental Data of Butterfly Valve Coefficients</article-title>
+          <source>MEJ Mansoura Eng. J.</source>
+          <year>2020</year>
+          <volume>39</volume>
+          <fpage>10</fpage>
+          <lpage>22</lpage>
+          <pub-id pub-id-type="doi">10.21608/bfemu.2020.102725</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B22-processes-11-01897">
+        <label>22.</label>
+        <element-citation publication-type="book">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Dickenson</surname>
+              <given-names>T.C.</given-names>
+            </name>
+          </person-group>
+          <source>Valves, Piping, and Pipelines Handbook</source>
+          <edition>3rd ed.</edition>
+          <publisher-name>Elsevier Advanced Technology</publisher-name>
+          <publisher-loc>Oxford, UK</publisher-loc>
+          <year>1999</year>
+          <fpage>110</fpage>
+          <lpage>111</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B23-processes-11-01897">
+        <label>23.</label>
+        <element-citation publication-type="thesis">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Chaudhari</surname>
+              <given-names>A.M.</given-names>
+            </name>
+          </person-group>
+          <article-title>Simulating Fluid Flow in a Compressed Valve</article-title>
+          <source>Master&#x2019;s Thesis</source>
+          <publisher-name>Lappeenranta University of Technology</publisher-name>
+          <publisher-loc>Lappeenranta, Finland</publisher-loc>
+          <day>24</day>
+          <month> August</month>
+          <year>2010</year>
+        </element-citation>
+      </ref>
+      <ref id="B24-processes-11-01897">
+        <label>24.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Hirtum</surname>
+              <given-names>A.V.</given-names>
+            </name>
+          </person-group>
+          <article-title>Deformation of a Circular Elastic Tube between Two Parallel Bars: Quasi-Analytical Geometrical Ring Models</article-title>
+          <source>Math. Probl. Eng.</source>
+          <year>2015</year>
+          <volume>2015</volume>
+          <fpage>547492</fpage>
+          <pub-id pub-id-type="doi">10.1155/2015/547492</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B25-processes-11-01897">
+        <label>25.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Kumar</surname>
+              <given-names>J.S.</given-names>
+            </name>
+            <name>
+              <surname>Ganesan</surname>
+              <given-names>V.</given-names>
+            </name>
+            <name>
+              <surname>Mallikarjuna</surname>
+              <given-names>J.M.</given-names>
+            </name>
+            <name>
+              <surname>Govindarajan</surname>
+              <given-names>S.</given-names>
+            </name>
+          </person-group>
+          <article-title>Design and Optimization of A throttle Body Assembly by CFD Analysis</article-title>
+          <source>Indian J. Eng. Mater. Sci.</source>
+          <year>2013</year>
+          <volume>20</volume>
+          <fpage>350</fpage>
+          <lpage>360</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B26-processes-11-01897">
+        <label>26.</label>
+        <element-citation publication-type="web">
+          <comment>Available online: <ext-link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://www.swagelok.com/en/toolbox/cv-calculator" ext-link-type="uri">https://www.swagelok.com/en/toolbox/cv-calculator</ext-link></comment>
+          <date-in-citation content-type="access-date" iso-8601-date="2023-05-26">(accessed on 26 May 2023)</date-in-citation>
+        </element-citation>
+      </ref>
+      <ref id="B27-processes-11-01897">
+        <label>27.</label>
+        <element-citation publication-type="book">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Trott</surname>
+              <given-names>M.</given-names>
+            </name>
+          </person-group>
+          <source>The Mathematica GuideBook for Symbolics</source>
+          <publisher-name>Springer</publisher-name>
+          <publisher-loc>New York, NY, USA</publisher-loc>
+          <year>2006</year>
+          <fpage>1030</fpage>
+          <lpage>1031</lpage>
+        </element-citation>
+      </ref>
+      <ref id="B28-processes-11-01897">
+        <label>28.</label>
+        <element-citation publication-type="journal">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Talbot</surname>
+              <given-names>J.</given-names>
+            </name>
+            <name>
+              <surname>Tildesley</surname>
+              <given-names>D.J.</given-names>
+            </name>
+          </person-group>
+          <article-title>The Planar Dumbbell Fluid</article-title>
+          <source>J. Chem. Phys.</source>
+          <year>1985</year>
+          <volume>83</volume>
+          <fpage>6419</fpage>
+          <lpage>6424</lpage>
+          <pub-id pub-id-type="doi">10.1063/1.449541</pub-id>
+        </element-citation>
+      </ref>
+      <ref id="B29-processes-11-01897">
+        <label>29.</label>
+        <element-citation publication-type="thesis">
+          <person-group person-group-type="author">
+            <name>
+              <surname>Koyunbaba</surname>
+              <given-names>E.</given-names>
+            </name>
+          </person-group>
+          <article-title>Computational Fluid Dynamics Application for Determining Flow Characteristics of Valves</article-title>
+          <source>Master&#x2019;s Thesis</source>
+          <publisher-name>Dokuz Eylul University</publisher-name>
+          <publisher-loc>Konak, Turkey</publisher-loc>
+          <year>2008</year>
+        </element-citation>
+      </ref>
+    </ref-list>
+    <sec sec-type="display-objects">
+      <title>Figures and Tables</title>
+      <fig id="processes-11-01897-f001" position="float">
+        <label>Figure 1</label>
+        <caption>
+          <p>Cell size in mm at different refinement levels.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g001.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f002" position="float">
+        <label>Figure 2</label>
+        <caption>
+          <p>CFD validation versus experimental data published in [<xref ref-type="bibr" rid="B25-processes-11-01897">25</xref>].</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g002.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f003" position="float">
+        <label>Figure 3</label>
+        <caption>
+          <p>Undeformed sleeve.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g003.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f004" position="float">
+        <label>Figure 4</label>
+        <caption>
+          <p>Meshed valve sleeve and pinching plates.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g004.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f005" position="float">
+        <label>Figure 5</label>
+        <caption>
+          <p>Comparison between CFD results and available online manufacturer&#x2019;s Cv [<xref ref-type="bibr" rid="B26-processes-11-01897">26</xref>].</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g005.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f006" position="float">
+        <label>Figure 6</label>
+        <caption>
+          <p>Illustration of a stadium shape.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g006.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f007" position="float">
+        <label>Figure 7</label>
+        <caption>
+          <p>Illustration of undeformed and deformed pinch valve sleeve following a stadium shape.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g007.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f008" position="float">
+        <label>Figure 8</label>
+        <caption>
+          <p>The air velocity streamlines across the throttle valve at 4 opening positions: (<bold>a</bold>) 25%; (<bold>b</bold>) 50%; (<bold>c</bold>) 75%; (<bold>d</bold>) 100%.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g008.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f009" position="float">
+        <label>Figure 9</label>
+        <caption>
+          <p>Air turbulence downstream of BFV at 75% opening position.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g009.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f010" position="float">
+        <label>Figure 10</label>
+        <caption>
+          <p>Air turbulence at the edge of the BFV at 100% opening position.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g010.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f011" position="float">
+        <label>Figure 11</label>
+        <caption>
+          <p>Vena contracta at 50% opening position of BFV.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g011.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f012" position="float">
+        <label>Figure 12</label>
+        <caption>
+          <p>Vena contracta at 75% opening position of BFV.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g012.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f013" position="float">
+        <label>Figure 13</label>
+        <caption>
+          <p>Pressure contour at 100% opening position.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g013.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f014" position="float">
+        <label>Figure 14</label>
+        <caption>
+          <p>Effect of valve shaft diameter on mass flow rate for standard BFV.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g014.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f015" position="float">
+        <label>Figure 15</label>
+        <caption>
+          <p>Mass flow rate for different thickness of BFV disk at all throttle positions.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g015.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f016" position="float">
+        <label>Figure 16</label>
+        <caption>
+          <p>Mass flow rate for standard BFV-sharp edges, standard BFV-round edges, and flat BFV-round edges at all throttle opening positions.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g016.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f017" position="float">
+        <label>Figure 17</label>
+        <caption>
+          <p>All pinch valve opening positions: (<bold>a</bold>) 25%; (<bold>b</bold>) 50%; (<bold>c</bold>) 75%; (<bold>d</bold>) 100%.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g017.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f018" position="float">
+        <label>Figure 18</label>
+        <caption>
+          <p>Valve area versus pinching degree.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g018.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f019" position="float">
+        <label>Figure 19</label>
+        <caption>
+          <p>Flow characteristics of pinch valves at different D/L ratios and different opening positions.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g019.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f020" position="float">
+        <label>Figure 20</label>
+        <caption>
+          <p>Velocity contours at all opening positions for both valves.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g020.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f021" position="float">
+        <label>Figure 21</label>
+        <caption>
+          <p>Mass flow rate of two types of BFVs and pinch valves.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g021.tif"/>
+      </fig>
+      <fig id="processes-11-01897-f022" position="float">
+        <label>Figure 22</label>
+        <caption>
+          <p>Pressure drop of two types of BFVs and a pinch valve.</p>
+        </caption>
+        <graphic xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="processes-11-01897-g022.tif"/>
+      </fig>
+      <table-wrap id="processes-11-01897-t001" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t001_Table 1</object-id>
+        <label>Table 1</label>
+        <caption>
+          <p>Mesh independence test for standard BFV at 60 degrees.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="left" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Mesh Level</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">3</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">4</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">5</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">6</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">7</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Mass flow rate (kg/s)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.5721</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.5680</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.5648</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.5641</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.5639</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Error in mass flow rate (%)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.45%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.73%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.16%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.04%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">No. of cells</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2800</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6027</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">16,698</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">46,193</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">126,354</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <table-wrap id="processes-11-01897-t002" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t002_Table 2</object-id>
+        <label>Table 2</label>
+        <caption>
+          <p>Material properties of natural rubber.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="left" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Elastic Modulus</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">10 kPa</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Poisson&#x2019;s ratio</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.45</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Mass density</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">960 kg/m<sup>3</sup></td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Tensile strength</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">20 MPa</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <table-wrap id="processes-11-01897-t003" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t003_Table 3</object-id>
+        <label>Table 3</label>
+        <caption>
+          <p>Mesh independence test for pinch valve at 20 mm pinching degree.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="left" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Mesh Level</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">3</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">4</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">5</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">6</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">7</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Mass flow rate (kg/s)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.0936</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.1062</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.1209</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.1204</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.1200</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Error in mass flow rate (%)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.35%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.23%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.08%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.035%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0%</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">No. of cells</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3148</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">7293</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">15,807</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">34,749</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">96,294</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <table-wrap id="processes-11-01897-t004" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t004_Table 4</object-id>
+        <label>Table 4</label>
+        <caption>
+          <p>Opening area of butterfly valve at all opening positions.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="left" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Valve Opening Angle (deg)</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">10</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">20</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">30</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">40</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">50</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">60</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">70</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">80</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">90</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Opening area for standard BFV (mm<sup>2</sup>)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">69.7</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">371.7</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">903.6</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1642.8</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2574.8</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3665.0</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">4881.7</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6176.3</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6855.7</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <table-wrap id="processes-11-01897-t005" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t005_Table 5</object-id>
+        <label>Table 5</label>
+        <caption>
+          <p>Calculated flow characteristics of air through standard BFV.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">&#x19F; (deg)</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">V<sub>avg</sub> (m/s)</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Re</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">&#x2206;P (kPa)</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Mass Flow Rate (kg/s)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">10</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">4.1</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">25,551</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">10.98</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.01</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">20</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">11.6</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">72,779</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">10.92</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.05</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">30</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">20.4</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">127,602</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">10.73</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.12</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">40</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">32.8</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">205,332</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">10.29</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.23</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">50</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">49.3</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">306,447</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">9.39</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.38</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">60</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">70.7</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">436,161</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">7.72</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.56</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">70</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">94.0</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">574,274</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">5.43</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.78</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">80</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">116.4</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">701,826</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3.07</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.98</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">90</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">125.8</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">753,445</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.01</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.06</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <table-wrap id="processes-11-01897-t006" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t006_Table 6</object-id>
+        <label>Table 6</label>
+        <caption>
+          <p>Mass flow rate of air for different valve disk thickness using 10 mm valve shaft diameter.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Throttle Angle (deg)</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">10</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">20</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">30</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">40</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">50</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">60</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">70</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">80</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">90</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1 mm</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">32.35%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">8.60%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.28%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;0.76%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.26%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.25%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.22%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.09%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;1.52%</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2 mm</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">18.88%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6.59%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.52%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.21%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.29%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.90%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.36%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.28%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;0.58%</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3 mm (reference)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.00%</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">4 mm</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;21.76%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;7.49%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;4.15%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;2.82%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;1.45%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;1.64%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;1.24%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;0.74%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.30%</td>
+            </tr>
+            <tr>
+              <td align="center" valign="middle" style="border-bottom:solid thin">5 mm</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;42.41%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;15.55%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;9.59%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;6.41%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;3.82%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;3.69%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;2.90%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;1.30%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">0.44%</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <table-wrap id="processes-11-01897-t007" position="float">
+        <object-id pub-id-type="pii">processes-11-01897-t007_Table 7</object-id>
+        <label>Table 7</label>
+        <caption>
+          <p>Increase/decrease in mass flow rate passing through different BFV configurations with respect to standard BFV-sharp edges.</p>
+        </caption>
+        <table>
+          <thead>
+            <tr>
+              <th align="left" valign="middle" style="border-top:solid thin;border-bottom:solid thin">Throttle Opening Angle (deg)</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">10</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">20</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">30</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">40</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">50</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">60</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">70</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">80</th>
+              <th align="center" valign="middle" style="border-top:solid thin;border-bottom:solid thin">90</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Flat BFV-round edges (3 mm thickness)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">118.8%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">52.6%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">29.1%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">15.4%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">10.4%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">7.9%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6.2%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">5.7%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6.2%</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Flat BFV-sharp edges (1 mm thickness)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">32.3%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">8.5%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.4%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">&#x2212;0.8%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.0%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">1.3%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">2.7%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">4.6%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">6.6%</td>
+            </tr>
+            <tr>
+              <td align="left" valign="middle" style="border-bottom:solid thin">Flat BFV-round edges (1 mm thickness)</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">78.9%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">25.2%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">9.4%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3.6%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3.8%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">3.5%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">4.4%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">5.8%</td>
+              <td align="center" valign="middle" style="border-bottom:solid thin">7.5%</td>
+            </tr>
+          </tbody>
+        </table>
+      </table-wrap>
+    </sec>
+    <fn-group>
+      <fn>
+        <p><bold>Disclaimer/Publisher&#x2019;s Note:</bold> The statements, opinions and data contained in all publications are solely those of the individual author(s) and contributor(s) and not of MDPI and/or the editor(s). MDPI and/or the editor(s) disclaim responsibility for any injury to people or property resulting from any ideas, methods, instructions or products referred to in the content.</p>
+      </fn>
+    </fn-group>
+  </back>
+</article>
