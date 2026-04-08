@@ -17,6 +17,8 @@ services:
     build: ./backend
     container_name: ${PROJECT_NAME}-back
     restart: unless-stopped
+    volumes:
+      - ./configs:/configs
     networks:
       - web_network
     labels:
