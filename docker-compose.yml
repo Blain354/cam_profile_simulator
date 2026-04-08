@@ -1,0 +1,30 @@
+services:
+  frontend:
+    build: ./frontend
+    container_name: ${PROJECT_NAME}-front
+    restart: unless-stopped
+    networks:
+      - web_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${PROJECT_NAME}-front.rule=Host(`${PROJECT_NAME}.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.${PROJECT_NAME}-front.entrypoints=websecure"
+      - "traefik.http.routers.${PROJECT_NAME}-front.tls.certresolver=myresolver"
+      - "traefik.http.services.${PROJECT_NAME}-front.loadbalancer.server.port=80"
+
+  backend:
+    build: ./backend
+    container_name: ${PROJECT_NAME}-back
+    restart: unless-stopped
+    networks:
+      - web_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${PROJECT_NAME}-back.rule=Host(`api.${PROJECT_NAME}.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.${PROJECT_NAME}-back.entrypoints=websecure"
+      - "traefik.http.routers.${PROJECT_NAME}-back.tls.certresolver=myresolver"
+      - "traefik.http.services.${PROJECT_NAME}-back.loadbalancer.server.port=5000"
+
+networks:
+  web_network:
+    external: true
