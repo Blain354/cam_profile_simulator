@@ -11,6 +11,7 @@ services:
       - "traefik.http.routers.${PROJECT_NAME}-front.entrypoints=websecure"
       - "traefik.http.routers.${PROJECT_NAME}-front.tls.certresolver=myresolver"
       - "traefik.http.services.${PROJECT_NAME}-front.loadbalancer.server.port=80"
+      - "traefik.http.routers.${PROJECT_NAME}-front.middlewares=google-auth@docker"
 
   backend:
     build: ./backend
