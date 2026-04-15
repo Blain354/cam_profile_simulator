@@ -1,0 +1,2 @@
+{"sessionId": "d1daf3", "hypothesisId": "A", "location": "main.py:worker:entry", "message": "worker started", "data": {"ev_is": 2567379137984}, "timestamp": 1776027179475}
+{"sessionId": "d1daf3", "hypothesisId": "A", "location": "main.py:worker:finally", "message": "worker finally cleared active event", "data": {}, "timestamp": 1776027184560}

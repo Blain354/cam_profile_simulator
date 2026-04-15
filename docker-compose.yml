@@ -19,6 +19,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./configs:/configs
+      - backend_data:/app/data
     networks:
       - web_network
     labels:
@@ -31,3 +32,6 @@ services:
 networks:
   web_network:
     external: true
+
+volumes:
+  backend_data:

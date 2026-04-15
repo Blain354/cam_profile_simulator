@@ -4,7 +4,7 @@ Projet de simulation d'un profil de came pour valve pneumatique, avec:
 
 - un backend FastAPI qui calcule la geometrie de came, les jeux mecaniques et le debit d'air;
 - un frontend React/Vite qui permet d'ajuster les parametres et visualiser les courbes;
-- un systeme de sauvegarde/chargement de configurations JSON dans le dossier `configs/`.
+- un systeme de sauvegarde/chargement de configurations via une base SQLite (avec migration automatique depuis `configs/` legacy).
 
 ## A quoi ca sert
 
@@ -21,7 +21,7 @@ Ce projet sert a:
 - `backend/simulation.py`: logique numerique de simulation.
 - `frontend/`: interface utilisateur React + Recharts.
 - `simulation_came.py`: script standalone (visualisation matplotlib) pour test local rapide.
-- `configs/`: profils de configuration sauvegardes.
+- `backend/data/simulator.db`: base de donnees de persistance (configs + extension future solver/profile builder).
 
 ## Prerequis
 
@@ -99,10 +99,12 @@ Image generee: `simulation_came_profile.png`
 - `POST /api/simulate`: lance une simulation avec les parametres fournis.
 - `GET /api/configs`: liste les configs sauvegardees.
 - `POST /api/save-config`: sauvegarde la config courante.
+- `GET /api/builder-experiences`: liste les experiences Profile Builder sauvegardees.
+- `POST /api/builder-experiences`: enregistre une experience solver (combinaisons candidates + note + contexte).
 - `GET /api/health`: verification rapide du backend.
 
 ## Notes
 
 - Le frontend utilise `VITE_API_BASE_URL` (fichier `frontend/.env.local`).
 - Valeur recommandee: `http://localhost:8001`.
-- Les configurations sont stockees en JSON dans `configs/`.
+- Les configurations sont stockees en base SQLite (`SIM_DB_PATH` optionnel pour surcharger le chemin).
