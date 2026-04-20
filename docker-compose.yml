@@ -24,10 +24,18 @@ services:
       - web_network
     labels:
       - "traefik.enable=true"
+      # Main API router — protected by Google Auth
       - "traefik.http.routers.${PROJECT_NAME}-back.rule=Host(`api.${PROJECT_NAME}.${DOMAIN_NAME}`)"
       - "traefik.http.routers.${PROJECT_NAME}-back.entrypoints=websecure"
       - "traefik.http.routers.${PROJECT_NAME}-back.tls.certresolver=myresolver"
+      - "traefik.http.routers.${PROJECT_NAME}-back.middlewares=google-auth@docker"
       - "traefik.http.services.${PROJECT_NAME}-back.loadbalancer.server.port=5000"
+      # CORS preflight router — lets OPTIONS through without auth
+      - "traefik.http.routers.${PROJECT_NAME}-back-cors.rule=Host(`api.${PROJECT_NAME}.${DOMAIN_NAME}`) && Method(`OPTIONS`)"
+      - "traefik.http.routers.${PROJECT_NAME}-back-cors.entrypoints=websecure"
+      - "traefik.http.routers.${PROJECT_NAME}-back-cors.tls.certresolver=myresolver"
+      - "traefik.http.routers.${PROJECT_NAME}-back-cors.priority=200"
+      - "traefik.http.routers.${PROJECT_NAME}-back-cors.service=${PROJECT_NAME}-back"
 
 networks:
   web_network:

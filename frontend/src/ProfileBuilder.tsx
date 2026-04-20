@@ -11,6 +11,7 @@ import {
   Accordion,
   VerticalSystemView,
   apiUrl,
+  apiFetch,
   defaultParams,
   DelayedHoverHint,
   ChartDomainSettingsModal,
@@ -868,7 +869,7 @@ export default function ProfileBuilder({
         chamber_volume_ml: chamberVolume,
         note: '',
       };
-      const res = await fetch(apiUrl('/api/simulate'), {
+      const res = await apiFetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
@@ -884,7 +885,7 @@ export default function ProfileBuilder({
     const load = async () => {
       try {
         if (result.solve_id) {
-          const res = await fetch(apiUrl(`/api/solve-candidate/${result.solve_id}/${activeIdx}`), { signal: ac.signal });
+          const res = await apiFetch(`/api/solve-candidate/${result.solve_id}/${activeIdx}`, { signal: ac.signal });
           if (res.ok) {
             const payload = await res.json() as { cached?: boolean; simulation?: SimulationResult | null };
             if (payload.cached && payload.simulation) {
@@ -934,7 +935,7 @@ export default function ProfileBuilder({
         if (!cand) continue;
         try {
           if (result.solve_id) {
-            const res = await fetch(apiUrl(`/api/solve-candidate/${result.solve_id}/${idx}`), { signal: ac.signal });
+            const res = await apiFetch(`/api/solve-candidate/${result.solve_id}/${idx}`, { signal: ac.signal });
             if (res.ok) {
               const payload = await res.json() as { cached?: boolean; simulation?: SimulationResult | null };
               if (payload.cached && payload.simulation) {
@@ -959,7 +960,7 @@ export default function ProfileBuilder({
             chamber_volume_ml: chamberVolume,
             note: '',
           };
-          const res = await fetch(apiUrl('/api/simulate'), {
+          const res = await apiFetch('/api/simulate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req),
@@ -1017,12 +1018,12 @@ export default function ProfileBuilder({
   }, [chamberVolume, pressurizationDeltaMl]);
 
   const handleCancelSolve = () => {
-    void fetch(apiUrl('/api/solve-cancel'), { method: 'POST' });
+    void apiFetch('/api/solve-cancel', { method: 'POST' });
     solveAbortRef.current?.abort();
   };
 
   const handleTerminateSolve = () => {
-    void fetch(apiUrl('/api/solve-terminate'), { method: 'POST' });
+    void apiFetch('/api/solve-terminate', { method: 'POST' });
   };
 
   const collectBuilderParams = (): Record<string, unknown> => ({
@@ -1199,7 +1200,7 @@ export default function ProfileBuilder({
   };
 
   const fetchExperiences = async () => {
-    const res = await fetch(apiUrl('/api/builder-experiences'));
+    const res = await apiFetch('/api/builder-experiences');
     const data = await res.json();
     const list = Array.isArray(data.experiences) ? data.experiences : [];
     setExperiences(list.map((e: SavedExperienceEntry) => ({ filename: e.filename, note: e.note ?? '' })));
@@ -1211,7 +1212,7 @@ export default function ProfileBuilder({
     const endpoint = canUpdateCurrent
       ? apiUrl(`/api/builder-experiences/${activeExperienceName}`)
       : apiUrl('/api/builder-experiences');
-    const res = await fetch(endpoint, {
+    const res = await fetch(endpoint, { credentials: "include",
       method: canUpdateCurrent ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1238,7 +1239,7 @@ export default function ProfileBuilder({
   }, [saveExperienceSignal, canSaveExperience]);
 
   const loadExperiencePreview = async (name: string) => {
-    const res = await fetch(apiUrl(`/api/builder-experiences/${name}`));
+    const res = await apiFetch(`/api/builder-experiences/${name}`);
     if (!res.ok) return;
     const payload = await res.json() as BuilderExperiencePayload;
     setPreviewExperience(payload);
@@ -1246,7 +1247,7 @@ export default function ProfileBuilder({
 
   const applyExperience = async () => {
     if (!selectedExperience) return;
-    const res = await fetch(apiUrl(`/api/builder-experiences/${selectedExperience}`));
+    const res = await apiFetch(`/api/builder-experiences/${selectedExperience}`);
     if (!res.ok) return;
     const payload = await res.json() as BuilderExperiencePayload;
     applyBuilderParams(payload.builder_params);
@@ -1289,7 +1290,7 @@ export default function ProfileBuilder({
   const deleteExperience = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm(`Delete experience ${name}?`)) return;
-    await fetch(apiUrl(`/api/builder-experiences/${name}`), { method: 'DELETE' });
+    await apiFetch(`/api/builder-experiences/${name}`, { method: 'DELETE' });
     if (selectedExperience === name) {
       setSelectedExperience(null);
       setPreviewExperience(null);
@@ -1360,7 +1361,7 @@ export default function ProfileBuilder({
     });
     const body = JSON.stringify(solveRequestSnapshot);
     try {
-      const res = await fetch(apiUrl('/api/solve-stream'), {
+      const res = await apiFetch('/api/solve-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,

@@ -66,6 +66,10 @@ export interface SimulationResult {
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 export const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
 
+/** Fetch wrapper that always sends auth cookies (cross-origin credentials). */
+export const apiFetch = (path: string, init?: RequestInit): Promise<Response> =>
+  fetch(apiUrl(path), { ...init, credentials: 'include' });
+
 export const defaultParams: SimulationParams = {
   motor_speed: 100,
   height: 2.0,

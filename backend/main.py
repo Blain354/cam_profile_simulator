@@ -32,7 +32,10 @@ builder_storage = BuilderExperienceStorage(default_db_path())
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://cam-profile-sim.blain-projects.ca",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

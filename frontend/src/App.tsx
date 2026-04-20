@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
   ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ChartDomainSettingsModal,
-  apiUrl, defaultParams, mergeConfigParams,
+  apiFetch, defaultParams, mergeConfigParams,
 } from './components';
 import type { ChartDomainSettings } from './components';
 import ProfileBuilder from './ProfileBuilder';
@@ -144,7 +144,7 @@ export default function App() {
 
   const fetchConfigs = async () => {
     try {
-      const res = await fetch(apiUrl('/api/configs'));
+      const res = await apiFetch('/api/configs');
       const listData = await res.json();
       const raw = listData.configs as unknown;
       const normalized: SavedConfigEntry[] = Array.isArray(raw)
@@ -155,7 +155,7 @@ export default function App() {
         )
         : [];
       setConfigs(normalized);
-      const defRes = await fetch(apiUrl('/api/configs/default'));
+      const defRes = await apiFetch('/api/configs/default');
       const defData = await defRes.json();
       setDefaultConfig(defData.default);
     } catch (err) {
@@ -167,10 +167,10 @@ export default function App() {
     fetchConfigs();
     (async () => {
       try {
-        const res = await fetch(apiUrl('/api/configs/default'));
+        const res = await apiFetch('/api/configs/default');
         const data = await res.json();
         if (data.default && data.default !== 'none') {
-          const configRes = await fetch(apiUrl(`/api/configs/${data.default}`));
+          const configRes = await apiFetch(`/api/configs/${data.default}`);
           if (configRes.ok) {
             const configParams = await configRes.json();
             const merged = mergeConfigParams(configParams);
@@ -198,7 +198,7 @@ export default function App() {
 
   const handleOpenConfigByName = async (name: string) => {
     try {
-      const res = await fetch(apiUrl(`/api/configs/${name}`));
+      const res = await apiFetch(`/api/configs/${name}`);
       if (!res.ok) throw new Error(`Failed to load ${name}`);
       const configParams = await res.json();
       const merged = mergeConfigParams(configParams);
@@ -215,11 +215,11 @@ export default function App() {
 
   const loadConfigData = async (name: string) => {
     try {
-      const res = await fetch(apiUrl(`/api/configs/${name}`));
+      const res = await apiFetch(`/api/configs/${name}`);
       const configParams = await res.json();
       const merged = mergeConfigParams(configParams);
       setPreviewParams(merged);
-      const simRes = await fetch(apiUrl('/api/simulate'), {
+      const simRes = await apiFetch('/api/simulate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged),
       });
       const simResult = await simRes.json();
@@ -231,7 +231,7 @@ export default function App() {
 
   const handleSetDefault = async (name: string) => {
     try {
-      await fetch(apiUrl(`/api/configs/default/${name}`), { method: 'POST' });
+      await apiFetch(`/api/configs/default/${name}`, { method: 'POST' });
       setDefaultConfig(name);
     } catch (err) {
       console.error('Error setting default config:', err);
@@ -243,10 +243,10 @@ export default function App() {
     if (!confirm(`Are you sure you want to delete ${name}?`)) return;
     try {
       if (defaultConfig === name) {
-        await fetch(apiUrl('/api/configs/default/none'), { method: 'POST' });
+        await apiFetch('/api/configs/default/none', { method: 'POST' });
         setDefaultConfig(null);
       }
-      await fetch(apiUrl(`/api/configs/${name}`), { method: 'DELETE' });
+      await apiFetch(`/api/configs/${name}`, { method: 'DELETE' });
       if (selectedConfig === name) { setSelectedConfig(null); setPreviewParams(null); setPreviewData(null); }
       fetchConfigs();
     } catch (err) {
@@ -256,7 +256,7 @@ export default function App() {
 
   const handleSaveConfig = async () => {
     try {
-      const res = await fetch(apiUrl('/api/save-config'), {
+      const res = await apiFetch('/api/save-config', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
       });
       const data = await res.json();
@@ -273,7 +273,7 @@ export default function App() {
   const handleUpdateConfig = async () => {
     try {
       if (activeConfigName === 'Default' || !activeConfigName.endsWith('.json')) return handleSaveConfig();
-      await fetch(apiUrl(`/api/configs/${activeConfigName}`), {
+      await apiFetch(`/api/configs/${activeConfigName}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
       });
       setSavedParams(params);
@@ -311,7 +311,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(apiUrl('/api/simulate'), {
+      const response = await apiFetch('/api/simulate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentParams),
         signal: ac.signal,
       });
