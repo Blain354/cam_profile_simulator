@@ -3,8 +3,9 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
 import {
-  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog
+  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box
 } from 'lucide-react';
+import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
@@ -81,6 +82,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const simulateAbortRef = useRef<AbortController | null>(null);
   const [detailsView, setDetailsView] = useState(false);
+  const [showStlExport, setShowStlExport] = useState(false);
 
   const getExplorerChartSettings = useCallback((key: ExplorerChartKey): ChartDomainSettings => {
     const root = (params.chart_settings ?? {}) as Record<string, unknown>;
@@ -629,6 +631,16 @@ export default function App() {
         <div className="flex items-center gap-3">
           <button
             type="button"
+            onClick={() => setShowStlExport(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-600/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 hover:text-emerald-100 text-[11px] font-semibold uppercase tracking-wider transition-colors shadow-sm"
+            title="Export the current cam configuration as an STL via Onshape"
+            aria-label="Export STL via Onshape"
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Export STL</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setGuidanceMode((v) => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold uppercase tracking-wider transition-colors ${
               guidanceMode
@@ -872,6 +884,13 @@ export default function App() {
       />
 
       {/* Modals & Overlays */}
+      <StlExportModal
+        isOpen={showStlExport}
+        onClose={() => setShowStlExport(false)}
+        params={params}
+        configName={activeConfigName}
+      />
+
       <ConfigModal
         isOpen={showImportModal} onClose={() => setShowImportModal(false)} configs={configs}
         onHoverConfig={loadConfigData} onSelectConfig={setSelectedConfig} onOpenConfig={handleOpenConfigByName}

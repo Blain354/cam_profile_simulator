@@ -101,7 +101,41 @@ Image generee: `simulation_came_profile.png`
 - `POST /api/save-config`: sauvegarde la config courante.
 - `GET /api/builder-experiences`: liste les experiences Profile Builder sauvegardees.
 - `POST /api/builder-experiences`: enregistre une experience solver (combinaisons candidates + note + contexte).
+- `GET /api/export/stl-config`: etat de la pipeline d'export STL Onshape (cles + identifiants de document).
+- `POST /api/export/stl-stream`: NDJSON stream — pousse la config vers Onshape, lance la traduction STL, retourne `download_url`.
+- `GET /api/export/stl-download/{job_id}`: one-shot — telecharge le binaire STL produit (cache 10 min).
 - `GET /api/health`: verification rapide du backend.
+
+## Export STL via Onshape
+
+Bouton **Export STL** dans le header → `StlExportModal` qui suit en direct
+chaque etape (auth, push des variables, traduction, telechargement) avec une
+progress bar et un log granulaire. A la fin, on ouvre une boite de dialogue
+"Enregistrer sous" via `window.showSaveFilePicker` (fallback `<a download>`
+sur Firefox).
+
+Le backend reutilise le skill OpenClaw `onshape`
+(`~/.openclaw/workspace/skills/onshape/`) : meme schema HMAC, meme workflow
+de translation, mais embarque directement dans `backend/onshape_export.py`
+pour rester portable en Docker.
+
+Configuration requise (voir [`docs/onshape-export.md`](docs/onshape-export.md)) :
+
+```env
+ONSHAPE_ACCESS_KEY=...
+ONSHAPE_SECRET_KEY=...
+ONSHAPE_DOCUMENT_ID=...
+ONSHAPE_WORKSPACE_ID=...
+ONSHAPE_ELEMENT_ID=...
+```
+
+## Alignement avec le template `web_projects/`
+
+Ce projet suit la meme structure que `web_projects/web_projects_template/` :
+`backend/` (FastAPI), `frontend/` (Vite + React 19), `docker-compose.yml`
+branche sur `web_network`, `.env` pour les secrets, `docs/` pour la
+documentation longue. Pour la communication avec les agents OpenClaw
+(Makey, Codey, etc.), voir [`web_projects_template/OPENCLAW.md`](../web_projects_template/OPENCLAW.md).
 
 ## Notes
 

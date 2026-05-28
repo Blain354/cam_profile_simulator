@@ -7,15 +7,20 @@ import dataclasses
 import json
 import queue
 import threading
+import time
+import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from simulation import SimulationParams, compute_simulation, SolverParams, SolverResult, solve_cam_profile
 from storage import BuilderExperienceStorage, SimulationStorage, default_db_path
+
+import onshape_export
 
 
 app = FastAPI(title="Cam Profile Simulation API")
@@ -367,6 +372,202 @@ def save_config(req: SimRequest):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# ── Onshape STL export ──────────────────────────────────────────────────────
+#
+# Pipeline implemented in `onshape_export.py` — itself derived from the
+# OpenClaw `onshape` skill (`~/.openclaw/workspace/skills/onshape/SKILL.md`).
+# The stream endpoint emits granular NDJSON progress events the frontend
+# renders inside the STL export modal; once the STL bytes have been retrieved
+# we cache them in-memory under a one-shot job id so the browser can pull
+# the file via a follow-up GET (which lets us trigger the native file picker).
+
+_stl_jobs_lock = threading.Lock()
+_stl_jobs: "OrderedDict[str, dict]" = OrderedDict()
+_STL_JOB_TTL_S = 600
+_STL_JOB_MAX = 12
+
+
+def _prune_stl_jobs() -> None:
+    now = time.time()
+    with _stl_jobs_lock:
+        stale = [jid for jid, j in _stl_jobs.items() if now - j["created_at"] > _STL_JOB_TTL_S]
+        for jid in stale:
+            _stl_jobs.pop(jid, None)
+        while len(_stl_jobs) > _STL_JOB_MAX:
+            _stl_jobs.popitem(last=False)
+
+
+class STLExportRequest(BaseModel):
+    """Configuration payload pushed to Onshape before exporting the STL.
+
+    Mirrors `SimRequest` but only the fields that are actually mapped to
+    Onshape variables matter — the rest is forwarded for future use.
+    """
+
+    motor_speed: Optional[float] = None
+    height: Optional[float] = None
+    thickness: Optional[float] = None
+    K: Optional[float] = None
+    deadband: Optional[float] = None
+    default_distance: Optional[float] = None
+    bushing_diameter: Optional[float] = None
+    lead_screw_pitch: Optional[float] = None
+    tube_id: Optional[float] = None
+    tube_od: Optional[float] = None
+    input_pressure_psi: Optional[float] = None
+    compliance: Optional[float] = None
+    chamber_volume_ml: Optional[float] = None
+    note: Optional[str] = ""
+    # Optional pre-baked filename suggested to the browser save dialog.
+    filename: Optional[str] = None
+
+
+@app.get("/api/export/stl-config")
+def export_stl_config():
+    """Lightweight health probe used by the UI before opening the modal —
+    tells the user whether Onshape credentials and document ids are wired."""
+    import os as _os
+    target = onshape_export.get_default_target_or_none()
+    has_keys = bool(_os.environ.get("ONSHAPE_ACCESS_KEY") and _os.environ.get("ONSHAPE_SECRET_KEY"))
+    if not has_keys:
+        has_keys = (Path.home() / ".openclaw" / "secrets" / "onshape.env").exists()
+    return {
+        "ready": target is not None and has_keys,
+        "has_keys": has_keys,
+        "has_target": target is not None,
+        "target": (
+            {
+                "document_id": target.document_id,
+                "workspace_id": target.workspace_id,
+                "element_id": target.element_id,
+                "part_id": target.part_id,
+                "variable_element_id": target.variable_element_id,
+                "variable_mapping": target.variable_mapping,
+                "config_parameter_id": target.config_parameter_id,
+                "config_enum_value": target.config_enum_value,
+            }
+            if target
+            else None
+        ),
+    }
+
+
+@app.post("/api/export/stl-stream")
+def export_stl_stream(req: STLExportRequest):
+    """NDJSON stream of granular Onshape export progress events.
+
+    Final line is either `{"type":"result","job_id":...}` (download the STL
+    via `/api/export/stl-download/{job_id}`) or `{"type":"error", ...}`.
+    """
+
+    payload = req.model_dump(exclude_none=True)
+    filename = payload.pop("filename", None) or f"cam-profile-{int(time.time())}.stl"
+
+    def generate():
+        q: "queue.Queue" = queue.Queue()
+        cancel_ev = threading.Event()
+
+        def progress(pct: int, msg: str, details: Optional[dict] = None) -> None:
+            q.put(
+                {
+                    "type": "progress",
+                    "percent": int(max(0, min(99, pct))),
+                    "message": msg,
+                    "details": details or {},
+                    "timestamp": time.time(),
+                }
+            )
+
+        def worker() -> None:
+            try:
+                progress(2, "Validating Onshape configuration…", None)
+                target = onshape_export.get_default_target_or_none()
+                if target is None:
+                    raise onshape_export.OnshapeConfigError(
+                        "Onshape target is not configured. Set ONSHAPE_DOCUMENT_ID, "
+                        "ONSHAPE_WORKSPACE_ID and ONSHAPE_ELEMENT_ID on the backend."
+                    )
+
+                result = onshape_export.run_full_export(
+                    payload,
+                    target=target,
+                    progress=progress,
+                    cancel_event=cancel_ev,
+                )
+
+                job_id = uuid.uuid4().hex
+                with _stl_jobs_lock:
+                    _stl_jobs[job_id] = {
+                        "bytes": result.stl_bytes,
+                        "filename": filename,
+                        "created_at": time.time(),
+                        "translation_id": result.translation_id,
+                        "pushed_variables": result.pushed_variables,
+                        "params": payload,
+                    }
+                _prune_stl_jobs()
+
+                q.put(
+                    {
+                        "type": "result",
+                        "percent": 100,
+                        "message": "STL ready — pick a destination to download.",
+                        "job_id": job_id,
+                        "download_url": f"/api/export/stl-download/{job_id}",
+                        "filename": filename,
+                        "size_bytes": len(result.stl_bytes),
+                        "translation_id": result.translation_id,
+                        "pushed_variables": result.pushed_variables,
+                    }
+                )
+            except onshape_export.OnshapeConfigError as exc:
+                q.put({"type": "error", "code": "config", "message": str(exc)})
+            except onshape_export.OnshapeAPIError as exc:
+                q.put(
+                    {
+                        "type": "error",
+                        "code": "onshape_api",
+                        "status": exc.status,
+                        "message": str(exc),
+                        "payload": exc.payload,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 — surface to UI verbatim
+                q.put({"type": "error", "code": "internal", "message": str(exc)})
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        try:
+            while True:
+                item = q.get()
+                if item is None:
+                    break
+                yield json.dumps(item, ensure_ascii=False) + "\n"
+        finally:
+            cancel_ev.set()
+            t.join(timeout=2)
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@app.get("/api/export/stl-download/{job_id}")
+def export_stl_download(job_id: str):
+    """One-shot download of a freshly exported STL blob."""
+    _prune_stl_jobs()
+    with _stl_jobs_lock:
+        job = _stl_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="STL job not found or expired")
+    headers = {
+        "Content-Disposition": f'attachment; filename="{job["filename"]}"',
+        "Content-Length": str(len(job["bytes"])),
+        "Cache-Control": "no-store",
+    }
+    return Response(content=job["bytes"], media_type="model/stl", headers=headers)
 
 
 @app.get("/api/builder-experiences")

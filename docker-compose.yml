@@ -20,6 +20,23 @@ services:
     volumes:
       - ./configs:/configs
       - backend_data:/app/data
+    environment:
+      # Onshape STL export — see docs/onshape-export.md.
+      # Provide either real values here or via your shell when running
+      # `docker compose up` so the cam profile can be exported as STL.
+      ONSHAPE_ACCESS_KEY: ${ONSHAPE_ACCESS_KEY:-}
+      ONSHAPE_SECRET_KEY: ${ONSHAPE_SECRET_KEY:-}
+      ONSHAPE_DOCUMENT_ID: ${ONSHAPE_DOCUMENT_ID:-}
+      ONSHAPE_WORKSPACE_ID: ${ONSHAPE_WORKSPACE_ID:-}
+      ONSHAPE_ELEMENT_ID: ${ONSHAPE_ELEMENT_ID:-}
+      ONSHAPE_PART_ID: ${ONSHAPE_PART_ID:-}
+      ONSHAPE_VARIABLE_ELEMENT_ID: ${ONSHAPE_VARIABLE_ELEMENT_ID:-}
+      ONSHAPE_VARIABLE_MAPPING: ${ONSHAPE_VARIABLE_MAPPING:-}
+      ONSHAPE_VARIABLE_UNITS: ${ONSHAPE_VARIABLE_UNITS:-}
+      ONSHAPE_USE_DIRECT_STL: ${ONSHAPE_USE_DIRECT_STL:-}
+      ONSHAPE_REGEN_WAIT_S: ${ONSHAPE_REGEN_WAIT_S:-2.0}
+      ONSHAPE_CONFIG_PARAMETER_ID: ${ONSHAPE_CONFIG_PARAMETER_ID:-}
+      ONSHAPE_CONFIG_ENUM_VALUE: ${ONSHAPE_CONFIG_ENUM_VALUE:-}
     networks:
       - web_network
     labels:
