@@ -4,10 +4,11 @@
  * polling, byte download) as granular progress events so the user can see
  * exactly what's happening while the CAD round-trip runs.
  *
- * When the backend finishes, we try the File System Access API
- * (`window.showSaveFilePicker`) to open the native file explorer save
- * dialog so the user can pick where to drop the STL. Browsers without
- * that API fall back to a regular `<a download>` link.
+ * Once the backend finishes the STL is ready server-side (~10 min cache).
+ * The user clicks "Download STL" which triggers the File System Access API
+ * (`window.showSaveFilePicker`) via a direct user gesture — satisfying the
+ * browser's transient-activation requirement. Browsers without that API
+ * fall back to a regular `<a download>` link.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -16,7 +17,7 @@ import { Box, X, Loader2, CheckCircle2, AlertTriangle, FolderDown, Play, StopCir
 import type { SimulationParams } from './components';
 import { apiUrl } from './components';
 
-type ExportPhase = 'idle' | 'running' | 'success' | 'error' | 'saving' | 'cancelled';
+type ExportPhase = 'idle' | 'running' | 'success' | 'error' | 'cancelled';
 
 interface ProgressEvent {
   type: 'progress';
@@ -98,7 +99,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [status, setStatus] = useState<ExportStatus | null>(null);
-  const [downloadedAt, setDownloadedAt] = useState<number | null>(null);
+
 
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
@@ -151,7 +152,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
     setLog([]);
     setErrorMessage(null);
     setResult(null);
-    setDownloadedAt(null);
+
   }, []);
 
   const handleClose = useCallback(() => {
@@ -281,26 +282,9 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
       const final = await consumeStream(resp.body);
       if (!final) throw new Error('Stream ended without producing a result.');
       setResult(final);
-      setPhase('saving');
-      setCurrentMessage('Waiting for save destination…');
-      appendLog({ percent: 100, message: 'Prompting for save destination', detailsText: final.filename, timestamp: Date.now() / 1000, tone: 'info' });
-      try {
-        await triggerBrowserDownload(final);
-        setPhase('success');
-        setDownloadedAt(Date.now());
-        setCurrentMessage('STL saved to disk.');
-        appendLog({ percent: 100, message: 'STL saved to disk.', detailsText: final.filename, timestamp: Date.now() / 1000, tone: 'success' });
-      } catch (err) {
-        const message = (err as Error).message || String(err);
-        if (message.toLowerCase().includes('abort')) {
-          setPhase('cancelled');
-          appendLog({ percent: 100, message: 'Save cancelled by user — STL still available below.', detailsText: '', timestamp: Date.now() / 1000, tone: 'error' });
-        } else {
-          setPhase('error');
-          setErrorMessage(message);
-          appendLog({ percent: 100, message: `Save failed: ${message}`, detailsText: '', timestamp: Date.now() / 1000, tone: 'error' });
-        }
-      }
+      setPhase('success');
+      setCurrentMessage('STL ready — click Download STL below.');
+      appendLog({ percent: 100, message: `STL ready (${(final.size_bytes / 1024).toFixed(1)} KB). Click Download STL to save.`, detailsText: final.filename, timestamp: Date.now() / 1000, tone: 'success' });
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
         setPhase('cancelled');
@@ -311,7 +295,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
     } finally {
       abortRef.current = null;
     }
-  }, [params, suggestedFilename, resetState, appendLog, consumeStream, triggerBrowserDownload]);
+  }, [params, suggestedFilename, resetState, appendLog, consumeStream]);
 
   if (!isOpen) return null;
 
@@ -325,7 +309,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
     { label: 'Tube ID/OD', value: `${params.tube_id} / ${params.tube_od} mm` },
   ];
 
-  const busy = phase === 'running' || phase === 'saving';
+  const busy = phase === 'running';
   const ready = status?.ready ?? false;
 
   return (
@@ -405,7 +389,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
               <section className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 min-w-0">
-                    {phase === 'running' || phase === 'saving' ? (
+                    {phase === 'running' ? (
                       <Loader2 className="h-3.5 w-3.5 text-emerald-400 animate-spin shrink-0" />
                     ) : phase === 'success' ? (
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -466,12 +450,12 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
               </div>
             )}
 
-            {/* Re-download (job still cached for ~10 min) */}
+            {/* Download button (job cached for ~10 min on backend) */}
             {result && phase !== 'running' && (
               <div className="rounded-lg border border-emerald-700/40 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-100 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold truncate">
-                    {downloadedAt ? 'STL saved.' : 'STL ready.'} <span className="font-mono opacity-80">{result.filename}</span>
+                    STL ready <span className="font-mono opacity-80">{result.filename}</span>
                   </p>
                   <p className="text-emerald-300/80 text-[11px]">
                     {(result.size_bytes / 1024).toFixed(1)} KB · {result.pushed_variables} variable(s) pushed
@@ -480,17 +464,30 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                 </div>
                 <button
                   type="button"
-                  onClick={() => triggerBrowserDownload(result).catch((err) => setErrorMessage((err as Error).message))}
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/60 bg-emerald-600/20 px-2.5 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-600/30"
+                  onClick={async () => {
+                    setCurrentMessage('Downloading STL…');
+                    try {
+                      await triggerBrowserDownload(result);
+
+                      setCurrentMessage('STL saved to disk.');
+                    } catch (err) {
+                      const msg = (err as Error).message || String(err);
+                      if (!msg.toLowerCase().includes('abort')) {
+                        setErrorMessage(msg);
+                      }
+                    }
+                  }}
+                  disabled={busy}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/60 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-600/30 transition-colors"
                 >
-                  <FolderDown className="h-3.5 w-3.5" /> Save again
+                  <FolderDown className="h-4 w-4" /> Download STL
                 </button>
               </div>
             )}
           </div>
 
           <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-neutral-700/80 bg-neutral-950/40 rounded-b-2xl">
-            {phase === 'running' || phase === 'saving' ? (
+            {busy ? (
               <button
                 type="button"
                 onClick={handleCancel}
