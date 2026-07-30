@@ -34,10 +34,11 @@ native "Save As" dialog in the browser.
                                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │ Onshape Cloud — REST API v10                                           │
-│   a. POST /variables/.../variables  ← push cam params as variables     │
-│   b. POST /partstudios/.../translations { formatName:"STL" }           │
-│   c. GET  /translations/{tid}        ← poll until DONE                 │
-│   d. GET  /documents/d/{did}/externaldata/{ext} ← STL bytes            │
+│   a. GET/POST partstudios/.../features  ← patch assignVariable (ctrl_*)│
+│   b. Optional regen wait (ONSHAPE_REGEN_WAIT_S, default 2s)            │
+│   c. Prefer GET /parts/.../stl when ONSHAPE_PART_ID is set             │
+│      else POST /partstudios/.../translations { formatName:"STL" }      │
+│   d. GET /translations/{tid} → GET .../externaldata/{ext} (async path) │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,12 +46,17 @@ Granular progress percentages are mapped as:
 
 | Stage                                     | Percent      |
 |-------------------------------------------|--------------|
-| Validating credentials / resolving target | `0 → 10`     |
-| Pushing variables                         | `10 → 30`    |
-| Submitting translation job                | `30 → 40`    |
+| Resolving target / credentials            | `~5`         |
+| Pushing Part Studio `assignVariable`s     | `15 → 28`    |
+| Regen wait                                | `28 → 32`    |
+| Submitting translation (async path only)  | `~35`        |
 | Polling translation status                | `40 → 80`    |
-| Downloading external data ids             | `80 → 96`    |
+| Downloading STL bytes                     | `80 → 96`    |
 | Caching STL + waiting for save dialog     | `96 → 100`   |
+
+When `ONSHAPE_PART_ID` is set and `ONSHAPE_USE_DIRECT_STL` is truthy
+(default), the async translation steps are skipped and the bar jumps from
+regen wait to the download/cache range.
 
 ## OpenClaw skill reuse
 
@@ -95,23 +101,42 @@ ONSHAPE_DOCUMENT_ID=<24-char document id>
 ONSHAPE_WORKSPACE_ID=<24-char workspace id>
 ONSHAPE_ELEMENT_ID=<24-char part studio element id>
 
-# Optional — only if you push variables to a separate Variable Studio:
+# Optional — Variable Studio element id (legacy; core_top uses Part Studio
+# assignVariable features, not Variable Studio entries):
 ONSHAPE_VARIABLE_ELEMENT_ID=<24-char variable studio element id>
 
 # Optional — JSON object {onshape_var_name: simulator_param_key}.
-# Defaults to a 1-to-1 mapping for height/thickness/K/deadband/etc.
-ONSHAPE_VARIABLE_MAPPING={"camHeight":"height","camThickness":"thickness"}
+# Default mapping (Minivalve / core_top) when unset:
+#   ctrl_deadband → deadband
+#   ctrl_exp_profile_length → height
+#   ctrl_exp_profile_K → K
+#   ctrl_default_distance → default_distance
+ONSHAPE_VARIABLE_MAPPING={"ctrl_deadband":"deadband","ctrl_exp_profile_length":"height","ctrl_exp_profile_K":"K","ctrl_default_distance":"default_distance"}
 
-# Optional — JSON object {simulator_param_key: unit_suffix}. Defaults to "mm".
+# Optional — JSON object {simulator_param_key: unit_suffix}.
+# Numeric params default to "mm"; dimensionless keys (K, or unit "") stay bare.
 ONSHAPE_VARIABLE_UNITS={"K":""}
 
 # Optional — synchronous GET /parts/.../stl path (requires a part id).
+# Direct path is preferred when part id is set; set to 0 to force async translation.
 ONSHAPE_PART_ID=<24-char part id>
 ONSHAPE_USE_DIRECT_STL=1
+
+# Optional — pause after pushing variables so Part Studio regen finishes
+# before STL (avoids occasional STALE translation errors). Default: 2.0
+ONSHAPE_REGEN_WAIT_S=2.0
+
+# Optional — Onshape configuration slot used by the automation pipeline.
+# When BOTH are set: only that configured enum entry is overwritten on each
+# assignVariable, and STL requests pass configuration=<id>=<value> so the
+# default / manual RPM configs are never clobbered.
+ONSHAPE_CONFIG_PARAMETER_ID=List_<id>
+ONSHAPE_CONFIG_ENUM_VALUE=<enum value name>
 ```
 
-The frontend probes `/api/export/stl-config` before letting the user
-start an export, so any missing piece is surfaced inline in the modal.
+All of the above are forwarded in `docker-compose.yml` for the backend
+service. The frontend probes `/api/export/stl-config` before letting the
+user start an export, so any missing piece is surfaced inline in the modal.
 
 ## Finding the Onshape identifiers
 
@@ -151,6 +176,8 @@ Click **Export STL** in the header. The modal will:
 | Modal shows "Onshape pipeline not fully configured" | Missing env vars — restart backend after editing `.env`. |
 | `HTTP 401: Unauthorized` event in the log | Wrong access/secret key, or clock skew > 5 min. |
 | Polling stalls at ~50% forever | Onshape model has regen errors — fix in the CAD before retrying. |
+| `STALE` / flaky translation right after a push | Increase `ONSHAPE_REGEN_WAIT_S` (default `2.0`). |
+| Manual CAD configs overwritten by export | Set both `ONSHAPE_CONFIG_PARAMETER_ID` and `ONSHAPE_CONFIG_ENUM_VALUE` so only the automation enum slot is patched. |
 | Save dialog never appears in Firefox | Firefox doesn't support `showSaveFilePicker` — the frontend falls back to `<a download>` so the browser uses its default download folder. |
 | `OnshapeAPIError 502: external data ids missing` | Translation completed without producing data — usually means the target element isn't a Part Studio. |
 

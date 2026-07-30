@@ -17,11 +17,12 @@ Ce projet sert a:
 
 ## Architecture rapide
 
-- `backend/main.py`: API FastAPI (`/api/simulate`, gestion des configs, healthcheck).
-- `backend/simulation.py`: logique numerique de simulation.
-- `frontend/`: interface utilisateur React + Recharts.
+- `backend/main.py`: API FastAPI (simulate, solve/stream, configs, builder experiences, export STL, healthcheck).
+- `backend/simulation.py`: logique numerique de simulation + solver de profil.
+- `backend/onshape_export.py`: pipeline d'export STL Onshape (HMAC + Part Studio).
+- `frontend/`: interface utilisateur React + Recharts (simulateur + Profile Builder + modal STL).
 - `simulation_came.py`: script standalone (visualisation matplotlib) pour test local rapide.
-- `backend/data/simulator.db`: base de donnees de persistance (configs + extension future solver/profile builder).
+- `backend/data/simulator.db`: base SQLite de persistance (configs + experiences Profile Builder).
 
 ## Prerequis
 
@@ -97,14 +98,22 @@ Image generee: `simulation_came_profile.png`
 ## Endpoints utiles
 
 - `POST /api/simulate`: lance une simulation avec les parametres fournis.
+- `POST /api/solve`: solveur synchrone (grille K / deadband / height → candidats).
+- `POST /api/solve-stream`: meme solveur en NDJSON (progress + resultat); annulable via `POST /api/solve-cancel` ou arret premature via `POST /api/solve-terminate`.
+- `GET /api/solve-candidate/{solve_id}/{index}`: detail d'un candidat du dernier solve (cache memoire, max 6 jeux).
 - `GET /api/configs`: liste les configs sauvegardees.
 - `POST /api/save-config`: sauvegarde la config courante.
+- `GET|POST|PUT|DELETE /api/configs/...`: lecture / mise a jour / suppression / defaut.
 - `GET /api/builder-experiences`: liste les experiences Profile Builder sauvegardees.
 - `POST /api/builder-experiences`: enregistre une experience solver (combinaisons candidates + note + contexte).
 - `GET /api/export/stl-config`: etat de la pipeline d'export STL Onshape (cles + identifiants de document).
 - `POST /api/export/stl-stream`: NDJSON stream — pousse la config vers Onshape, lance la traduction STL, retourne `download_url`.
 - `GET /api/export/stl-download/{job_id}`: one-shot — telecharge le binaire STL produit (cache 10 min).
 - `GET /api/health`: verification rapide du backend.
+
+CORS backend (credentialed): origines autorisees codees dans `backend/main.py` —
+`https://cam-profile-sim.blain-projects.ca` et `http://localhost:5173`. En deploy,
+`PROJECT_NAME` doit rester aligne avec cette origine frontend.
 
 ## Export STL via Onshape
 
