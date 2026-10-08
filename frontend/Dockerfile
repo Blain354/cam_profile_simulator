@@ -1,8 +1,9 @@
 # Étape 1 : Construction (Build)
 FROM node:20-alpine as builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
+ARG NODE_AUTH_TOKEN
+COPY package*.json .npmrc ./
+RUN npm ci && rm -f .npmrc
 COPY . .
 RUN npm run build
 
