@@ -5,9 +5,12 @@
 > (`~/.openclaw/workspace/skills/onshape/SKILL.md`).
 
 The cam profile simulator can push the **current configuration** to an
-Onshape parametric model, trigger an STL translation, and stream the
-resulting mesh back to the user — with a granular progress bar and a
-native "Save As" dialog in the browser.
+Onshape parametric model, trigger an STL translation, and stream progress
+back to the browser. When the job finishes the STL is cached server-side
+(~10 min); the user must click **Download STL** to open a native "Save As"
+dialog (`window.showSaveFilePicker`, or `<a download>` fallback). That
+extra click is intentional: browsers require a direct user gesture for the
+File System Access API.
 
 
 ## High-level flow
@@ -18,8 +21,9 @@ native "Save As" dialog in the browser.
 │   1. User clicks "Export STL" in the header                            │
 │   2. Modal POSTs SimulationParams → /api/export/stl-stream             │
 │   3. Renders NDJSON progress events as a live log + progress bar       │
-│   4. On success: window.showSaveFilePicker (File Explorer dialog)      │
-│      → falls back to <a download> if the browser lacks the API         │
+│   4. On success: STL ready in cache — user clicks "Download STL"       │
+│   5. Download fetches /api/export/stl-download/{job_id}, then          │
+│      showSaveFilePicker (or <a download> if the API is missing)        │
 └──────────────────────────────┬─────────────────────────────────────────┘
                                │ NDJSON stream (one event per line)
                                ▼
@@ -50,7 +54,7 @@ Granular progress percentages are mapped as:
 | Submitting translation job                | `30 → 40`    |
 | Polling translation status                | `40 → 80`    |
 | Downloading external data ids             | `80 → 96`    |
-| Caching STL + waiting for save dialog     | `96 → 100`   |
+| Caching STL bytes; result event           | `96 → 100`   |
 
 ## OpenClaw skill reuse
 
@@ -142,7 +146,8 @@ Click **Export STL** in the header. The modal will:
 1. Probe `/api/export/stl-config` and complain about missing env vars
    before you even start.
 2. Stream progress events from `/api/export/stl-stream`.
-3. Open the OS file picker on completion to save the STL.
+3. On success, show **Download STL** — click it to open the OS file picker
+   (or trigger the `<a download>` fallback).
 
 ## Troubleshooting
 

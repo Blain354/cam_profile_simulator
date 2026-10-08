@@ -57,6 +57,17 @@ Creer/mettre a jour `frontend/.env.local` pour pointer le frontend vers le backe
 Set-Content -Path .\frontend\.env.local -Value "VITE_API_BASE_URL=http://localhost:8001"
 ```
 
+Le frontend depend du package prive `@blain-projects/ui` (registry GitHub
+Packages). Avant `npm install`, exporter un token avec droit `read:packages` :
+
+```powershell
+$env:NODE_AUTH_TOKEN = "<github-pat-read-packages>"
+```
+
+`frontend/.npmrc` pointe `@blain-projects` vers `npm.pkg.github.com` et lit
+`${NODE_AUTH_TOKEN}`. Meme variable pour un build Docker Compose (`build.args`
+→ `frontend/Dockerfile`).
+
 ```powershell
 cd frontend
 npm install
@@ -64,6 +75,9 @@ npm run dev
 ```
 
 Frontend disponible sur: `http://localhost:5173`
+
+Chrome UI partage (header full-width, theme, champs kit) : voir
+[`docs/ui-uniformity-2026-10-08.md`](docs/ui-uniformity-2026-10-08.md).
 
 ## Demarrer toute la stack ensuite
 
@@ -109,10 +123,10 @@ Image generee: `simulation_came_profile.png`
 ## Export STL via Onshape
 
 Bouton **Export STL** dans le header → `StlExportModal` qui suit en direct
-chaque etape (auth, push des variables, traduction, telechargement) avec une
-progress bar et un log granulaire. A la fin, on ouvre une boite de dialogue
-"Enregistrer sous" via `window.showSaveFilePicker` (fallback `<a download>`
-sur Firefox).
+chaque etape (auth, push des variables, traduction) avec une progress bar et
+un log granulaire. Quand le backend a fini, le STL reste en cache (~10 min) :
+il faut cliquer **Download STL** pour declencher `window.showSaveFilePicker`
+(geste utilisateur requis ; fallback `<a download>` si l'API absente).
 
 Le backend reutilise le skill OpenClaw `onshape`
 (`~/.openclaw/workspace/skills/onshape/`) : meme schema HMAC, meme workflow

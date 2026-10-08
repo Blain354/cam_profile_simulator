@@ -27,7 +27,8 @@ This repository is a production-ready boilerplate for modern fullstack applicati
 
 1. **Network:** external `web_network` (Traefik). If missing: `docker network create web_network`.
 2. **Labels:** `PROJECT_NAME`, `DOMAIN_NAME` (`.env` or secrets).
-3. **SQLite:** file `/app/data/simulator.db`; volume `backend_data` → `/app/data`. Path override: **`SIM_DB_PATH`**. Schema at startup; optional one-time JSON import from `configs/` in image. No DB service container.
+3. **Frontend private kit:** `NODE_AUTH_TOKEN` (GitHub Packages `read:packages`) must be available when building the frontend image — `docker-compose.yml` passes it as `build.args`, `frontend/Dockerfile` uses it with the placeholder `frontend/.npmrc` (`@blain-projects` → `npm.pkg.github.com`), then deletes `.npmrc` after `npm ci`. Without the token, `npm ci` cannot resolve `@blain-projects/ui`.
+4. **SQLite:** file `/app/data/simulator.db`; volume `backend_data` → `/app/data`. Path override: **`SIM_DB_PATH`**. Schema at startup; optional one-time JSON import from `configs/` in image. No DB service container.
 
 ### Database — agent debug map (SQLite)
 
