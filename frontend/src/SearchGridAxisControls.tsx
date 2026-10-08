@@ -1,3 +1,4 @@
+import { Button } from '@blain-projects/ui';
 import * as Slider from '@radix-ui/react-slider';
 import { ParameterSlider, DelayedHoverHint } from './components';
 
@@ -200,7 +201,7 @@ export default function SearchGridAxisControls({
       ) : (
         <>
           <div className="flex rounded-lg bg-neutral-950/60 p-0.5 ring-1 ring-neutral-700/60">
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={() => onSampleMode('count')}
               className={`flex min-h-[3.25rem] min-w-0 flex-1 flex-col items-center justify-center rounded-md px-1.5 py-1 text-center transition-all ${
@@ -215,8 +216,8 @@ export default function SearchGridAxisControls({
                   ({countImpliedByStep})
                 </span>
               )}
-            </button>
-            <button
+            </Button>
+            <Button variant="ghost"
               type="button"
               onClick={() => onSampleMode('step')}
               className={`flex min-h-[3.25rem] min-w-0 flex-1 flex-col items-center justify-center rounded-md px-1.5 py-1 text-center transition-all ${
@@ -231,7 +232,7 @@ export default function SearchGridAxisControls({
                   ({stepImpliedByCount})
                 </span>
               )}
-            </button>
+            </Button>
           </div>
           {sampleMode === 'count' ? (
             <ParameterSlider

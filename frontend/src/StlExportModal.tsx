@@ -1,3 +1,4 @@
+import { Button } from '@blain-projects/ui';
 /**
  * STL Export modal — drives the backend `/api/export/stl-stream` NDJSON
  * pipeline and surfaces every Onshape stage (auth, variables, translation
@@ -338,7 +339,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                 <p className="text-xs text-neutral-400 truncate">Pushes the current cam configuration to Onshape, runs a translation, then downloads the resulting STL.</p>
               </div>
             </div>
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={handleClose}
               disabled={busy}
@@ -346,7 +347,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
               aria-label="Close STL export"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
 
           <div className="px-5 py-4 space-y-4 overflow-y-auto">
@@ -462,7 +463,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                     {result.translation_id ? ` · translation ${result.translation_id.slice(0, 8)}…` : ''}
                   </p>
                 </div>
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={async () => {
                     setCurrentMessage('Downloading STL…');
@@ -481,30 +482,30 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/60 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-600/30 transition-colors"
                 >
                   <FolderDown className="h-4 w-4" /> Download STL
-                </button>
+                </Button>
               </div>
             )}
           </div>
 
           <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-neutral-700/80 bg-neutral-950/40 rounded-b-2xl">
             {busy ? (
-              <button
+              <Button variant="ghost"
                 type="button"
                 onClick={handleCancel}
                 className="inline-flex items-center gap-2 rounded-lg border border-red-700/60 bg-red-600/20 hover:bg-red-600/30 text-red-200 px-3 py-1.5 text-xs font-semibold"
               >
                 <StopCircle className="h-3.5 w-3.5" /> Cancel
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button variant="ghost"
                 type="button"
                 onClick={handleClose}
                 className="rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-1.5 text-xs font-semibold"
               >
                 Close
-              </button>
+              </Button>
             )}
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={handleStart}
               disabled={busy || (status !== null && !ready)}
@@ -513,7 +514,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               {phase === 'success' || phase === 'error' || phase === 'cancelled' ? 'Run again' : 'Start export'}
-            </button>
+            </Button>
           </div>
         </motion.div>
       </motion.div>

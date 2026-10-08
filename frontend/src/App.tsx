@@ -1,3 +1,5 @@
+import { Textarea } from '@blain-projects/ui';
+import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
@@ -57,6 +59,7 @@ function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | 
 }
 
 export default function App() {
+  const { theme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<'explorer' | 'builder'>('explorer');
   const [params, setParams] = useState<SimulationParams>(defaultParams);
   const [savedParams, setSavedParams] = useState<SimulationParams | null>(null);
@@ -522,10 +525,11 @@ export default function App() {
 
   return (
     <TooltipHintsProvider enabled={guidanceMode}>
-    <div className="h-screen w-full bg-neutral-900 text-neutral-100 p-4 font-sans overflow-hidden flex flex-col">
+    <div className="bui-workspace-shell cam-workspace w-full text-neutral-100 px-4 pb-4 overflow-hidden flex flex-col">
 
-      {/* Header */}
-      <header className="shrink-0 flex justify-between items-center pb-3 border-b border-neutral-800">
+      <BlueprintBackground />
+      {/* Shared chrome; simulation controls stay in the tool. */}
+      <Header variant="full-width" className="cam-kit-header">
         <div className="flex items-center gap-6">
           <div>
             <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent leading-tight hidden lg:block">
@@ -536,14 +540,14 @@ export default function App() {
 
           {/* Tab Bar */}
           <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
-            <button onClick={() => setActiveTab('explorer')}
+            <Button variant="ghost" onClick={() => setActiveTab('explorer')}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${activeTab === 'explorer' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <Search className="w-3.5 h-3.5" /> Explorer
-            </button>
-            <button onClick={() => setActiveTab('builder')}
+            </Button>
+            <Button variant="ghost" onClick={() => setActiveTab('builder')}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <FlaskConical className="w-3.5 h-3.5" /> Profile Builder
-            </button>
+            </Button>
           </div>
 
           {/* Context pill (tab-specific) */}
@@ -556,12 +560,12 @@ export default function App() {
                     {activeConfigName}{hasChanges ? <span className="text-amber-400">*</span> : null}
                   </span>
                 </div>
-                <button type="button" onClick={() => { fetchConfigs(); setShowImportModal(true); }}
+                <Button variant="ghost" type="button" onClick={() => { fetchConfigs(); setShowImportModal(true); }}
                   className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70"
                   title="Browse and import a JSON config from the repo" aria-label="Import configuration from repository">
                   <Import className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
                   <span className="hidden sm:inline">Import</span>
-                </button>
+                </Button>
               </div>
               <AnimatePresence>
                 {hasChanges && (
@@ -591,7 +595,7 @@ export default function App() {
                     {activeBuilderExperienceName}
                   </span>
                 </div>
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={() => setOpenBuilderExperienceSignal((n) => n + 1)}
                   className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70"
@@ -600,7 +604,7 @@ export default function App() {
                 >
                   <Import className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
                   <span className="hidden sm:inline">Import</span>
-                </button>
+                </Button>
               </div>
               <AnimatePresence>
                 {builderSaveExperienceVisible && (
@@ -629,7 +633,7 @@ export default function App() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <button
+          <Button variant="ghost"
             type="button"
             onClick={() => setShowStlExport(true)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-600/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 hover:text-emerald-100 text-[11px] font-semibold uppercase tracking-wider transition-colors shadow-sm"
@@ -638,8 +642,8 @@ export default function App() {
           >
             <Box className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Export STL</span>
-          </button>
-          <button
+          </Button>
+          <Button variant="ghost"
             type="button"
             onClick={() => setGuidanceMode((v) => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold uppercase tracking-wider transition-colors ${
@@ -652,11 +656,12 @@ export default function App() {
           >
             <CircleHelp className="w-3.5 h-3.5" />
             Guidance
-          </button>
+          </Button>
           <span className={`flex h-3 w-3 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} />
           <span className="text-sm text-neutral-400">{data ? 'Connected' : 'Disconnected'}</span>
         </div>
-      </header>
+      <ThemeToggle theme={theme} onThemeChange={setTheme} />
+      </Header>
 
       {error && (
         <div className="shrink-0 mt-4 bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg text-sm">{error}</div>
@@ -674,12 +679,12 @@ export default function App() {
                 <h2 className="text-lg font-bold text-white uppercase tracking-tight truncate">Configuration</h2>
               </div>
               <div className="flex gap-2 shrink-0">
-                <input type="file" ref={fileInputRef} onChange={handleLoadConfig} accept=".json" className="hidden" />
-                <button onClick={handleSaveConfig}
+                <Input type="file" ref={fileInputRef} onChange={handleLoadConfig} accept=".json" className="hidden" />
+                <Button variant="ghost" onClick={handleSaveConfig}
                   className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 transition-all border border-blue-600/50 flex items-center justify-center shadow-sm"
                   title="Save Configuration as New File">
                   <Download className="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -689,7 +694,7 @@ export default function App() {
                   Note
                   {isModified('note') && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse hidden xl:block" />}
                 </label>
-                <textarea value={params.note} onChange={(e) => handleNoteChange(e.target.value)}
+                <Textarea value={params.note} onChange={(e) => handleNoteChange(e.target.value)}
                   placeholder="Describe this profile..."
                   rows={3}
                   className={`w-full resize-y min-h-[4.5rem] rounded-lg border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 ${isModified('note') ? 'border-amber-500/50' : 'border-neutral-700'}`} />
@@ -784,10 +789,10 @@ export default function App() {
                     className="absolute inset-0 z-50 bg-neutral-800 rounded-xl border border-neutral-600 shadow-2xl flex flex-col items-stretch overflow-hidden">
                     <div className="flex justify-between items-center p-6 pb-2 border-b border-neutral-700/50 bg-neutral-800/80 backdrop-blur">
                       <h3 className="text-xl font-bold text-neutral-100">{maximizedInfo?.title}</h3>
-                      <button onClick={() => setMaximizedChart(null)}
+                      <Button variant="ghost" onClick={() => setMaximizedChart(null)}
                         className="p-2 rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors focus:outline-none focus:ring-2 ring-blue-500">
                         <Minimize2 className="w-6 h-6" />
-                      </button>
+                      </Button>
                     </div>
                     <div className="flex-1 w-full p-6">{maximizedInfo?.comp}</div>
                   </motion.div>
@@ -801,15 +806,15 @@ export default function App() {
                   <h3 className="text-sm font-bold text-neutral-200 uppercase tracking-wider">Pneumatic Flow vs Y</h3>
                 </div>
                 <div className="z-10 w-full flex justify-end gap-1">
-                  <button onClick={() => setChartSettingsTarget('pneumatic')}
+                  <Button variant="ghost" onClick={() => setChartSettingsTarget('pneumatic')}
                     className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'pneumatic' ? 'opacity-0' : isExplorerChartSettingsModified('pneumatic') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
                     title="Chart settings">
                     <Cog className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => setMaximizedChart('pneumatic')}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setMaximizedChart('pneumatic')}
                     className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'pneumatic' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
                     <Maximize2 className="w-4 h-4" />
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'pneumatic' ? 'opacity-0' : 'opacity-100'}`}>
@@ -824,15 +829,15 @@ export default function App() {
                     <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200 uppercase tracking-wider">Gap vs Y</h3>
                   </div>
                   <div className="z-10 w-full flex justify-end gap-1">
-                    <button onClick={() => setChartSettingsTarget('gapY')}
+                    <Button variant="ghost" onClick={() => setChartSettingsTarget('gapY')}
                       className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapY' ? 'opacity-0' : isExplorerChartSettingsModified('gapY') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
                       title="Chart settings">
                       <Cog className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => setMaximizedChart('gapY')}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setMaximizedChart('gapY')}
                       className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
                       <Maximize2 className="w-3.5 h-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'gapY' ? 'opacity-0' : 'opacity-100'}`}>{renderGapY()}</div>
@@ -844,15 +849,15 @@ export default function App() {
                     <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200 uppercase tracking-wider">Gap vs Time</h3>
                   </div>
                   <div className="z-10 w-full flex justify-end gap-1">
-                    <button onClick={() => setChartSettingsTarget('gapTime')}
+                    <Button variant="ghost" onClick={() => setChartSettingsTarget('gapTime')}
                       className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapTime' ? 'opacity-0' : isExplorerChartSettingsModified('gapTime') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
                       title="Chart settings">
                       <Cog className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => setMaximizedChart('gapTime')}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setMaximizedChart('gapTime')}
                       className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapTime' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
                       <Maximize2 className="w-3.5 h-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'gapTime' ? 'opacity-0' : 'opacity-100'}`}>{renderGapTime()}</div>

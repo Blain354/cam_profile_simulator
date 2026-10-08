@@ -1,3 +1,4 @@
+import { Button, Input } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -139,9 +140,9 @@ export function ChartDomainSettingsModal({
       >
         <div className="flex items-center justify-between border-b border-neutral-800 p-4">
           <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-200">{title}</h3>
-          <button onClick={onClose} className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-white">
+          <Button variant="ghost" onClick={onClose} className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-white">
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
         <div className="space-y-4 p-4">
           <div className="grid grid-cols-2 gap-3">
@@ -168,12 +169,12 @@ export function ChartDomainSettingsModal({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">X min</label>
-                <input type="number" value={settings.xMin} onChange={(e) => setNum('xMin', e.target.value)}
+                <Input type="number" value={settings.xMin} onChange={(e) => setNum('xMin', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
               <div>
                 <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">X max</label>
-                <input type="number" value={settings.xMax} onChange={(e) => setNum('xMax', e.target.value)}
+                <Input type="number" value={settings.xMax} onChange={(e) => setNum('xMax', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
             </div>
@@ -182,12 +183,12 @@ export function ChartDomainSettingsModal({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">Y min</label>
-                <input type="number" value={settings.yMin} onChange={(e) => setNum('yMin', e.target.value)}
+                <Input type="number" value={settings.yMin} onChange={(e) => setNum('yMin', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
               <div>
                 <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">Y max</label>
-                <input type="number" value={settings.yMax} onChange={(e) => setNum('yMax', e.target.value)}
+                <Input type="number" value={settings.yMax} onChange={(e) => setNum('yMax', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
             </div>
@@ -214,14 +215,14 @@ export function Accordion({
   const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
     <div className={showBottomBorder ? 'border-b border-neutral-700/50 pb-2' : 'pb-2'}>
-      <button
+      <Button variant="ghost"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
         className="w-full flex cursor-pointer items-center justify-between rounded-lg border border-transparent px-2 py-2 text-sm font-semibold text-neutral-400 transition-all hover:border-neutral-700 hover:bg-neutral-700/30 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
       >
         <span>{title}</span>
         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-      </button>
+      </Button>
       <AnimatePresence initial={false}>
         {isOpen && (
           <motion.div
@@ -370,7 +371,7 @@ export function ParameterSlider({
             </span>
           )}
         </label>
-        <input
+        <Input
           type="number"
           value={value}
           min={min}
@@ -524,10 +525,10 @@ export function VerticalSystemSvgDiagram({
   return (
     <>
       {canInteract && (
-        <button type="button" onClick={resetView} title="Reset view"
+        <Button variant="ghost" type="button" onClick={resetView} title="Reset view"
           className="absolute bottom-2 right-2 z-10 p-2 rounded-lg bg-neutral-800/95 border border-neutral-600 text-neutral-300 hover:bg-neutral-700 hover:text-white shadow-md transition-colors focus:outline-none focus:ring-2 ring-blue-500">
           <RefreshCw className="w-4 h-4" />
-        </button>
+        </Button>
       )}
       <svg ref={svgRef} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} preserveAspectRatio="xMidYMid meet"
         className={`w-full h-full scale-y-[-1] touch-none select-none ${canInteract ? 'cursor-grab active:cursor-grabbing' : ''}`}
@@ -627,10 +628,10 @@ export function VerticalSystemView({
       {!isPreview && (
         <div className="flex items-center gap-3 mb-4 shrink-0 min-w-0">
           <h3 className="text-sm font-semibold text-neutral-300 uppercase tracking-wide min-w-0 flex-1 truncate">Vertical System</h3>
-          <button type="button" onClick={() => setDetails(!details)}
+          <Button variant="ghost" type="button" onClick={() => setDetails(!details)}
             className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white shadow-blue-500/20' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}>
             {details ? 'Hide Details' : 'Details'}
-          </button>
+          </Button>
         </div>
       )}
       <div className={`flex-1 w-full bg-neutral-900/60 rounded-lg border border-neutral-800/80 overflow-hidden relative ${isPreview ? 'rounded-xl border-blue-500/30' : ''}`}>
@@ -708,12 +709,12 @@ export function ConfigModal({
         <div className="w-64 shrink-0 min-w-0 border-r border-neutral-800 flex flex-col bg-neutral-900/50">
           <div className="p-4 border-b border-neutral-800 flex justify-between items-center min-w-0">
             <h3 className="text-sm font-bold text-white uppercase tracking-tighter truncate">Configurations</h3>
-            <button onClick={onClose} className="text-neutral-500 hover:text-white transition-colors shrink-0"><X className="w-4 h-4" /></button>
+            <Button variant="ghost" onClick={onClose} className="text-neutral-500 hover:text-white transition-colors shrink-0"><X className="w-4 h-4" /></Button>
           </div>
           <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">
             {configs.map(({ filename, note }) => (
               <div key={filename} className="group relative flex items-start min-w-0 max-w-full">
-                <button type="button" onMouseEnter={() => onHoverConfig(filename)} onClick={() => onSelectConfig(filename)}
+                <Button variant="ghost" type="button" onMouseEnter={() => onHoverConfig(filename)} onClick={() => onSelectConfig(filename)}
                   onDoubleClick={() => onOpenConfig(filename)} title={`${filename} — double-click to open`}
                   className={`min-w-0 w-full max-w-full text-left px-3 py-2 rounded-lg text-xs transition-all pr-10 ${selectedConfig === filename ? 'bg-blue-600 text-white font-bold' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
                   <div className="flex items-start justify-between gap-2 w-full min-w-0">
@@ -727,29 +728,29 @@ export function ConfigModal({
                   {note.trim() ? (
                     <p className={`mt-1 text-[10px] leading-snug line-clamp-2 font-normal break-words [overflow-wrap:anywhere] ${selectedConfig === filename ? 'text-blue-100/90' : 'text-neutral-500 group-hover:text-neutral-400'}`}>{note.trim()}</p>
                   ) : null}
-                </button>
-                <button onClick={(e) => onDeleteConfig(filename, e)}
+                </Button>
+                <Button variant="ghost" onClick={(e) => onDeleteConfig(filename, e)}
                   className="absolute right-2 top-2 p-1.5 rounded-md text-neutral-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all" title="Delete Config">
                   <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
           <div className="p-4 border-t border-neutral-800">
-            <button disabled={!selectedConfig} onClick={onApply}
+            <Button variant="ghost" disabled={!selectedConfig} onClick={onApply}
               className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-all shadow-lg">
               OPEN CONFIG
-            </button>
+            </Button>
           </div>
         </div>
         <div className="flex-1 bg-neutral-950 flex flex-col">
           <div className="p-4 border-b border-neutral-800 flex justify-between items-center bg-neutral-900/40">
             <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest">Configuration Preview</h4>
             {selectedConfig && (
-              <button onClick={() => onSetDefault(selectedConfig)} disabled={defaultConfig === selectedConfig}
+              <Button variant="ghost" onClick={() => onSetDefault(selectedConfig)} disabled={defaultConfig === selectedConfig}
                 className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${defaultConfig === selectedConfig ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 opacity-50' : 'bg-blue-600/10 border-blue-500/30 text-blue-400 hover:bg-blue-600/20'}`}>
                 {defaultConfig === selectedConfig ? 'IS DEFAULT' : 'DEFINE AS DEFAULT'}
-              </button>
+              </Button>
             )}
           </div>
           <div className="flex-1 min-h-0 flex">

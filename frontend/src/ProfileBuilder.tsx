@@ -1,3 +1,5 @@
+import { Textarea } from '@blain-projects/ui';
+import { Button, Input } from '@blain-projects/ui';
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
@@ -1838,7 +1840,7 @@ export default function ProfileBuilder({
           <DelayedHoverHint content={builderExperienceNote}>
             <div className="space-y-2 pb-2 border-b border-neutral-700/50">
               <label className="text-sm font-medium tracking-tight text-neutral-300">Experience note</label>
-              <textarea
+              <Textarea
                 value={experienceNote}
                 onChange={(e) => setExperienceNote(e.target.value)}
                 placeholder="Explain this solve context and why it is useful. Parameters are already saved and diplayed in the experience browser"
@@ -2077,7 +2079,7 @@ export default function ProfileBuilder({
 
         <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-4">
           <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
-          <button
+          <Button variant="ghost"
             type="button"
             onClick={() => setShowInfoPanel((v) => !v)}
             className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
@@ -2089,7 +2091,7 @@ export default function ProfileBuilder({
           >
             <span>Context & Metrics</span>
             {showInfoPanel ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          </button>
+          </Button>
 
           {showInfoPanel && (
             <div className="space-y-3 p-3">
@@ -2133,7 +2135,7 @@ export default function ProfileBuilder({
           </div>
 
           <div className="relative space-y-2.5 pt-1">
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={handleSolve}
               disabled={solving || theoreticalGapMm <= 0}
@@ -2149,7 +2151,7 @@ export default function ProfileBuilder({
                   <span className="text-[11px] font-medium text-emerald-100/90">({solveButtonHint})</span>
                 </span>
               )}
-            </button>
+            </Button>
             {solverInputsStale && !solving && lastSolveRequestBody && (
               <DelayedHoverHint
                 delayMs={350}
@@ -2199,21 +2201,21 @@ export default function ProfileBuilder({
                 </div>
               )}
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={handleTerminateSolve}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/50 bg-amber-950/35 py-2.5 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-900/50"
                 >
                   Terminate now
-                </button>
-                <button
+                </Button>
+                <Button variant="ghost"
                   type="button"
                   onClick={handleCancelSolve}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/50 bg-red-950/40 py-2.5 text-sm font-semibold text-red-200 transition-colors hover:bg-red-900/50"
                 >
                   <OctagonX className="h-4 w-4 shrink-0" />
                   Cancel simulation
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -2262,21 +2264,21 @@ export default function ProfileBuilder({
                 The (K × height × deadband) grid can take several minutes depending on resolution.
               </p>
               <div className="mt-2 grid w-full max-w-md grid-cols-1 gap-2 sm:grid-cols-2">
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={handleTerminateSolve}
                   className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 bg-amber-950/35 px-6 py-2.5 text-sm font-semibold text-amber-200 transition-colors hover:bg-amber-900/50"
                 >
                   Terminate now
-                </button>
-                <button
+                </Button>
+                <Button variant="ghost"
                   type="button"
                   onClick={handleCancelSolve}
                   className="flex items-center justify-center gap-2 rounded-xl border border-red-500/50 bg-red-950/40 px-6 py-2.5 text-sm font-semibold text-red-200 transition-colors hover:bg-red-900/50"
                 >
                   <OctagonX className="h-4 w-4 shrink-0" />
                   Cancel simulation
-                </button>
+                </Button>
               </div>
             </motion.div>
           ) : result ? (
@@ -2413,10 +2415,10 @@ export default function ProfileBuilder({
                       </div>
                     )}
                     <div className="ml-auto flex items-center">
-                      <button onClick={handleApply}
+                      <Button variant="ghost" onClick={handleApply}
                         className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-all shadow-lg flex items-center gap-2">
                         Apply to Explorer <ArrowRight className="w-4 h-4" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ) : (
@@ -2443,14 +2445,14 @@ export default function ProfileBuilder({
                         >
                           <div className="flex shrink-0 items-center justify-between border-b border-neutral-700/50 bg-neutral-800/80 p-6 pb-2 backdrop-blur">
                             <h3 className="text-xl font-bold text-neutral-100">{maximizedInfo.title}</h3>
-                            <button
+                            <Button variant="ghost"
                               type="button"
                               onClick={() => setMaximizedChart(null)}
                               className="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                               title="Exit fullscreen"
                             >
                               <Minimize2 className="h-6 w-6" />
-                            </button>
+                            </Button>
                           </div>
                           <div className="min-h-0 w-full flex-1 overflow-hidden p-6">{maximizedInfo.comp}</div>
                         </motion.div>
@@ -2467,22 +2469,22 @@ export default function ProfileBuilder({
                         <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-200">Flow vs Y</h3>
                       </div>
                       <div className="z-10 flex w-full justify-end gap-1">
-                        <button
+                        <Button variant="ghost"
                           type="button"
                           onClick={() => setChartSettingsTarget('flowY')}
                           className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                           title="Chart settings"
                         >
                           <Cog className="h-4 w-4" />
-                        </button>
-                        <button
+                        </Button>
+                        <Button variant="ghost"
                           type="button"
                           onClick={() => setMaximizedChart('flowY')}
                           className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                           title="Expand chart"
                         >
                           <Maximize2 className="h-4 w-4" />
-                        </button>
+                        </Button>
                       </div>
                     </div>
                     <div className={`min-h-0 w-full flex-1 ${maximizedChart === 'flowY' ? 'opacity-0' : 'opacity-100'}`}>
@@ -2524,22 +2526,22 @@ export default function ProfileBuilder({
                           <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400 lg:text-neutral-200">Chamber Pressure</h3>
                         </div>
                         <div className="z-10 flex w-full justify-end gap-1">
-                          <button
+                          <Button variant="ghost"
                             type="button"
                             onClick={() => setChartSettingsTarget('pressure')}
                             className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Chart settings"
                           >
                             <Cog className="h-3.5 w-3.5" />
-                          </button>
-                          <button
+                          </Button>
+                          <Button variant="ghost"
                             type="button"
                             onClick={() => setMaximizedChart('pressure')}
                             className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Expand chart"
                           >
                             <Maximize2 className="h-3.5 w-3.5" />
-                          </button>
+                          </Button>
                         </div>
                       </div>
                       <div className={`min-h-0 w-full flex-1 ${maximizedChart === 'pressure' ? 'opacity-0' : 'opacity-100'}`}>
@@ -2591,22 +2593,22 @@ export default function ProfileBuilder({
                           <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400 lg:text-neutral-200">Cam Profile</h3>
                         </div>
                         <div className="z-10 flex w-full justify-end gap-1">
-                          <button
+                          <Button variant="ghost"
                             type="button"
                             onClick={() => setChartSettingsTarget('vertical')}
                             className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Chart settings"
                           >
                             <Cog className="h-3.5 w-3.5" />
-                          </button>
-                          <button
+                          </Button>
+                          <Button variant="ghost"
                             type="button"
                             onClick={() => setMaximizedChart('vertical')}
                             className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Expand view"
                           >
                             <Maximize2 className="h-3.5 w-3.5" />
-                          </button>
+                          </Button>
                         </div>
                       </div>
                       <div className={`min-h-0 w-full flex-1 overflow-hidden ${maximizedChart === 'vertical' ? 'opacity-0' : 'opacity-100'}`}>
@@ -2661,12 +2663,12 @@ export default function ProfileBuilder({
             <div className="w-72 shrink-0 min-w-0 border-r border-neutral-800 flex flex-col bg-neutral-900/50">
               <div className="h-14 px-4 border-b border-neutral-800 flex justify-between items-center min-w-0">
                 <h3 className="text-sm font-bold text-white uppercase tracking-tighter truncate">Builder Experiences</h3>
-                <button onClick={() => setShowExperienceModal(false)} className="text-neutral-500 hover:text-white transition-colors shrink-0">
+                <Button variant="ghost" onClick={() => setShowExperienceModal(false)} className="text-neutral-500 hover:text-white transition-colors shrink-0">
                   <X className="w-4 h-4" />
-                </button>
+                </Button>
               </div>
               <div className="px-3 pt-3 pb-2 border-b border-neutral-800/70">
-                <input
+                <Input
                   type="text"
                   value={experienceQuery}
                   onChange={(e) => setExperienceQuery(e.target.value)}
@@ -2677,7 +2679,7 @@ export default function ProfileBuilder({
               <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">
                 {filteredExperiences.map(({ filename, note }) => (
                   <div key={filename} className="group relative flex items-start min-w-0 max-w-full">
-                    <button
+                    <Button variant="ghost"
                       type="button"
                       onMouseEnter={() => { void loadExperiencePreview(filename); }}
                       onClick={() => setSelectedExperience(filename)}
@@ -2688,14 +2690,14 @@ export default function ProfileBuilder({
                       {note.trim() ? (
                         <p className={`mt-1 text-[10px] leading-snug line-clamp-2 font-normal break-words [overflow-wrap:anywhere] ${selectedExperience === filename ? 'text-emerald-100/90' : 'text-neutral-500 group-hover:text-neutral-400'}`}>{note.trim()}</p>
                       ) : null}
-                    </button>
-                    <button
+                    </Button>
+                    <Button variant="ghost"
                       onClick={(e) => { void deleteExperience(filename, e); }}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-neutral-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
                       title="Delete experience"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 ))}
                 {filteredExperiences.length === 0 && (
@@ -2705,13 +2707,13 @@ export default function ProfileBuilder({
                 )}
               </div>
               <div className="p-4 border-t border-neutral-800">
-                <button
+                <Button variant="ghost"
                   disabled={!selectedExperience}
                   onClick={() => { void applyExperience(); }}
                   className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-all shadow-lg"
                 >
                   LOAD EXPERIENCE
-                </button>
+                </Button>
               </div>
             </div>
             <div className="flex-1 bg-neutral-950 flex flex-col min-h-0">
