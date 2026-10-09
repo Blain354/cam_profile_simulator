@@ -12,6 +12,13 @@ dialog (`window.showSaveFilePicker`, or `<a download>` fallback). That
 extra click is intentional: browsers require a direct user gesture for the
 File System Access API.
 
+**Closure ramp (`ramp_enabled`):** the Onshape sketch only models the
+closed-side plateau. If the request body has `ramp_enabled: true`,
+`POST /api/export/stl-stream` returns **HTTP 422** before any Onshape call
+(`backend/main.py`). The modal shows the same constraint and disables
+**Start export** (`frontend/src/StlExportModal.tsx`). Turn the toggle off
+(or wait for a matching CAD ramp) before exporting.
+
 
 ## High-level flow
 
@@ -154,6 +161,7 @@ Click **Export STL** in the header. The modal will:
 | Symptom | Likely cause |
 |---------|--------------|
 | Modal shows "Onshape pipeline not fully configured" | Missing env vars — restart backend after editing `.env`. |
+| **Start export** disabled with amber “Closure ramp STL export…” banner | Explorer/Builder has **Closure ramp** on — CAD export is plateau-only; disable the toggle or expect HTTP 422 from `/api/export/stl-stream`. |
 | `HTTP 401: Unauthorized` event in the log | Wrong access/secret key, or clock skew > 5 min. |
 | Polling stalls at ~50% forever | Onshape model has regen errors — fix in the CAD before retrying. |
 | Save dialog never appears in Firefox | Firefox doesn't support `showSaveFilePicker` — the frontend falls back to `<a download>` so the browser uses its default download folder. |
@@ -165,3 +173,5 @@ Click **Export STL** in the header. The modal will:
   4–10 calls depending on polling cycles.
 - One STL job is cached for **10 minutes** under `_stl_jobs` (max 12
   concurrent jobs). Beyond that, the user must re-export.
+- **Closure ramp profiles cannot be exported** until the Onshape sketch
+  reproduces the ramp; the API refuses those jobs with 422.
