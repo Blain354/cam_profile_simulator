@@ -68,6 +68,7 @@ class SimRequest(BaseModel):
     K: float = 2.0
     deadband: float = 1.5
     default_distance: float = 0.35
+    ramp_enabled: bool = False
     bushing_diameter: float = 3.0
     lead_screw_pitch: float = 0.5
     tube_id: float = 2.0
@@ -88,6 +89,7 @@ def simulate(req: SimRequest):
         K=req.K,
         deadband=req.deadband,
         default_distance=req.default_distance,
+        ramp_enabled=req.ramp_enabled,
         bushing_diameter=req.bushing_diameter,
         lead_screw_pitch=req.lead_screw_pitch,
         tube_id=req.tube_id,
@@ -108,6 +110,7 @@ class SolveRequest(BaseModel):
     chamber_volume_ml: float = 5.0
     compliance: float = 0.7
     thickness: float = 2.5
+    ramp_enabled: bool = False
     gap_at_y0_margin_mm: float = 0.1
 
     k_min: float = 0.5
@@ -161,6 +164,7 @@ def _solver_params_from_request(req: SolveRequest) -> SolverParams:
         chamber_volume_ml=req.chamber_volume_ml,
         compliance=req.compliance,
         thickness=req.thickness,
+        ramp_enabled=req.ramp_enabled,
         gap_at_y0_margin_mm=req.gap_at_y0_margin_mm,
         k_min=req.k_min,
         k_max=req.k_max,
@@ -412,6 +416,7 @@ class STLExportRequest(BaseModel):
     K: Optional[float] = None
     deadband: Optional[float] = None
     default_distance: Optional[float] = None
+    ramp_enabled: bool = False
     bushing_diameter: Optional[float] = None
     lead_screw_pitch: Optional[float] = None
     tube_id: Optional[float] = None
@@ -462,6 +467,11 @@ def export_stl_stream(req: STLExportRequest):
     via `/api/export/stl-download/{job_id}`) or `{"type":"error", ...}`.
     """
 
+    if req.ramp_enabled:
+        raise HTTPException(
+            status_code=422,
+            detail="Closure ramp STL export requires a matching ramp in the Onshape sketch. The current CAD export supports the plateau profile only.",
+        )
     payload = req.model_dump(exclude_none=True)
     filename = payload.pop("filename", None) or f"cam-profile-{int(time.time())}.stl"
 

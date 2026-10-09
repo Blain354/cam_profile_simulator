@@ -11,7 +11,7 @@ import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
-  ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ChartDomainSettingsModal,
+  ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ChartDomainSettingsModal, ClosureRampToggle,
   apiFetch, defaultParams, mergeConfigParams,
 } from './components';
 import type { ChartDomainSettings } from './components';
@@ -346,7 +346,7 @@ export default function App() {
     simulateAbortRef.current?.abort();
   }, []);
 
-  const handleParamChange = (key: Exclude<keyof SimulationParams, 'note'>, value: number) => {
+  const handleParamChange = (key: Exclude<keyof SimulationParams, 'note'>, value: number | boolean) => {
     setParams(prev => ({ ...prev, [key]: value }));
   };
 
@@ -704,6 +704,7 @@ export default function App() {
                 <div className="space-y-5 pt-2">
                   <ParameterSlider label="Motor Speed" value={params.motor_speed} min={10} max={1000} step={10} onChange={(val) => handleParamChange('motor_speed', val)} isModified={isModified('motor_speed')} description={explorerMotorSpeed} />
                   <ParameterSlider label="Default Dist (mm)" value={params.default_distance} min={0.01} max={2.0} step={0.01} onChange={(val) => handleParamChange('default_distance', val)} isModified={isModified('default_distance')} description={explorerDefaultDist} />
+                  <ClosureRampToggle value={params.ramp_enabled} onChange={(val) => handleParamChange('ramp_enabled', val)} isModified={isModified('ramp_enabled')} />
                   <ParameterSlider label="Thickness (mm)" value={params.thickness} min={0.1} max={5.0} step={0.1} onChange={(val) => handleParamChange('thickness', val)} isModified={isModified('thickness')} description={explorerThickness} />
                   <ParameterSlider label="Height (mm)" value={params.height} min={0.01} max={8.0} step={0.01} onChange={(val) => handleParamChange('height', val)} isModified={isModified('height')} description={explorerHeight} />
                   <ParameterSlider label="Curve Gain (K)" value={params.K} min={0.1} max={10.0} step={0.1} onChange={(val) => handleParamChange('K', val)} isModified={isModified('K')} description={explorerK} />
@@ -741,6 +742,7 @@ export default function App() {
               <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-2">
                 <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Derived Stats</h3>
                 <StatRow label="Gap at Y=0" value={`${stats.gapAtY0.toFixed(3)} mm`} />
+                {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`} />}
                 <StatRow
                   label="Static flow @ Y=0.5 mm"
                   value={

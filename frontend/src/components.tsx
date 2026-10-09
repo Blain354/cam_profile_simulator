@@ -16,6 +16,7 @@ export interface SimulationParams {
   K: number;
   deadband: number;
   default_distance: number;
+  ramp_enabled: boolean;
   bushing_diameter: number;
   lead_screw_pitch: number;
   tube_id: number;
@@ -62,6 +63,9 @@ export interface SimulationResult {
   Y_end: number;
   equalization_time_ms: number;
   total_volume_ml: number;
+  ramp_enabled?: boolean;
+  ramp_closed_Y?: number | null;
+  ramp_join_Y?: number | null;
 }
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
@@ -78,6 +82,7 @@ export const defaultParams: SimulationParams = {
   K: 2.0,
   deadband: 1.5,
   default_distance: 0.35,
+  ramp_enabled: false,
   bushing_diameter: 3.0,
   lead_screw_pitch: 0.5,
   tube_id: 2.0,
@@ -107,10 +112,38 @@ export function mergeConfigParams(raw: Partial<SimulationParams> & Record<string
   return {
     ...defaultParams,
     ...raw,
+    ramp_enabled: typeof raw.ramp_enabled === 'boolean' ? raw.ramp_enabled : false,
     note: typeof raw.note === 'string' ? raw.note : defaultParams.note,
     chamber_volume_ml: typeof raw.chamber_volume_ml === 'number' ? raw.chamber_volume_ml : defaultParams.chamber_volume_ml,
     chart_settings: (raw.chart_settings && typeof raw.chart_settings === 'object') ? raw.chart_settings as Record<string, unknown> : defaultParams.chart_settings,
   };
+}
+
+export function ClosureRampToggle({
+  value,
+  onChange,
+  isModified = false,
+}: {
+  value: boolean;
+  onChange: (value: boolean) => void;
+  isModified?: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Button variant="ghost" type="button" role="switch" aria-checked={value}
+        onClick={() => onChange(!value)}
+        className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${isModified ? 'border-amber-500/50 text-amber-300' : 'border-neutral-700 text-neutral-300'}`}
+        title="Replace the 10 mm closed-side plateau with a smooth ramp tangent to the opening curve. The geometric offset reaches 0 mm at maximum closure; bushing play and tube compliance still determine the physical gap and flow.">
+        <span>Closure ramp</span>
+        <span aria-hidden="true" className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${value ? 'bg-blue-600' : 'bg-neutral-600'}`}>
+          <span className={`h-4 w-4 rounded-full bg-white transition-transform ${value ? 'translate-x-4' : ''}`} />
+        </span>
+      </Button>
+      <p className="text-[10px] leading-snug text-neutral-400">
+        {value ? '0 mm → Default Dist over 10 mm, with a tangent join.' : 'Constant Default Dist on the closed-side plateau.'}
+      </p>
+    </div>
+  );
 }
 
 export function ChartDomainSettingsModal({
@@ -449,7 +482,8 @@ export function VerticalSystemSvgDiagram({
 
   const autoMinX = details ? -r - 0.6 : -r - 0.4;
   const autoMaxX = details ? maxCamX + 1.0 : maxCamX + 0.4;
-  const autoMinY = (details || isPreview) ? -params.deadband - r - 1.2 : -params.deadband - r - 0.4;
+  const legacyMinY = (details || isPreview) ? -params.deadband - r - 1.2 : -params.deadband - r - 0.4;
+  const autoMinY = data.ramp_enabled && data.ramp_closed_Y != null ? Math.min(legacyMinY, data.ramp_closed_Y - 0.4) : legacyMinY;
   const autoMaxY = (details || isPreview) ? params.height + r + 1.2 : params.height + r + 0.4;
   const minX = domainOverride && !domainOverride.autoX ? domainOverride.xMin : autoMinX;
   const maxX = domainOverride && !domainOverride.autoX ? domainOverride.xMax : autoMaxX;
@@ -558,12 +592,13 @@ export function VerticalSystemSvgDiagram({
               <text x={maxCamX + 0.8} y={-(-params.deadband / 2 - 0.2)} fill="#10b981" fontSize="0.22" fontWeight="bold" textAnchor="end" dominantBaseline="hanging">Height {params.height.toFixed(2)}mm</text>
             </g>
 
-            <line x1={r} y1={minY + 0.5} x2={flatCamX} y2={minY + 0.5} stroke="#f59e0b" strokeWidth="0.03" />
-            <line x1={r} y1={minY + 0.3} x2={r} y2={minY + 0.7} stroke="#f59e0b" strokeWidth="0.05" />
-            <line x1={flatCamX} y1={minY + 0.3} x2={flatCamX} y2={minY + 0.7} stroke="#f59e0b" strokeWidth="0.05" />
+            <line x1={r} y1={data.ramp_join_Y ?? minY + 0.5} x2={flatCamX} y2={data.ramp_join_Y ?? minY + 0.5} stroke="#f59e0b" strokeWidth="0.03" />
+            <line x1={r} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={r} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
+            <line x1={flatCamX} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={flatCamX} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
             <g transform="scale(1,-1)">
-              <text x={flatCamX + 0.3} y={-(minY + 0.5)} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">Def. Dist {params.default_distance.toFixed(3)}mm</text>
+              <text x={flatCamX + 0.3} y={-(data.ramp_join_Y ?? minY + 0.5)} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">Def. Dist {params.default_distance.toFixed(3)}mm</text>
               <text x={flatCamX + 0.3} y={-(minY + 0.85)} fill="#60a5fa" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">K {params.K.toFixed(3)}</text>
+              {data.ramp_enabled && data.ramp_closed_Y != null && <text x={r + 0.3} y={-data.ramp_closed_Y} fill="#10b981" fontSize="0.22" fontWeight="bold" dominantBaseline="middle">Ramp end: 0 mm offset</text>}
             </g>
 
             {(() => {

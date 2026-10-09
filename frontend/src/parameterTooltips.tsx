@@ -21,6 +21,7 @@ export const explorerDefaultDist: ReactNode = (
   <Tip title="Default distance">
     <p>Nominal radial gap between bushing and cam at the reference configuration. It shifts where the silicone tube starts relative to the cam: larger values generally move first contact to a different stroke.</p>
     <p>Together with deadband and profile height/K, it sets how much squeeze you have before significant flow area opens.</p>
+    <p>With Closure ramp enabled, this is the geometric offset at the join with the opening curve. The offset decreases smoothly to 0 mm over the existing 10 mm closure section. Physical gap also includes 0.25 mm of bushing play.</p>
   </Tip>
 );
 
@@ -74,7 +75,8 @@ export const explorerPressure: ReactNode = (
 export const explorerCompliance: ReactNode = (
   <Tip title="Compliance (mm / MPa)">
     <p>Empirical radial expansion of the tube per megapascal of internal pressure. It replaces a generic hardness number with a direct elastic response used in the model.</p>
-    <p>The “Opening” readout is the static radial swell at the current pressure — the gap component that must be closed before choked flow can start.</p>
+    <p>The “Opening” readout is the static radial swell at the current pressure. Flow is zero when physical gap ≤ OD − ID − compliance × pressure (MPa). Increasing compliance lets flow persist at smaller gaps.</p>
+    <p>This is a static elastic approximation. The model does not calculate radial contact force, silicone relaxation, or hysteresis.</p>
   </Tip>
 );
 

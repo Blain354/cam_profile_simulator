@@ -370,6 +370,12 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
               </p>
             </section>
 
+            {params.ramp_enabled && (
+              <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+                Closure ramp STL export requires the same ramp in the Onshape sketch. The current CAD export supports the plateau profile only.
+              </div>
+            )}
+
             {/* Onshape backend status */}
             {status && !ready && (
               <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200 flex items-start gap-2">
@@ -508,9 +514,9 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
             <Button variant="ghost"
               type="button"
               onClick={handleStart}
-              disabled={busy || (status !== null && !ready)}
+              disabled={busy || params.ramp_enabled || (status !== null && !ready)}
               className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-xs font-semibold shadow-lg shadow-emerald-600/30"
-              title={ready ? 'Start the Onshape STL export pipeline' : 'Configure Onshape credentials first'}
+              title={params.ramp_enabled ? 'The Onshape sketch does not support the closure ramp yet' : ready ? 'Start the Onshape STL export pipeline' : 'Configure Onshape credentials first'}
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               {phase === 'success' || phase === 'error' || phase === 'cancelled' ? 'Run again' : 'Start export'}

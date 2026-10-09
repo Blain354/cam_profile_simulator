@@ -143,6 +143,33 @@ ONSHAPE_WORKSPACE_ID=...
 ONSHAPE_ELEMENT_ID=...
 ```
 
+## Rampe de fermeture optionnelle
+
+Le toggle **Closure ramp**, dans l'Explorer et le Profile Builder, remplace le
+plateau cote fermeture par une rampe sur ses 10 mm existants. `ramp_enabled`
+est sauvegarde avec les configurations et les experiences; les anciennes
+configurations conservent le plateau par defaut.
+
+Avec `Y_join = -deadband/2` et `Y_closed = Y_join - 10`, le decalage de came
+vaut 0 mm a `Y_closed` et `default_distance` a `Y_join`. La rampe utilise
+`default_distance × (3u² - 2u³)`, ou `u = (Y - Y_closed)/10`, pour rejoindre
+tangentiellement la courbe d'ouverture inchangee. Les axes actuels sont
+conserves : Y croissant ouvre le tube. Les graphiques montrent toute la rampe.
+
+Le gap physique reste la distance minimale bushing/came plus le jeu radial
+de 0,25 mm. La rampe tient compte du contact avec les segments du profil,
+et non seulement de l'ecart horizontal a la meme coordonnee Y. Le debit est nul
+si `gap <= OD - ID - compliance × pression_MPa`. Le seuil depend donc du tube
+et de la pression; atteindre un decalage geometrique nul ne force pas
+artificiellement un debit nul. La compliance reste une approximation elastique
+statique : aucune force radiale, relaxation viscoelastique ou hysteresis n'est
+calculee.
+
+Le sketch Onshape actuel supporte uniquement le plateau. L'export STL en mode
+rampe est bloque explicitement jusqu'a ce que le sketch CAD reproduise ce mode.
+
+Validation numerique : `python -m unittest discover -s backend/tests -v`.
+
 ## Alignement avec le template `web_projects/`
 
 Ce projet suit la meme structure que `web_projects/web_projects_template/` :

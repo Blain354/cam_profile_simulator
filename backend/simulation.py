@@ -47,6 +47,9 @@ P_CRIT = ((GAMMA + 1) / 2.0) ** (GAMMA / (GAMMA - 1))  # ≈ 1.893
 # so to target a physical opening gap G (e.g. theoretical × safety factor), use default_distance ≈ G − AXIS_BUSHING_PLAY_MM.
 AXIS_BUSHING_PLAY_MM = 0.25
 
+# The closure ramp replaces the existing 10 mm straight wall, in the same Y domain.
+CLOSURE_SECTION_LENGTH_MM = 10.0
+
 def _target_free_air_ml_for_chamber_fill(chamber_volume_ml: float, input_pressure_psi: float) -> float:
     """
     Mass of air needed to bring a rigid chamber of volume chamber_volume_ml from
@@ -69,6 +72,7 @@ class SimulationParams:
     K: float = 2.0                   # gain
     deadband: float = 1.5            # mm
     default_distance: float = 0.35   # mm
+    ramp_enabled: bool = False      # replace the closed-side plateau with a tangent ramp
     bushing_diameter: float = 3.0    # mm
     lead_screw_pitch: float = 0.5    # mm
     tube_id: float = 2.0             # mm
@@ -104,6 +108,9 @@ class SimulationResult:
     Y_end: float
     equalization_time_ms: float       # time when P_chamber >= 0.99 * P_upstream (-1 if never)
     total_volume_ml: float            # integrated volume that entered the chamber
+    ramp_enabled: bool = False
+    ramp_closed_Y: Optional[float] = None
+    ramp_join_Y: Optional[float] = None
 
 
 def _compute_orifice_mass_flow_rate(area_mm2: float, P_up: float, P_down: float) -> float:
@@ -151,6 +158,25 @@ def _max_static_flow_l_min_full_opening(params: SimulationParams) -> float:
     return float(q_m3s * 60.0 * 1000.0)
 
 
+def _profile_distances_at_y(cam_x: np.ndarray, cam_y: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """Shortest distances to profile segments, without sample-point gap ripples.
+
+    Segment projection accounts for the circular follower contacting away from its
+    own Y coordinate. Repeated vertices at the section joins are harmless.
+    """
+    sx, sy = cam_x[:-1], cam_y[:-1]
+    dx, dy = np.diff(cam_x), np.diff(cam_y)
+    length_sq = dx**2 + dy**2
+    divisor = np.where(length_sq > 0.0, length_sq, 1.0)
+    distances = np.empty(len(ys))
+    for start in range(0, len(ys), 64):
+        y = ys[start : start + 64, None]
+        t = np.clip((-sx * dx + (y - sy) * dy) / divisor, 0.0, 1.0)
+        d_sq = (sx + t * dx)**2 + (sy + t * dy - y)**2
+        distances[start : start + 64] = np.sqrt(np.min(d_sq, axis=1))
+    return distances
+
+
 def _compute_static_flow_vs_y_arrays(
     params: SimulationParams,
     cam_x: np.ndarray,
@@ -162,11 +188,15 @@ def _compute_static_flow_vs_y_arrays(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Sample Y from y_start..y_end and return Y, min_gaps, flow_area, static_flow_l_min."""
     y_positions = np.linspace(y_start, y_end, n_sim)
-    min_gaps = np.zeros(n_sim)
-    for i, y_pos in enumerate(y_positions):
-        distances = np.sqrt(cam_x**2 + (cam_y - y_pos) ** 2)
-        gap = distances.min() - bushing_radius + AXIS_BUSHING_PLAY_MM
-        min_gaps[i] = gap
+    if params.ramp_enabled:
+        min_gaps = _profile_distances_at_y(cam_x, cam_y, y_positions) - bushing_radius + AXIS_BUSHING_PLAY_MM
+    else:
+        # Retain the legacy numerical path when the toggle is off.
+        min_gaps = np.zeros(n_sim)
+        for i, y_pos in enumerate(y_positions):
+            distances = np.sqrt(cam_x**2 + (cam_y - y_pos) ** 2)
+            gap = distances.min() - bushing_radius + AXIS_BUSHING_PLAY_MM
+            min_gaps[i] = gap
 
     pressure_mpa = params.input_pressure_psi * 0.00689476
     compliance_opening = params.compliance * pressure_mpa
@@ -191,6 +221,16 @@ def _compute_static_flow_vs_y_arrays(
         static_flow_l_min[i] = q_m3s * 60.0 * 1000.0
 
     return y_positions, min_gaps, flow_area, static_flow_l_min
+
+
+def _closure_ramp_offsets(u: np.ndarray, default_distance: float) -> np.ndarray:
+    """CAD radial offset: 0 at the closed end, dd at the Bézier join.
+
+    Smoothstep has zero slope at both ends. In particular, its tangent at the join
+    matches the unchanged quadratic Bézier's vertical tangent (dX/dY = 0).
+    The bushing's radial play remains part of the physical gap, not this offset.
+    """
+    return default_distance * u**2 * (3.0 - 2.0 * u)
 
 
 def _trim_y_domain_after_static_plateau(
@@ -286,10 +326,16 @@ def compute_simulation(params: SimulationParams) -> SimulationResult:
     bezier_Y = bezier_points[:, 0]
     bezier_X = bezier_points[:, 1]
 
-    # Straight section
-    N_STRAIGHT = 100
-    straight_Y = np.linspace(-params.deadband / 2.0 - 10.0, -params.deadband / 2.0, N_STRAIGHT)
-    straight_X = np.full(N_STRAIGHT, X_wall_straight)
+    # Closed-side wall: the optional ramp occupies the same physical 10 mm section.
+    ramp_join_y = -params.deadband / 2.0
+    ramp_closed_y = ramp_join_y - CLOSURE_SECTION_LENGTH_MM
+    N_STRAIGHT = 301 if params.ramp_enabled else 100
+    straight_Y = np.linspace(ramp_closed_y, ramp_join_y, N_STRAIGHT)
+    if params.ramp_enabled:
+        u = np.linspace(0.0, 1.0, N_STRAIGHT)
+        straight_X = bushing_radius + _closure_ramp_offsets(u, params.default_distance)
+    else:
+        straight_X = np.full(N_STRAIGHT, X_wall_straight)
 
     # Extension beyond curve
     N_EXT = 50
@@ -305,7 +351,8 @@ def compute_simulation(params: SimulationParams) -> SimulationResult:
     # Y span: extend until static flow reaches the physical plateau (full-opening cap) or a local plateau,
     # but Y_end never exceeds this absolute position (mm along the cam Y axis).
     abs_y_end_cap_mm = 5.0
-    y_start = -params.deadband / 2.0 - 1.0
+    legacy_y_start = -params.deadband / 2.0 - 1.0
+    y_start = ramp_closed_y if params.ramp_enabled else legacy_y_start
     y_end_geom = -params.deadband / 2.0 + params.height + 1.0
     y_end_max = abs_y_end_cap_mm
     y_end = min(float(y_end_geom), float(y_end_max))
@@ -321,6 +368,10 @@ def compute_simulation(params: SimulationParams) -> SimulationResult:
     static_flow_l_min: np.ndarray
 
     for _ in range(120):
+        # Show the entire ramp without diluting the sampling of the opening curve.
+        if params.ramp_enabled:
+            legacy_step = (y_end - legacy_y_start) / 499.0
+            n_sim = max(500, int(math.ceil((y_end - y_start) / legacy_step)) + 1)
         y_positions, min_gaps, flow_area, static_flow_l_min = _compute_static_flow_vs_y_arrays(
             params, cam_x, cam_y, bushing_radius, y_start, y_end, n_sim
         )
@@ -404,9 +455,15 @@ def compute_simulation(params: SimulationParams) -> SimulationResult:
 
     # Downsample cam profile for JSON (every 3rd point)
     cam_step = 3
+    cam_indices = np.arange(0, len(cam_x), cam_step)
+    if params.ramp_enabled:
+        # Keep the exact ramp endpoints and curve joins in the displayed geometry.
+        cam_indices = np.unique(np.concatenate([
+            cam_indices, [N_STRAIGHT - 1, N_STRAIGHT + N_BEZIER - 1, len(cam_x) - 1]
+        ]))
     return SimulationResult(
-        cam_X=cam_x[::cam_step].tolist(),
-        cam_Y=cam_y[::cam_step].tolist(),
+        cam_X=cam_x[cam_indices].tolist(),
+        cam_Y=cam_y[cam_indices].tolist(),
         Y_positions=y_positions.tolist(),
         min_gaps=min_gaps.tolist(),
         flow_area=flow_area.tolist(),
@@ -424,6 +481,9 @@ def compute_simulation(params: SimulationParams) -> SimulationResult:
         Y_end=Y_end,
         equalization_time_ms=equalization_time_ms,
         total_volume_ml=total_volume_ml,
+        ramp_enabled=params.ramp_enabled,
+        ramp_closed_Y=ramp_closed_y if params.ramp_enabled else None,
+        ramp_join_Y=ramp_join_y if params.ramp_enabled else None,
     )
 
 
@@ -471,6 +531,7 @@ class SolverParams:
     chamber_volume_ml: float = 5.0
     compliance: float = 0.7
     thickness: float = 2.5
+    ramp_enabled: bool = False
     bushing_diameter: float = 3.0
     lead_screw_pitch: float = 0.5
 
@@ -578,6 +639,7 @@ def _max_default_distance_for_gap_ceiling(
                 tube_od=sp.tube_od,
                 input_pressure_psi=sp.input_pressure_psi,
                 compliance=sp.compliance,
+                ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
             )
         )
@@ -1033,6 +1095,7 @@ def solve_cam_profile(
                             tube_od=sp.tube_od,
                             input_pressure_psi=sp.input_pressure_psi,
                             compliance=sp.compliance,
+                            ramp_enabled=sp.ramp_enabled,
                             chamber_volume_ml=sp.chamber_volume_ml,
                         )
                     )
@@ -1120,6 +1183,7 @@ def solve_cam_profile(
                 tube_od=sp.tube_od,
                 input_pressure_psi=sp.input_pressure_psi,
                 compliance=sp.compliance,
+                ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
             )
             sim_i = compute_simulation(p)
@@ -1160,6 +1224,7 @@ def solve_cam_profile(
                 tube_od=sp.tube_od,
                 input_pressure_psi=sp.input_pressure_psi,
                 compliance=sp.compliance,
+                ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
             )
         )

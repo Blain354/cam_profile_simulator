@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult } from './components';
 import {
   ParameterSlider,
+  ClosureRampToggle,
   StatRow,
   Accordion,
   VerticalSystemView,
@@ -125,6 +126,7 @@ type SolveStreamRequestBody = {
   chamber_volume_ml: number;
   compliance: number;
   thickness: number;
+  ramp_enabled: boolean;
   gap_at_y0_margin_mm: number;
   k_min: number;
   k_max: number;
@@ -162,6 +164,7 @@ function buildSolveStreamBody(i: {
   chamberVolume: number;
   compliance: number;
   thickness: number;
+  rampEnabled: boolean;
   gapAtY0MarginMm: number;
   kMin: number;
   kMax: number;
@@ -197,6 +200,7 @@ function buildSolveStreamBody(i: {
     chamber_volume_ml: i.chamberVolume,
     compliance: i.compliance,
     thickness: i.thickness,
+    ramp_enabled: i.rampEnabled,
     gap_at_y0_margin_mm: i.gapAtY0MarginMm,
     k_min: i.kMin,
     k_max: i.kMax,
@@ -239,6 +243,7 @@ function solveStreamBodyFromBuilderParams(p: Record<string, unknown>, compliance
     chamberVolume: num('chamberVolume', 50),
     compliance: num('compliance', complianceFallback),
     thickness: num('thickness', 2.5),
+    rampEnabled: bool('rampEnabled', false),
     gapAtY0MarginMm: num('gapAtY0MarginMm', 0.025),
     kMin: num('kMin', 0.5),
     kMax: num('kMax', 8),
@@ -293,6 +298,7 @@ const SOLVE_INPUT_ROWS: { key: keyof SolveStreamRequestBody; label: string }[] =
   { key: 'chamber_volume_ml', label: 'Chamber volume (mL)' },
   { key: 'compliance', label: 'Compliance' },
   { key: 'thickness', label: 'Thickness (mm)' },
+  { key: 'ramp_enabled', label: 'Closure ramp' },
   { key: 'gap_at_y0_margin_mm', label: 'Gap@Y0 margin (mm)' },
   { key: 'k_min', label: 'K search min' },
   { key: 'k_max', label: 'K search max' },
@@ -327,7 +333,7 @@ function tryParseLastSolveRequest(raw: unknown): SolveStreamRequestBody | null {
   const o = raw as Record<string, unknown>;
   for (const { key } of SOLVE_INPUT_ROWS) {
     const v = o[key as string];
-    if (v === undefined && (key === 'candidate_rank_by' || key === 'candidate_rank_flow_y_mm')) {
+    if (v === undefined && (key === 'candidate_rank_by' || key === 'candidate_rank_flow_y_mm' || key === 'ramp_enabled')) {
       continue;
     }
     if (v === undefined) return null;
@@ -343,6 +349,7 @@ function tryParseLastSolveRequest(raw: unknown): SolveStreamRequestBody | null {
       continue;
     }
     if (
+      key === 'ramp_enabled' ||
       key === 'optimize_default_distance' ||
       key === 'fix_k' ||
       key === 'fix_height' ||
@@ -358,7 +365,7 @@ function tryParseLastSolveRequest(raw: unknown): SolveStreamRequestBody | null {
     if (typeof v !== 'number' || !Number.isFinite(v)) return null;
   }
   const rank = parseCandidateRankBy(o.candidate_rank_by);
-  return { ...(o as SolveStreamRequestBody), candidate_rank_by: rank };
+  return { ...(o as SolveStreamRequestBody), candidate_rank_by: rank, ramp_enabled: o.ramp_enabled === true };
 }
 
 function formatSolveCell(key: keyof SolveStreamRequestBody, v: SolveStreamRequestBody[keyof SolveStreamRequestBody]): string {
@@ -661,6 +668,7 @@ export default function ProfileBuilder({
   const [chamberVolume, setChamberVolume] = useState(50.0);
   const [compliance, setCompliance] = useState(explorerCompliance);
   const [thickness, setThickness] = useState(2.5);
+  const [rampEnabled, setRampEnabled] = useState(false);
   /** 0 = gradual (low static d(flow)/dY for Y≥0), 1 = snappy; only used after solve with candidates[]. */
   const [profileAggressivity01, setProfileAggressivity01] = useState(0.5);
   /** Absolute band below theoretical: keep triples with gap@Y0 in [theoretical − margin, theoretical] (mm). */
@@ -861,6 +869,7 @@ export default function ProfileBuilder({
         motor_speed: motorSpeed,
         height: activeCandidate.height,
         thickness,
+        ramp_enabled: lastSolveRequestBody?.ramp_enabled ?? false,
         K: activeCandidate.K,
         deadband: activeCandidate.deadband,
         default_distance: activeCandidate.default_distance,
@@ -914,6 +923,7 @@ export default function ProfileBuilder({
     activeCandidate,
     activeIdx,
     candidateSimByIndex,
+    lastSolveRequestBody,
     motorSpeed,
     thickness,
     tubeId,
@@ -952,6 +962,7 @@ export default function ProfileBuilder({
             motor_speed: motorSpeed,
             height: cand.height,
             thickness,
+            ramp_enabled: lastSolveRequestBody?.ramp_enabled ?? false,
             K: cand.K,
             deadband: cand.deadband,
             default_distance: cand.default_distance,
@@ -987,6 +998,7 @@ export default function ProfileBuilder({
     result?.candidates,
     activeIdx,
     candidateSimByIndex,
+    lastSolveRequestBody,
     motorSpeed,
     thickness,
     tubeId,
@@ -1029,7 +1041,7 @@ export default function ProfileBuilder({
   };
 
   const collectBuilderParams = (): Record<string, unknown> => ({
-    motorSpeed, tubeId, tubeOd, pressurePsi, chamberVolume, compliance, thickness,
+    motorSpeed, tubeId, tubeOd, pressurePsi, chamberVolume, compliance, thickness, rampEnabled,
     profileAggressivity01, gapAtY0MarginMm, kMin, kMax, fixK, fixedK, kSampleMode, kSteps, kStep,
     hSearchMin, hSearchMax, fixHeight, fixedHeight, heightSampleMode, heightSteps, heightStep,
     deadbandSearchMin, deadbandSearchMax, fixDeadband, fixedDeadband, deadbandSampleMode, deadbandSteps, deadbandStep,
@@ -1046,7 +1058,10 @@ export default function ProfileBuilder({
   };
 
   const makeExperienceSignature = (note: string, builderParams: Record<string, unknown>) =>
-    JSON.stringify({ note, builder_params: builderParams });
+    JSON.stringify({
+      note,
+      builder_params: Object.fromEntries(Object.entries(builderParams).sort(([a], [b]) => a.localeCompare(b))),
+    });
 
   const currentExperienceSignature = useMemo(
     () =>
@@ -1056,7 +1071,7 @@ export default function ProfileBuilder({
       ),
     [
       experienceNote,
-      motorSpeed, tubeId, tubeOd, pressurePsi, chamberVolume, compliance, thickness,
+      motorSpeed, tubeId, tubeOd, pressurePsi, chamberVolume, compliance, thickness, rampEnabled,
       gapAtY0MarginMm,
       kMin, kMax, fixK, fixedK, kSampleMode, kSteps, kStep,
       hSearchMin, hSearchMax, fixHeight, fixedHeight, heightSampleMode, heightSteps, heightStep,
@@ -1085,6 +1100,7 @@ export default function ProfileBuilder({
         chamberVolume,
         compliance,
         thickness,
+        rampEnabled,
         gapAtY0MarginMm,
         kMin,
         kMax,
@@ -1120,6 +1136,7 @@ export default function ProfileBuilder({
       chamberVolume,
       compliance,
       thickness,
+      rampEnabled,
       gapAtY0MarginMm,
       kMin,
       kMax,
@@ -1164,6 +1181,7 @@ export default function ProfileBuilder({
     if (typeof p.chamberVolume === 'number') setChamberVolume(p.chamberVolume);
     if (typeof p.compliance === 'number') setCompliance(p.compliance);
     if (typeof p.thickness === 'number') setThickness(p.thickness);
+    setRampEnabled(p.rampEnabled === true);
     if (typeof p.profileAggressivity01 === 'number') setProfileAggressivity01(p.profileAggressivity01);
     if (typeof p.gapAtY0MarginMm === 'number') setGapAtY0MarginMm(p.gapAtY0MarginMm);
     if (typeof p.kMin === 'number') setKMin(p.kMin);
@@ -1283,7 +1301,7 @@ export default function ProfileBuilder({
     setSavedExperienceSignature(
       makeExperienceSignature(
         payload.note ?? '',
-        omitProfileAggressivityForDirtySignature((payload.builder_params ?? {}) as Record<string, unknown>),
+        omitProfileAggressivityForDirtySignature({ rampEnabled: false, ...payload.builder_params }),
       ),
     );
     setShowExperienceModal(false);
@@ -1334,6 +1352,7 @@ export default function ProfileBuilder({
       chamberVolume,
       compliance,
       thickness,
+      rampEnabled,
       gapAtY0MarginMm,
       kMin,
       kMax,
@@ -1642,6 +1661,7 @@ export default function ProfileBuilder({
       motor_speed: motorSpeed,
       height: activeCandidate?.height ?? result.height,
       thickness,
+      ramp_enabled: sim?.ramp_enabled ?? false,
       K: activeCandidate?.K ?? result.K,
       deadband: activeCandidate?.deadband ?? result.deadband,
       default_distance: activeCandidate?.default_distance ?? result.default_distance,
@@ -1715,6 +1735,7 @@ export default function ProfileBuilder({
       motor_speed: motorSpeed,
       height: activeCandidate?.height ?? result.height,
       thickness,
+      ramp_enabled: chartSim.ramp_enabled ?? false,
       K: activeCandidate?.K ?? result.K,
       deadband: activeCandidate?.deadband ?? result.deadband,
       default_distance: activeCandidate?.default_distance ?? result.default_distance,
@@ -1859,6 +1880,7 @@ export default function ProfileBuilder({
                 secondaryValue={`${(pressurePsi * 6.89476).toFixed(0)} kPa`} description={builderPressure} />
               <ParameterSlider label="Compliance (mm/MPa)" value={compliance} min={0.0} max={5.0} step={0.01} onChange={setCompliance} description={builderCompliance} />
               <ParameterSlider label="Thickness (mm)" value={thickness} min={0.1} max={5.0} step={0.1} onChange={setThickness} description={builderThickness} />
+              <ClosureRampToggle value={rampEnabled} onChange={setRampEnabled} />
             </div>
           </Accordion>
 
@@ -2836,6 +2858,7 @@ export default function ProfileBuilder({
                         params={{
                           ...defaultParams,
                           ...(previewExperience.builder_params as Partial<SimulationParams>),
+                          ramp_enabled: previewExperience.solver_result.simulation?.ramp_enabled ?? false,
                           height: previewExperience.solver_result.height,
                           K: previewExperience.solver_result.K,
                           deadband: previewExperience.solver_result.deadband,
