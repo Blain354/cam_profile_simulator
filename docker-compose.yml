@@ -2,8 +2,11 @@ services:
   frontend:
     build:
       context: ./frontend
-      args:
-        NODE_AUTH_TOKEN: ${NODE_AUTH_TOKEN:-}
+      # Token GitHub Packages (read:packages) pour @blain-projects/ui : secret
+      # BuildKit monté le temps du seul `npm ci`, JAMAIS en build-arg (un
+      # build-arg reste en clair dans l'historique BuildKit). Voir `secrets:` en bas.
+      secrets:
+        - npm_token
     container_name: ${PROJECT_NAME}-front
     restart: unless-stopped
     networks:
@@ -63,3 +66,10 @@ networks:
 
 volumes:
   backend_data:
+
+# Build secret for the frontend (see frontend/Dockerfile). The value is the
+# NODE_AUTH_TOKEN of the shell running compose; never copy it into .env (one
+# more plaintext copy to rotate, and an env_file would push it into a container).
+secrets:
+  npm_token:
+    environment: NODE_AUTH_TOKEN

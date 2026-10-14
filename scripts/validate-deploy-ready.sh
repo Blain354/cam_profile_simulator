@@ -44,7 +44,17 @@ fi
 BACK_CONTAINER="${PROJECT_NAME}-back"
 FRONT_CONTAINER="${PROJECT_NAME}-front"
 
+# ── 0. npm token reaches the build only as a BuildKit secret ────────
+echo "── Security: build secrets ──"
+if BUILD_SECRETS=$(bash "$(dirname "${BASH_SOURCE[0]}")/check-build-secrets.sh" . 2>&1); then
+  pass "NODE_AUTH_TOKEN reaches Docker builds only as a BuildKit secret"
+else
+  fail "NODE_AUTH_TOKEN can reach a build outside a BuildKit secret:"
+  echo "$BUILD_SECRETS" | grep -v '^The npm token\|^See frontend' | while read -r line; do echo "    $line"; done
+fi
+
 # ── 1. No localhost in source code ──────────────────────────────────
+echo ""
 echo "── Network: localhost references ──"
 FOUND=$(grep -rn "localhost" backend/ frontend/src/ \
   --include="*.py" --include="*.ts" --include="*.tsx" 2>/dev/null \

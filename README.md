@@ -65,8 +65,9 @@ $env:NODE_AUTH_TOKEN = "<github-pat-read-packages>"
 ```
 
 `frontend/.npmrc` pointe `@blain-projects` vers `npm.pkg.github.com` et lit
-`${NODE_AUTH_TOKEN}`. Meme variable pour un build Docker Compose (`build.args`
-→ `frontend/Dockerfile`).
+`${NODE_AUTH_TOKEN}`. Meme variable pour un build Docker Compose, passee comme
+secret BuildKit `npm_token` (`secrets:` → `frontend/Dockerfile`), jamais en
+build-arg.
 
 ```powershell
 cd frontend
