@@ -28,7 +28,8 @@ This repository is a production-ready boilerplate for modern fullstack applicati
 1. **Network:** external `web_network` (Traefik). If missing: `docker network create web_network`.
 2. **Labels:** `PROJECT_NAME`, `DOMAIN_NAME` (`.env` or secrets).
 3. **Frontend private kit:** `NODE_AUTH_TOKEN` (GitHub Packages `read:packages`) must be available when building the frontend image — `docker-compose.yml` hands it to the build as the BuildKit secret `npm_token` (never a build arg, which BuildKit would keep in clear in its history), and `frontend/Dockerfile` exposes it to `npm ci` only, through the placeholder `frontend/.npmrc` (`@blain-projects` → `npm.pkg.github.com`). Keep it in the shell environment, not in `.env`. Without the token, `npm ci` cannot resolve `@blain-projects/ui`.
-4. **SQLite:** file `/app/data/simulator.db`; volume `backend_data` → `/app/data`. Path override: **`SIM_DB_PATH`**. Schema at startup; optional one-time JSON import from `configs/` in image. No DB service container.
+4. **SiteFooter build data:** Docker has no `.git`, so compose passes public build args `APP_VERSION`, `APP_COMMIT`, `APP_COMMIT_DATE` (and optional `VITE_BLAIN_SHOWOFF`) into `frontend/Dockerfile`; `frontend/build-meta.ts` injects them as Vite defines for the kit `SiteFooter`. Example from `docker-compose.yml`: `APP_COMMIT=$(git rev-parse --short HEAD) APP_COMMIT_DATE=$(git log -1 --format=%cs) docker compose up -d --build`. Local `npm run dev` falls back to `frontend/package.json` version and git. App version bumping for agents: root `AGENTS.md`.
+5. **SQLite:** file `/app/data/simulator.db`; volume `backend_data` → `/app/data`. Path override: **`SIM_DB_PATH`**. Schema at startup; optional one-time JSON import from `configs/` in image. No DB service container.
 
 ### Database — agent debug map (SQLite)
 
