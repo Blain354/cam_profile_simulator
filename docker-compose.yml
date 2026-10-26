@@ -7,6 +7,13 @@ services:
       # build-arg reste en clair dans l'historique BuildKit). Voir `secrets:` en bas.
       secrets:
         - npm_token
+      # Build data for the SiteFooter (Docker has no .git) and the show-off mode.
+      # Deploy: APP_COMMIT=$(git rev-parse --short HEAD) APP_COMMIT_DATE=$(git log -1 --format=%cs) docker compose up -d --build
+      args:
+        APP_VERSION: ${APP_VERSION:-}
+        APP_COMMIT: ${APP_COMMIT:-}
+        APP_COMMIT_DATE: ${APP_COMMIT_DATE:-}
+        VITE_BLAIN_SHOWOFF: ${VITE_BLAIN_SHOWOFF:-}
     container_name: ${PROJECT_NAME}-front
     restart: unless-stopped
     networks:

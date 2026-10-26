@@ -19,6 +19,14 @@ COPY package*.json .npmrc ./
 
 RUN --mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN npm ci
 
+# Build data for the SiteFooter and the show-off mode (docker-compose.yml
+# build.args). Public values only — never a token here.
+ARG APP_VERSION=
+ARG APP_COMMIT=
+ARG APP_COMMIT_DATE=
+ARG VITE_BLAIN_SHOWOFF=
+ENV APP_VERSION=$APP_VERSION APP_COMMIT=$APP_COMMIT APP_COMMIT_DATE=$APP_COMMIT_DATE VITE_BLAIN_SHOWOFF=$VITE_BLAIN_SHOWOFF
+
 COPY . .
 RUN npm run build
 

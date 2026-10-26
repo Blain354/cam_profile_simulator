@@ -1,0 +1,4 @@
+# The image runs its own npm install; a host node_modules or dist copied by
+# `COPY . .` would overwrite it (e.g. an old @blain-projects/ui).
+node_modules
+dist
