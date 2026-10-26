@@ -1,5 +1,7 @@
 import { Textarea } from '@blain-projects/ui';
-import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input } from '@blain-projects/ui';
+import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input, SiteFooter } from '@blain-projects/ui';
+import { ageOf } from './lib/age';
+import { project } from './project';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
@@ -478,16 +480,16 @@ export default function App() {
                     <div className="text-base text-neutral-400 flex flex-col mt-2 border-t border-neutral-700/50 pt-2 space-y-1">
                       {payload.dynamicFlow !== undefined && (
                         <div className="flex justify-between gap-8">
-                          <span className="uppercase text-[10px] items-center flex">Dynamic</span>
+                          <span className="text-[10px] items-center flex">Dynamic</span>
                           <span className="text-emerald-500 font-mono font-bold">{payload.dynamicFlow.toFixed(3)} L/min</span>
                         </div>
                       )}
                       <div className="flex justify-between gap-8">
-                        <span className="uppercase text-[10px] items-center flex">Gap</span>
+                        <span className="text-[10px] items-center flex">Gap</span>
                         <span className="text-blue-500 font-mono font-bold">{payload.gap.toFixed(3)} mm</span>
                       </div>
                       <div className="flex justify-between gap-8">
-                        <span className="uppercase text-[10px] items-center flex">Time (rel @Y0)</span>
+                        <span className="text-[10px] items-center flex">Time (rel @Y0)</span>
                         <span className="text-red-500 font-mono font-bold">{payload.time.toFixed(2)} ms</span>
                       </div>
                     </div>
@@ -541,11 +543,11 @@ export default function App() {
           {/* Tab Bar */}
           <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
             <Button variant="ghost" onClick={() => setActiveTab('explorer')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${activeTab === 'explorer' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'explorer' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <Search className="w-3.5 h-3.5" /> Explorer
             </Button>
             <Button variant="ghost" onClick={() => setActiveTab('builder')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <FlaskConical className="w-3.5 h-3.5" /> Profile Builder
             </Button>
           </div>
@@ -555,7 +557,7 @@ export default function App() {
             <div className="flex items-center gap-2.5 flex-wrap min-w-0">
               <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-1 shadow-sm transition-colors ${hasChanges ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={activeConfigName}>
                 <div className={`flex min-w-0 max-w-[min(100vw-8rem,18rem)] sm:max-w-[22rem] items-center gap-2 rounded-lg px-2.5 py-1.5 ${hasChanges ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
-                  <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Profile</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
                   <span className={`min-w-0 truncate font-mono text-xs sm:text-sm font-medium tabular-nums ${hasChanges ? 'text-amber-300' : 'text-emerald-400'}`}>
                     {activeConfigName}{hasChanges ? <span className="text-amber-400">*</span> : null}
                   </span>
@@ -571,7 +573,7 @@ export default function App() {
                 {hasChanges && (
                   <motion.button initial={{ opacity: 0, scale: 0.8, x: -10 }} animate={{ opacity: 1, scale: 1, x: 0 }} exit={{ opacity: 0, scale: 0.8, x: -10 }}
                     onClick={handleUpdateConfig}
-                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)] flex items-center gap-1.5 transition-all outline-none font-bold text-[10px] uppercase tracking-wider"
+                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)] flex items-center gap-1.5 transition-all outline-none font-bold text-[10px]"
                     title="Update currently loaded config">
                     <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
@@ -590,7 +592,7 @@ export default function App() {
                 title={activeBuilderExperienceName}
               >
                 <div className="flex min-w-0 max-w-[min(100vw-8rem,18rem)] sm:max-w-[22rem] items-center gap-2 rounded-lg bg-neutral-900/40 px-2.5 py-1.5">
-                  <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">Experience</span>
+                  <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Experience</span>
                   <span className="min-w-0 truncate font-mono text-xs sm:text-sm font-medium tabular-nums text-emerald-400">
                     {activeBuilderExperienceName}
                   </span>
@@ -613,7 +615,7 @@ export default function App() {
                     animate={{ opacity: 1, scale: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.8, x: -10 }}
                     onClick={() => setSaveBuilderExperienceSignal((n) => n + 1)}
-                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)] flex items-center gap-1.5 transition-all outline-none font-bold text-[10px] uppercase tracking-wider"
+                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)] flex items-center gap-1.5 transition-all outline-none font-bold text-[10px]"
                     title={
                       activeBuilderExperienceName === 'Unsaved'
                         ? 'Save this solve as a new builder experience'
@@ -636,7 +638,7 @@ export default function App() {
           <Button variant="ghost"
             type="button"
             onClick={() => setShowStlExport(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-600/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 hover:text-emerald-100 text-[11px] font-semibold uppercase tracking-wider transition-colors shadow-sm"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-600/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 hover:text-emerald-100 text-[11px] font-semibold transition-colors shadow-sm"
             title="Export the current cam configuration as an STL via Onshape"
             aria-label="Export STL via Onshape"
           >
@@ -646,11 +648,11 @@ export default function App() {
           <Button variant="ghost"
             type="button"
             onClick={() => setGuidanceMode((v) => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold uppercase tracking-wider transition-colors ${
-              guidanceMode
-                ? 'border-blue-500/50 bg-blue-600/20 text-blue-300 hover:bg-blue-600/30'
-                : 'border-neutral-700 bg-neutral-800/50 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/60'
-            }`}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-colors ${
+ guidanceMode
+ ? 'border-blue-500/50 bg-blue-600/20 text-blue-300 hover:bg-blue-600/30'
+ : 'border-neutral-700 bg-neutral-800/50 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/60'
+ }`}
             title={guidanceMode ? 'Guidance mode on: tooltips enabled' : 'Guidance mode off: tooltips disabled'}
             aria-pressed={guidanceMode}
           >
@@ -676,7 +678,7 @@ export default function App() {
             <div className="flex items-center gap-3 mb-6 min-w-0">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Settings className="w-5 h-5 text-blue-500 shrink-0" />
-                <h2 className="text-lg font-bold text-white uppercase tracking-tight truncate">Configuration</h2>
+                <h2 className="text-lg font-bold text-white tracking-tight truncate">Configuration</h2>
               </div>
               <div className="flex gap-2 shrink-0">
                 <Input type="file" ref={fileInputRef} onChange={handleLoadConfig} accept=".json" className="hidden" />
@@ -740,7 +742,7 @@ export default function App() {
 
             {stats && (
               <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-2">
-                <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">Derived Stats</h3>
+                <h3 className="text-xs font-semibold text-neutral-400 mb-2">Derived Stats</h3>
                 <StatRow label="Gap at Y=0" value={`${stats.gapAtY0.toFixed(3)} mm`} />
                 {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`} />}
                 <StatRow
@@ -805,7 +807,7 @@ export default function App() {
             <motion.div layoutId="card-pneumatic" className="row-span-2 bg-neutral-800 p-3 rounded-xl border border-neutral-700 shadow-xl flex flex-col items-stretch min-h-0">
               <div className="flex justify-between items-center mb-2 shrink-0 relative">
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <h3 className="text-sm font-bold text-neutral-200 uppercase tracking-wider">Pneumatic Flow vs Y</h3>
+                  <h3 className="text-sm font-bold text-neutral-200">Pneumatic Flow vs Y</h3>
                 </div>
                 <div className="z-10 w-full flex justify-end gap-1">
                   <Button variant="ghost" onClick={() => setChartSettingsTarget('pneumatic')}
@@ -828,7 +830,7 @@ export default function App() {
               <motion.div layoutId="card-gapY" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 shadow-xl flex flex-col items-stretch flex-1 min-h-0">
                 <div className="flex justify-between items-center mb-2 shrink-0 relative">
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200 uppercase tracking-wider">Gap vs Y</h3>
+                    <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Gap vs Y</h3>
                   </div>
                   <div className="z-10 w-full flex justify-end gap-1">
                     <Button variant="ghost" onClick={() => setChartSettingsTarget('gapY')}
@@ -848,7 +850,7 @@ export default function App() {
               <motion.div layoutId="card-gapTime" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 shadow-xl flex flex-col items-stretch flex-1 min-h-0">
                 <div className="flex justify-between items-center mb-2 shrink-0 relative">
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200 uppercase tracking-wider">Gap vs Time</h3>
+                    <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Gap vs Time</h3>
                   </div>
                   <div className="z-10 w-full flex justify-end gap-1">
                     <Button variant="ghost" onClick={() => setChartSettingsTarget('gapTime')}
@@ -915,6 +917,12 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+    {/* The tool keeps the whole first screen; the site footer follows it in the page. */}
+    <SiteFooter
+      {...project}
+      version={__APP_VERSION__}
+      commit={__APP_COMMIT__ ? { sha: __APP_COMMIT__, age: ageOf(__APP_COMMIT_DATE__) } : undefined}
+    />
     </TooltipHintsProvider>
   );
 }

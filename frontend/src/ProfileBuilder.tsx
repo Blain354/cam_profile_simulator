@@ -448,16 +448,16 @@ function FlowVsYTooltipLikeExplorer() {
                 <div className="text-base text-neutral-400 flex flex-col mt-2 border-t border-neutral-700/50 pt-2 space-y-1">
                   {payload.dynamicFlow !== undefined && (
                     <div className="flex justify-between gap-8">
-                      <span className="uppercase text-[10px] items-center flex">Dynamic</span>
+                      <span className="text-[10px] items-center flex">Dynamic</span>
                       <span className="text-emerald-500 font-mono font-bold">{payload.dynamicFlow.toFixed(3)} L/min</span>
                     </div>
                   )}
                   <div className="flex justify-between gap-8">
-                    <span className="uppercase text-[10px] items-center flex">Gap</span>
+                    <span className="text-[10px] items-center flex">Gap</span>
                     <span className="text-blue-500 font-mono font-bold">{payload.gap.toFixed(3)} mm</span>
                   </div>
                   <div className="flex justify-between gap-8">
-                    <span className="uppercase text-[10px] items-center flex">Time (rel @Y0)</span>
+                    <span className="text-[10px] items-center flex">Time (rel @Y0)</span>
                     <span className="text-red-500 font-mono font-bold">{payload.time.toFixed(2)} ms</span>
                   </div>
                 </div>
@@ -1411,7 +1411,7 @@ export default function ProfileBuilder({
       /** Avoid RESULT_CODE_HUNG: backend can emit progress faster than React can paint. */
       const PROGRESS_UI_MIN_MS = 140;
       let lastProgressPaintAt = 0;
-      let progressUiTimer: ReturnType<typeof setTimeout> | null = null;
+      let progressUiTimer: number | null = null;
       let latestProgressSnap: {
         percent: number;
         message: string;
@@ -1855,7 +1855,7 @@ export default function ProfileBuilder({
       <div className="lg:col-span-3 xl:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 shadow-xl flex flex-col min-h-0">
         <div className="flex items-center gap-3 mb-6 min-w-0">
           <Crosshair className="w-5 h-5 text-emerald-500 shrink-0" />
-          <h2 className="text-lg font-bold text-white uppercase tracking-tight truncate">Profile Builder</h2>
+          <h2 className="text-lg font-bold text-white tracking-tight truncate">Profile Builder</h2>
         </div>
         <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin scrollbar-thumb-neutral-600 scrollbar-track-transparent">
           <DelayedHoverHint content={builderExperienceNote}>
@@ -2058,7 +2058,7 @@ export default function ProfileBuilder({
           </Accordion>
 
           <div className="space-y-2 pt-1">
-            <div className="text-[10px] font-bold uppercase tracking-wide text-neutral-300">Candidate ranking</div>
+            <div className="text-[10px] font-bold text-neutral-300">Candidate ranking</div>
             <p className="text-[10px] text-neutral-400 leading-snug">
               Feasible (K, height, deadband) triples are ordered along one axis before listing up to 100 evenly spaced candidates. Choose exactly one method below before <strong className="text-neutral-400">SOLVE</strong>.
             </p>
@@ -2104,11 +2104,11 @@ export default function ProfileBuilder({
           <Button variant="ghost"
             type="button"
             onClick={() => setShowInfoPanel((v) => !v)}
-            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${
-              showInfoPanel
-                ? 'text-neutral-200 bg-neutral-800/60 border-b border-neutral-700/70'
-                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
-            }`}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors ${
+ showInfoPanel
+ ? 'text-neutral-200 bg-neutral-800/60 border-b border-neutral-700/70'
+ : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+ }`}
             title={showInfoPanel ? 'Hide context details' : 'Show context details'}
           >
             <span>Context & Metrics</span>
@@ -2312,7 +2312,7 @@ export default function ProfileBuilder({
                 {result.success ? (
                   <div className="flex flex-wrap items-start gap-6">
                     <div>
-                      <div className="text-[10px] text-neutral-500 uppercase font-bold mb-2">Found Parameters</div>
+                      <div className="text-[10px] text-neutral-500 font-bold mb-2">Found Parameters</div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
                         <div><div className="text-[10px] text-neutral-500">Height</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.height ?? result.height).toFixed(3)} mm</div></div>
                         <div><div className="text-[10px] text-neutral-500">Curve Gain (K)</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.K ?? result.K).toFixed(3)}</div></div>
@@ -2335,7 +2335,7 @@ export default function ProfileBuilder({
                               </span>
                             </div>
                             <div className="flex items-center gap-3">
-                              <span className="text-[10px] text-neutral-500 uppercase shrink-0">Gradual</span>
+                              <span className="text-[10px] text-neutral-500 shrink-0">Gradual</span>
                               <input
                                 type="range"
                                 min={0}
@@ -2345,7 +2345,7 @@ export default function ProfileBuilder({
                                 onChange={(e) => setProfileAggressivity01(parseFloat(e.target.value))}
                                 className="min-w-0 flex-1 accent-amber-500 hover:accent-400 cursor-pointer"
                               />
-                              <span className="text-[10px] text-neutral-500 uppercase shrink-0">Snappy</span>
+                              <span className="text-[10px] text-neutral-500 shrink-0">Snappy</span>
                             </div>
                             <p className="text-[10px] text-neutral-500 leading-snug">
                               {rankUsedForAggressivity === 'equalization_rel_time' && (
@@ -2428,7 +2428,7 @@ export default function ProfileBuilder({
                     </div>
                     {chartSim && (
                       <div className="border-l border-neutral-700 pl-6">
-                        <div className="text-[10px] text-neutral-500 uppercase font-bold mb-2">Dynamic Stats</div>
+                        <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div><div className="text-[10px] text-neutral-500">Total Volume</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.total_volume_ml.toFixed(2)} mL</div></div>
                           <div><div className="text-[10px] text-neutral-500">Equalization</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.equalization_time_ms >= 0 ? `${chartSim.equalization_time_ms.toFixed(1)} ms` : 'N/A'}</div></div>
@@ -2488,7 +2488,7 @@ export default function ProfileBuilder({
                   >
                     <div className="relative mb-2 flex shrink-0 items-center justify-between">
                       <div className="absolute inset-0 flex items-center justify-center">
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-200">Flow vs Y</h3>
+                        <h3 className="text-sm font-bold text-neutral-200">Flow vs Y</h3>
                       </div>
                       <div className="z-10 flex w-full justify-end gap-1">
                         <Button variant="ghost"
@@ -2545,7 +2545,7 @@ export default function ProfileBuilder({
                     >
                       <div className="relative mb-2 flex shrink-0 items-center justify-between">
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400 lg:text-neutral-200">Chamber Pressure</h3>
+                          <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Chamber Pressure</h3>
                         </div>
                         <div className="z-10 flex w-full justify-end gap-1">
                           <Button variant="ghost"
@@ -2612,7 +2612,7 @@ export default function ProfileBuilder({
                     >
                       <div className="relative mb-2 flex shrink-0 items-center justify-between">
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400 lg:text-neutral-200">Cam Profile</h3>
+                          <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Cam Profile</h3>
                         </div>
                         <div className="z-10 flex w-full justify-end gap-1">
                           <Button variant="ghost"
@@ -2684,7 +2684,7 @@ export default function ProfileBuilder({
           >
             <div className="w-72 shrink-0 min-w-0 border-r border-neutral-800 flex flex-col bg-neutral-900/50">
               <div className="h-14 px-4 border-b border-neutral-800 flex justify-between items-center min-w-0">
-                <h3 className="text-sm font-bold text-white uppercase tracking-tighter truncate">Builder Experiences</h3>
+                <h3 className="text-sm font-bold text-white tracking-tighter truncate">Builder Experiences</h3>
                 <Button variant="ghost" onClick={() => setShowExperienceModal(false)} className="text-neutral-500 hover:text-white transition-colors shrink-0">
                   <X className="w-4 h-4" />
                 </Button>
@@ -2740,13 +2740,13 @@ export default function ProfileBuilder({
             </div>
             <div className="flex-1 bg-neutral-950 flex flex-col min-h-0">
               <div className="h-14 px-4 border-b border-neutral-800 bg-neutral-900/40 flex items-center">
-                <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest">Experience Preview</h4>
+                <h4 className="text-xs font-bold text-neutral-500">Experience Preview</h4>
               </div>
               <div className="flex-1 min-h-0 p-4 overflow-hidden">
                 {previewExperience?.solver_result?.simulation ? (
                   <div className="h-full grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="md:col-span-1 min-h-0 rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 overflow-auto">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-3">Simplified Parameters</div>
+                      <div className="text-[10px] font-bold text-neutral-500 mb-3">Simplified Parameters</div>
                       {(() => {
                         const p = (previewExperience.builder_params ?? {}) as Record<string, unknown>;
                         const n = (key: string, fallback: number) => (typeof p[key] === 'number' ? p[key] as number : fallback);
@@ -2796,7 +2796,7 @@ export default function ProfileBuilder({
                           <div className="space-y-2">
                             {rows.map((row) => (
                               <div key={row.label} className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2">
-                                <div className="text-[10px] uppercase tracking-wider text-neutral-500">{row.label}</div>
+                                <div className="text-[10px] text-neutral-500">{row.label}</div>
                                 <div className={`font-mono text-xs font-semibold ${row.tone ?? 'text-neutral-200'}`}>{row.value}</div>
                               </div>
                             ))}
@@ -2810,12 +2810,12 @@ export default function ProfileBuilder({
                         const terminatedEarly = previewExperience.solver_result.message?.startsWith('Terminated early');
                         return (
                           <div className="mt-4 border-t border-neutral-800 pt-3 space-y-2">
-                            <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Search grid</div>
+                            <div className="text-[10px] font-bold text-neutral-500">Search grid</div>
                             <p className="text-[10px] text-sky-300/95 leading-snug font-mono">{grid.lines.k}</p>
                             <p className="text-[10px] text-emerald-300/95 leading-snug font-mono">{grid.lines.h}</p>
                             <p className="text-[10px] text-red-300/95 leading-snug font-mono">{grid.lines.d}</p>
                             <div className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2 space-y-1.5">
-                              <div className="text-[10px] uppercase tracking-wider text-neutral-500">Grid & solve</div>
+                              <div className="text-[10px] text-neutral-500">Grid & solve</div>
                               <p className="text-[11px] text-neutral-200 leading-snug">
                                 <span className="text-neutral-400">Triple product (K×H×D):</span>{' '}
                                 <span className="font-mono font-semibold text-neutral-100">
@@ -2878,7 +2878,7 @@ export default function ProfileBuilder({
               </div>
               {previewExperience && (
                 <div className="p-4 bg-neutral-900 border-t border-neutral-800 space-y-2">
-                  <div className="text-[10px] text-neutral-500 uppercase font-bold">Note</div>
+                  <div className="text-[10px] text-neutral-500 font-bold">Note</div>
                   <p className="text-xs text-neutral-200 leading-relaxed whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
                     {previewExperience.note?.trim() || 'No note'}
                   </p>

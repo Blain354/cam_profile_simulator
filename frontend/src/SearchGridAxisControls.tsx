@@ -149,7 +149,7 @@ export default function SearchGridAxisControls({
 
   const inner = (
     <div className={`rounded-lg border ${accentRing[accent]} bg-neutral-900/40 p-2.5 space-y-2.5`}>
-      <div className="text-[10px] font-bold uppercase tracking-wide text-neutral-500">{title}</div>
+      <div className="text-[10px] font-bold text-neutral-500">{title}</div>
 
       <div className={fix ? 'pointer-events-none opacity-45' : ''}>
         <div className="mb-0.5 flex items-center justify-between gap-2">
@@ -205,12 +205,12 @@ export default function SearchGridAxisControls({
               type="button"
               onClick={() => onSampleMode('count')}
               className={`flex min-h-[3.25rem] min-w-0 flex-1 flex-col items-center justify-center rounded-md px-1.5 py-1 text-center transition-all ${
-                sampleMode === 'count'
-                  ? accentBtn[accent]
-                  : 'text-neutral-400 hover:bg-neutral-800/90 hover:text-neutral-200'
-              }`}
+ sampleMode === 'count'
+ ? accentBtn[accent]
+ : 'text-neutral-400 hover:bg-neutral-800/90 hover:text-neutral-200'
+ }`}
             >
-              <span className="text-[10px] font-bold uppercase tracking-wider">Count</span>
+              <span className="text-[10px] font-bold">Count</span>
               {sampleMode !== 'count' && (
                 <span className="mt-0.5 max-w-full truncate px-0.5 text-[10px] leading-tight text-neutral-500">
                   ({countImpliedByStep})
@@ -221,12 +221,12 @@ export default function SearchGridAxisControls({
               type="button"
               onClick={() => onSampleMode('step')}
               className={`flex min-h-[3.25rem] min-w-0 flex-1 flex-col items-center justify-center rounded-md px-1.5 py-1 text-center transition-all ${
-                sampleMode === 'step'
-                  ? accentBtn[accent]
-                  : 'text-neutral-400 hover:bg-neutral-800/90 hover:text-neutral-200'
-              }`}
+ sampleMode === 'step'
+ ? accentBtn[accent]
+ : 'text-neutral-400 hover:bg-neutral-800/90 hover:text-neutral-200'
+ }`}
             >
-              <span className="text-[10px] font-bold uppercase tracking-wider">Step</span>
+              <span className="text-[10px] font-bold">Step</span>
               {sampleMode !== 'step' && (
                 <span className="mt-0.5 max-w-full truncate px-0.5 text-[10px] leading-tight text-neutral-500">
                   ({stepImpliedByCount})

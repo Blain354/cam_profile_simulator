@@ -354,7 +354,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
             {/* Configuration summary */}
             <section className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-3">
               <header className="flex items-center justify-between mb-2">
-                <h3 className="text-[11px] uppercase tracking-wider font-semibold text-neutral-400">Configuration to export</h3>
+                <h3 className="text-[11px] font-semibold text-neutral-400">Configuration to export</h3>
                 <span className="text-[11px] font-mono text-emerald-400 truncate max-w-[12rem]" title={configName}>{configName}</span>
               </header>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5 text-xs">
@@ -423,7 +423,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
             {/* Granular log */}
             {log.length > 0 && (
               <section className="rounded-xl border border-neutral-800 bg-black/40">
-                <header className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-semibold text-neutral-500 border-b border-neutral-800">
+                <header className="px-3 py-1.5 text-[10px] font-semibold text-neutral-500 border-b border-neutral-800">
                   Pipeline log ({log.length})
                 </header>
                 <div className="max-h-56 overflow-y-auto px-3 py-2 space-y-1 text-[11px] font-mono">

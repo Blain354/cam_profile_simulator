@@ -172,7 +172,7 @@ export function ChartDomainSettingsModal({
         className="w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-neutral-800 p-4">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-200">{title}</h3>
+          <h3 className="text-sm font-bold text-neutral-200">{title}</h3>
           <Button variant="ghost" onClick={onClose} className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-white">
             <X className="h-4 w-4" />
           </Button>
@@ -201,12 +201,12 @@ export function ChartDomainSettingsModal({
           {!settings.autoX && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">X min</label>
+                <label className="mb-1 block text-xs text-neutral-500">X min</label>
                 <Input type="number" value={settings.xMin} onChange={(e) => setNum('xMin', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
               <div>
-                <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">X max</label>
+                <label className="mb-1 block text-xs text-neutral-500">X max</label>
                 <Input type="number" value={settings.xMax} onChange={(e) => setNum('xMax', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
@@ -215,12 +215,12 @@ export function ChartDomainSettingsModal({
           {!settings.autoY && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">Y min</label>
+                <label className="mb-1 block text-xs text-neutral-500">Y min</label>
                 <Input type="number" value={settings.yMin} onChange={(e) => setNum('yMin', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
               <div>
-                <label className="mb-1 block text-xs uppercase tracking-wider text-neutral-500">Y max</label>
+                <label className="mb-1 block text-xs text-neutral-500">Y max</label>
                 <Input type="number" value={settings.yMax} onChange={(e) => setNum('yMax', e.target.value)}
                   className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
               </div>
@@ -662,7 +662,7 @@ export function VerticalSystemView({
     <div className={`w-full h-full flex flex-col relative overflow-hidden ${isPreview && !allowInteractInPreview ? 'pointer-events-none' : ''}`}>
       {!isPreview && (
         <div className="flex items-center gap-3 mb-4 shrink-0 min-w-0">
-          <h3 className="text-sm font-semibold text-neutral-300 uppercase tracking-wide min-w-0 flex-1 truncate">Vertical System</h3>
+          <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Vertical System</h3>
           <Button variant="ghost" type="button" onClick={() => setDetails(!details)}
             className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white shadow-blue-500/20' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}>
             {details ? 'Hide Details' : 'Details'}
@@ -743,7 +743,7 @@ export function ConfigModal({
         className="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full max-w-4xl h-[70vh] flex overflow-hidden">
         <div className="w-64 shrink-0 min-w-0 border-r border-neutral-800 flex flex-col bg-neutral-900/50">
           <div className="p-4 border-b border-neutral-800 flex justify-between items-center min-w-0">
-            <h3 className="text-sm font-bold text-white uppercase tracking-tighter truncate">Configurations</h3>
+            <h3 className="text-sm font-bold text-white tracking-tighter truncate">Configurations</h3>
             <Button variant="ghost" onClick={onClose} className="text-neutral-500 hover:text-white transition-colors shrink-0"><X className="w-4 h-4" /></Button>
           </div>
           <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">
@@ -755,7 +755,7 @@ export function ConfigModal({
                   <div className="flex items-start justify-between gap-2 w-full min-w-0">
                     <span className="font-mono break-all [overflow-wrap:anywhere] text-left leading-snug">{filename}</span>
                     {defaultConfig === filename && (
-                      <div className="flex items-center gap-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-tighter shadow-sm shrink-0 mt-0.5">
+                      <div className="flex items-center gap-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded text-[7px] font-black tracking-tighter shadow-sm shrink-0 mt-0.5">
                         <div className="w-1 h-1 rounded-full bg-white animate-pulse" /> DEFAULT
                       </div>
                     )}
@@ -780,7 +780,7 @@ export function ConfigModal({
         </div>
         <div className="flex-1 bg-neutral-950 flex flex-col">
           <div className="p-4 border-b border-neutral-800 flex justify-between items-center bg-neutral-900/40">
-            <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest">Configuration Preview</h4>
+            <h4 className="text-xs font-bold text-neutral-500">Configuration Preview</h4>
             {selectedConfig && (
               <Button variant="ghost" onClick={() => onSetDefault(selectedConfig)} disabled={defaultConfig === selectedConfig}
                 className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${defaultConfig === selectedConfig ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 opacity-50' : 'bg-blue-600/10 border-blue-500/30 text-blue-400 hover:bg-blue-600/20'}`}>
@@ -794,13 +794,13 @@ export function ConfigModal({
                 <div className="w-1/3 min-w-[230px] max-w-[340px] border-r border-neutral-800 bg-neutral-900/65 p-4 overflow-y-auto space-y-4">
                   {previewParams.note.trim() ? (
                     <div>
-                      <div className="text-[10px] text-neutral-500 uppercase font-bold mb-1">Note</div>
+                      <div className="text-[10px] text-neutral-500 font-bold mb-1">Note</div>
                       <p className="text-xs text-neutral-200 leading-relaxed whitespace-pre-wrap break-words">{previewParams.note.trim()}</p>
                     </div>
                   ) : null}
 
                   <div>
-                    <div className="text-[10px] text-neutral-500 uppercase font-bold mb-2">Simulation Inputs</div>
+                    <div className="text-[10px] text-neutral-500 font-bold mb-2">Simulation Inputs</div>
                     <div className="grid grid-cols-1 gap-2">
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Motor speed</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.motor_speed.toFixed(1)} RPM</span></div>
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Thickness</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.thickness.toFixed(3)} mm</span></div>
@@ -813,7 +813,7 @@ export function ConfigModal({
 
                   {previewStats && (
                     <div>
-                      <div className="text-[10px] text-neutral-500 uppercase font-bold mb-2">Dynamic Stats</div>
+                      <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
                       <div className="grid grid-cols-1 gap-2">
                         <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">gap @ Y=0</span><span className="text-[11px] font-mono text-cyan-300">{previewStats.gapAtY0.toFixed(4)} mm</span></div>
                         <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Static flow @ Y=0.5</span><span className="text-[11px] font-mono text-amber-300">{previewStats.staticFlowAtHalfMm !== null ? `${previewStats.staticFlowAtHalfMm.toFixed(3)} L/min` : 'N/A'}</span></div>

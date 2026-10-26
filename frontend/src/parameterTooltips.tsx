@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 function Tip({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="space-y-2 text-left tracking-normal">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-300">{title}</p>
+      <p className="text-[11px] font-semibold text-blue-300">{title}</p>
       <div className="text-neutral-300 text-xs leading-relaxed space-y-2">{children}</div>
     </div>
   );
