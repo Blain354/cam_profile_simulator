@@ -1,9 +1,9 @@
-import { Button, Input } from '@blain-projects/ui';
+import { Button, Input, Modal } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown, ChevronRight, Trash2,
-  X, RefreshCw
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -159,76 +159,63 @@ export function ChartDomainSettingsModal({
   onClose: () => void;
   onChange: (next: ChartDomainSettings) => void;
 }) {
-  if (!isOpen) return null;
   const setNum = (key: keyof ChartDomainSettings, val: string) => {
     const n = parseFloat(val);
     if (!Number.isNaN(n)) onChange({ ...settings, [key]: n });
   };
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <motion.div
-        initial={{ opacity: 0, y: 10, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        className="w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-neutral-800 p-4">
-          <h3 className="text-sm font-bold text-neutral-200">{title}</h3>
-          <Button variant="ghost" onClick={onClose} className="rounded-md p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-white">
-            <X className="h-4 w-4" />
-          </Button>
+    <Modal open={isOpen} onClose={onClose} title={title} size="md">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex items-center gap-2 text-sm text-neutral-300">
+            <input
+              type="checkbox"
+              checked={settings.autoX}
+              onChange={(e) => onChange({ ...settings, autoX: e.target.checked })}
+              className="rounded border-neutral-600 bg-neutral-900 text-blue-500 focus:ring-blue-500"
+            />
+            Auto X
+          </label>
+          <label className="flex items-center gap-2 text-sm text-neutral-300">
+            <input
+              type="checkbox"
+              checked={settings.autoY}
+              onChange={(e) => onChange({ ...settings, autoY: e.target.checked })}
+              className="rounded border-neutral-600 bg-neutral-900 text-blue-500 focus:ring-blue-500"
+            />
+            Auto Y
+          </label>
         </div>
-        <div className="space-y-4 p-4">
+        {!settings.autoX && (
           <div className="grid grid-cols-2 gap-3">
-            <label className="flex items-center gap-2 text-sm text-neutral-300">
-              <input
-                type="checkbox"
-                checked={settings.autoX}
-                onChange={(e) => onChange({ ...settings, autoX: e.target.checked })}
-                className="rounded border-neutral-600 bg-neutral-900 text-blue-500 focus:ring-blue-500"
-              />
-              Auto X
-            </label>
-            <label className="flex items-center gap-2 text-sm text-neutral-300">
-              <input
-                type="checkbox"
-                checked={settings.autoY}
-                onChange={(e) => onChange({ ...settings, autoY: e.target.checked })}
-                className="rounded border-neutral-600 bg-neutral-900 text-blue-500 focus:ring-blue-500"
-              />
-              Auto Y
-            </label>
+            <div>
+              <label className="mb-1 block text-xs text-neutral-500">X min</label>
+              <Input type="number" value={settings.xMin} onChange={(e) => setNum('xMin', e.target.value)}
+                className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-neutral-500">X max</label>
+              <Input type="number" value={settings.xMax} onChange={(e) => setNum('xMax', e.target.value)}
+                className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
+            </div>
           </div>
-          {!settings.autoX && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-neutral-500">X min</label>
-                <Input type="number" value={settings.xMin} onChange={(e) => setNum('xMin', e.target.value)}
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-neutral-500">X max</label>
-                <Input type="number" value={settings.xMax} onChange={(e) => setNum('xMax', e.target.value)}
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
-              </div>
+        )}
+        {!settings.autoY && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-neutral-500">Y min</label>
+              <Input type="number" value={settings.yMin} onChange={(e) => setNum('yMin', e.target.value)}
+                className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
             </div>
-          )}
-          {!settings.autoY && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-neutral-500">Y min</label>
-                <Input type="number" value={settings.yMin} onChange={(e) => setNum('yMin', e.target.value)}
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-neutral-500">Y max</label>
-                <Input type="number" value={settings.yMax} onChange={(e) => setNum('yMax', e.target.value)}
-                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
-              </div>
+            <div>
+              <label className="mb-1 block text-xs text-neutral-500">Y max</label>
+              <Input type="number" value={settings.yMax} onChange={(e) => setNum('yMax', e.target.value)}
+                className="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100" />
             </div>
-          )}
-        </div>
-      </motion.div>
-    </div>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -736,16 +723,10 @@ export function ConfigModal({
     };
   }, [previewData]);
 
-  if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-      <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full max-w-4xl h-[70vh] flex overflow-hidden">
-        <div className="w-64 shrink-0 min-w-0 border-r border-neutral-800 flex flex-col bg-neutral-900/50">
-          <div className="p-4 border-b border-neutral-800 flex justify-between items-center min-w-0">
-            <h3 className="text-sm font-bold text-white tracking-tighter truncate">Configurations</h3>
-            <Button variant="ghost" onClick={onClose} className="text-neutral-500 hover:text-white transition-colors shrink-0"><X className="w-4 h-4" /></Button>
-          </div>
+    <Modal open={isOpen} onClose={onClose} title="Configurations" size="lg">
+      <div className="flex h-[min(62vh,640px)] min-h-0 flex-col overflow-hidden md:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-neutral-800 md:w-60 md:flex-none md:border-b-0 md:border-r">
           <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">
             {configs.map(({ filename, note }) => (
               <div key={filename} className="group relative flex items-start min-w-0 max-w-full">
@@ -778,7 +759,7 @@ export function ConfigModal({
             </Button>
           </div>
         </div>
-        <div className="flex-1 bg-neutral-950 flex flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="p-4 border-b border-neutral-800 flex justify-between items-center bg-neutral-900/40">
             <h4 className="text-xs font-bold text-neutral-500">Configuration Preview</h4>
             {selectedConfig && (
@@ -788,10 +769,10 @@ export function ConfigModal({
               </Button>
             )}
           </div>
-          <div className="flex-1 min-h-0 flex">
+          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
             {previewParams ? (
               <>
-                <div className="w-1/3 min-w-[230px] max-w-[340px] border-r border-neutral-800 bg-neutral-900/65 p-4 overflow-y-auto space-y-4">
+                <div className="max-h-40 w-full overflow-y-auto border-b border-neutral-800 bg-neutral-900/65 p-4 space-y-4 md:max-h-none md:w-2/5 md:max-w-[280px] md:border-b-0 md:border-r">
                   {previewParams.note.trim() ? (
                     <div>
                       <div className="text-[10px] text-neutral-500 font-bold mb-1">Note</div>
@@ -826,7 +807,7 @@ export function ConfigModal({
                   )}
                 </div>
 
-                <div className="w-2/3 min-w-0 p-6 flex items-center justify-center overflow-hidden">
+                <div className="flex min-h-32 min-w-0 flex-1 items-center justify-center overflow-hidden p-4">
                   <div className="w-full h-full flex flex-col items-center justify-center">
                     <VerticalSystemView data={previewData} params={previewParams} details={true} setDetails={() => {}} isPreview={true} />
                   </div>
@@ -837,7 +818,7 @@ export function ConfigModal({
             )}
           </div>
         </div>
-      </motion.div>
-    </div>
+      </div>
+    </Modal>
   );
 }

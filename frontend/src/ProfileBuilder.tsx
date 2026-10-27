@@ -1,10 +1,10 @@
 import { Textarea } from '@blain-projects/ui';
-import { Button, Input } from '@blain-projects/ui';
+import { Button, Input, Modal } from '@blain-projects/ui';
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
-import { Crosshair, ArrowRight, Loader2, Maximize2, Minimize2, OctagonX, Trash2, X, ChevronDown, ChevronRight, Cog, AlertTriangle } from 'lucide-react';
+import { Crosshair, ArrowRight, Loader2, Maximize2, Minimize2, OctagonX, Trash2, ChevronDown, ChevronRight, Cog, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult } from './components';
 import {
@@ -2675,21 +2675,15 @@ export default function ProfileBuilder({
         }}
       />
 
-      {showExperienceModal && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full max-w-5xl h-[72vh] flex overflow-hidden"
-          >
-            <div className="w-72 shrink-0 min-w-0 border-r border-neutral-800 flex flex-col bg-neutral-900/50">
-              <div className="h-14 px-4 border-b border-neutral-800 flex justify-between items-center min-w-0">
-                <h3 className="text-sm font-bold text-white tracking-tighter truncate">Builder Experiences</h3>
-                <Button variant="ghost" onClick={() => setShowExperienceModal(false)} className="text-neutral-500 hover:text-white transition-colors shrink-0">
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="px-3 pt-3 pb-2 border-b border-neutral-800/70">
+      <Modal
+        open={showExperienceModal}
+        onClose={() => setShowExperienceModal(false)}
+        title="Builder Experiences"
+        size="lg"
+      >
+        <div className="flex h-[min(62vh,640px)] min-h-0 flex-col overflow-hidden md:flex-row">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-neutral-800 md:w-60 md:flex-none md:border-b-0 md:border-r">
+            <div className="border-b border-neutral-800/70 px-3 pb-2 pt-1">
                 <Input
                   type="text"
                   value={experienceQuery}
@@ -2738,14 +2732,14 @@ export default function ProfileBuilder({
                 </Button>
               </div>
             </div>
-            <div className="flex-1 bg-neutral-950 flex flex-col min-h-0">
-              <div className="h-14 px-4 border-b border-neutral-800 bg-neutral-900/40 flex items-center">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="flex h-10 shrink-0 items-center border-b border-neutral-800 bg-neutral-900/40 px-4">
                 <h4 className="text-xs font-bold text-neutral-500">Experience Preview</h4>
               </div>
-              <div className="flex-1 min-h-0 p-4 overflow-hidden">
+              <div className="min-h-0 flex-1 overflow-hidden p-3">
                 {previewExperience?.solver_result?.simulation ? (
-                  <div className="h-full grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="md:col-span-1 min-h-0 rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 overflow-auto">
+                  <div className="grid h-full min-h-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
+                    <div className="min-h-0 max-h-40 overflow-auto rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 md:max-h-none">
                       <div className="text-[10px] font-bold text-neutral-500 mb-3">Simplified Parameters</div>
                       {(() => {
                         const p = (previewExperience.builder_params ?? {}) as Record<string, unknown>;
@@ -2852,7 +2846,7 @@ export default function ProfileBuilder({
                         );
                       })()}
                     </div>
-                    <div className="md:col-span-2 min-h-0">
+                    <div className="min-h-32 min-w-0">
                       <VerticalSystemView
                         data={previewExperience.solver_result.simulation}
                         params={{
@@ -2888,9 +2882,8 @@ export default function ProfileBuilder({
                 </div>
               )}
             </div>
-          </motion.div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { Button } from '@blain-projects/ui';
+import { Button, Modal } from '@blain-projects/ui';
 /**
  * STL Export modal — drives the backend `/api/export/stl-stream` NDJSON
  * pipeline and surfaces every Onshape stage (auth, variables, translation
@@ -13,8 +13,8 @@ import { Button } from '@blain-projects/ui';
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Box, X, Loader2, CheckCircle2, AlertTriangle, FolderDown, Play, StopCircle } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Box, Loader2, CheckCircle2, AlertTriangle, FolderDown, Play, StopCircle } from 'lucide-react';
 import type { SimulationParams } from './components';
 import { apiUrl } from './components';
 
@@ -298,8 +298,6 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
     }
   }, [params, suggestedFilename, resetState, appendLog, consumeStream]);
 
-  if (!isOpen) return null;
-
   const summary: { label: string; value: string }[] = [
     { label: 'Height', value: `${params.height} mm` },
     { label: 'Thickness', value: `${params.thickness} mm` },
@@ -314,43 +312,53 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
   const ready = status?.ready ?? false;
 
   return (
-    <AnimatePresence>
-      <motion.div
-        className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={busy ? undefined : handleClose}
-      >
-        <motion.div
-          className="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]"
-          initial={{ scale: 0.95, y: 10, opacity: 0 }}
-          animate={{ scale: 1, y: 0, opacity: 1 }}
-          exit={{ scale: 0.95, y: 10, opacity: 0 }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-700/80">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600/15 text-emerald-400 border border-emerald-700/50">
-                <Box className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <h2 className="text-base font-bold text-white truncate">Export STL via Onshape</h2>
-                <p className="text-xs text-neutral-400 truncate">Pushes the current cam configuration to Onshape, runs a translation, then downloads the resulting STL.</p>
-              </div>
-            </div>
+    <Modal
+      open={isOpen}
+      onClose={handleClose}
+      size="lg"
+      closeOnOverlayClick={!busy}
+      closeOnEsc={!busy}
+      showClose={!busy}
+      title={(
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Box className="h-5 w-5 shrink-0 text-emerald-400" aria-hidden />
+          <span className="truncate">Export STL via Onshape</span>
+        </span>
+      )}
+      footer={(
+        <>
+          {busy ? (
+            <Button variant="ghost"
+              type="button"
+              onClick={handleCancel}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-700/60 bg-red-600/20 hover:bg-red-600/30 text-red-200 px-3 py-1.5 text-xs font-semibold"
+            >
+              <StopCircle className="h-3.5 w-3.5" /> Cancel
+            </Button>
+          ) : (
             <Button variant="ghost"
               type="button"
               onClick={handleClose}
-              disabled={busy}
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 disabled:opacity-40"
-              aria-label="Close STL export"
+              className="rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-1.5 text-xs font-semibold"
             >
-              <X className="h-4 w-4" />
+              Close
             </Button>
-          </div>
-
-          <div className="px-5 py-4 space-y-4 overflow-y-auto">
+          )}
+          <Button variant="ghost"
+            type="button"
+            onClick={handleStart}
+            disabled={busy || params.ramp_enabled || (status !== null && !ready)}
+            className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-xs font-semibold shadow-lg shadow-emerald-600/30"
+            title={params.ramp_enabled ? 'The Onshape sketch does not support the closure ramp yet' : ready ? 'Start the Onshape STL export pipeline' : 'Configure Onshape credentials first'}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+            {phase === 'success' || phase === 'error' || phase === 'cancelled' ? 'Run again' : 'Start export'}
+          </Button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <p className="text-xs text-neutral-400">Pushes the current cam configuration to Onshape, runs a translation, then downloads the resulting STL.</p>
             {/* Configuration summary */}
             <section className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-3">
               <header className="flex items-center justify-between mb-2">
@@ -491,39 +499,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                 </Button>
               </div>
             )}
-          </div>
-
-          <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-neutral-700/80 bg-neutral-950/40 rounded-b-2xl">
-            {busy ? (
-              <Button variant="ghost"
-                type="button"
-                onClick={handleCancel}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-700/60 bg-red-600/20 hover:bg-red-600/30 text-red-200 px-3 py-1.5 text-xs font-semibold"
-              >
-                <StopCircle className="h-3.5 w-3.5" /> Cancel
-              </Button>
-            ) : (
-              <Button variant="ghost"
-                type="button"
-                onClick={handleClose}
-                className="rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-1.5 text-xs font-semibold"
-              >
-                Close
-              </Button>
-            )}
-            <Button variant="ghost"
-              type="button"
-              onClick={handleStart}
-              disabled={busy || params.ramp_enabled || (status !== null && !ready)}
-              className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-xs font-semibold shadow-lg shadow-emerald-600/30"
-              title={params.ramp_enabled ? 'The Onshape sketch does not support the closure ramp yet' : ready ? 'Start the Onshape STL export pipeline' : 'Configure Onshape credentials first'}
-            >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              {phase === 'success' || phase === 'error' || phase === 'cancelled' ? 'Run again' : 'Start export'}
-            </Button>
-          </div>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+      </div>
+    </Modal>
   );
 }
