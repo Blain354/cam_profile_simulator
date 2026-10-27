@@ -1850,7 +1850,7 @@ export default function ProfileBuilder({
   }, [maximizedChart, chartSim, builderViewParams, pneumaticData, pressureData, activeIdx, supplyGaugeKpa, builderChartSettings, builderHasDynamicModel]);
 
   return (
-    <div className="flex-1 mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
       {/* Left: Input Parameters */}
       <div className="lg:col-span-3 xl:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 shadow-xl flex flex-col min-h-0">
         <div className="flex items-center gap-3 mb-6 min-w-0">

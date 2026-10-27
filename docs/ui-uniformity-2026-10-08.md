@@ -2,7 +2,7 @@
 
 The owner requested shared layouts and effective blain-ui use across template-derived applications, including secondary routes and mobile screens, while preserving specialized interactions.
 
-- Kit dependency: `@blain-projects/ui ^2.0.4` (Liquid 2).
+- Kit dependency: `@blain-projects/ui ^2.1.1` (Liquid 2).
 - Header format: full-width; shared `ThemeToggle` and measured content clearance.
 - Site chrome: `SiteFooter` from the kit sits **under** the workspace shell in `frontend/src/App.tsx` so the tool keeps the whole first screen; the footer follows in the page scroll. Version and deployed commit come from Vite defines (`frontend/build-meta.ts`); Docker builds pass `APP_VERSION` / `APP_COMMIT` / `APP_COMMIT_DATE` as compose build args because the image has no `.git`. Project identity for the footer lives in `frontend/src/project.ts`.
 - Labels: sentence case in the tool chrome (Explorer / Profile Builder tabs, section titles, axis controls, export modal) — no `uppercase` / wide-tracking utility classes on those labels.

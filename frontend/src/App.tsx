@@ -527,7 +527,7 @@ export default function App() {
 
   return (
     <TooltipHintsProvider enabled={guidanceMode}>
-    <div className="bui-workspace-shell cam-workspace w-full text-neutral-100 px-4 pb-4 overflow-hidden flex flex-col">
+    <div className="bui-workspace-shell cam-workspace w-full text-neutral-100 px-4 pb-4 overflow-hidden flex flex-col gap-4">
 
       <BlueprintBackground />
       {/* Shared chrome; simulation controls stay in the tool. */}
@@ -666,12 +666,12 @@ export default function App() {
       </Header>
 
       {error && (
-        <div className="shrink-0 mt-4 bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg text-sm">{error}</div>
+        <div className="shrink-0 bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg text-sm">{error}</div>
       )}
 
       {/* ─── TAB CONTENT ─── */}
       {activeTab === 'explorer' ? (
-        <div className="flex-1 mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
 
           {/* Panel 1: Parameters */}
           <motion.div layout className="lg:col-span-3 xl:col-span-2 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 shadow-xl flex flex-col min-h-0">
