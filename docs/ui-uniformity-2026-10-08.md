@@ -2,11 +2,12 @@
 
 The owner requested shared layouts and effective blain-ui use across template-derived applications, including secondary routes and mobile screens, while preserving specialized interactions.
 
-- Kit dependency: `@blain-projects/ui ^2.1.1` (Liquid 2).
+- Kit dependency: `@blain-projects/ui ^2.1.4` (Liquid 2).
 - Header format: full-width; shared `ThemeToggle`.
 - Header clearance: the workspace shell owns spacing under the header. In `frontend/src/App.tsx`, `.bui-workspace-shell` uses `gap-4`; the error banner and the Explorer / Profile Builder grids add **no** top margin of their own (`mt-4` removed). `frontend/shell-contract.test.ts` pins that contract.
 - Typography / safe area: `frontend/index.html` loads the Liquid 2 F4 webfonts (Hanken Grotesk, JetBrains Mono from Google Fonts) and sets `viewport-fit=cover` on the viewport meta — also pinned by `frontend/shell-contract.test.ts`.
 - Site chrome: `SiteFooter` from the kit sits **under** the workspace shell in `frontend/src/App.tsx` so the tool keeps the whole first screen; the footer follows in the page scroll. Version and deployed commit come from Vite defines (`frontend/build-meta.ts`); Docker builds pass `APP_VERSION` / `APP_COMMIT` / `APP_COMMIT_DATE` as compose build args because the image has no `.git`. Project identity for the footer lives in `frontend/src/project.ts`.
+- Overlays: chart domain settings, Configurations, STL export and Builder Experiences open through kit `Modal` (`open` / `onClose`, kit enter/exit) — not homemade `fixed inset-0` shells. See `ChartDomainSettingsModal` and `ConfigModal` in `frontend/src/components.tsx`, `StlExportModal` in `frontend/src/StlExportModal.tsx`, and the experience browser in `frontend/src/ProfileBuilder.tsx`. While an STL export is running, dismiss is locked (`closeOnOverlayClick` / `closeOnEsc` / `showClose` off); use **Cancel**.
 - Labels: sentence case in the tool chrome (Explorer / Profile Builder tabs, section titles, axis controls, export modal) — no `uppercase` / wide-tracking utility classes on those labels.
 - Show-off mode: `VITE_BLAIN_SHOWOFF` build arg; when unset, the private app stays sober (`frontend/src/project.ts` → `isShowOff`).
 - Changes: Explorer and Profile Builder; common theme owner/header, responsive stacked panels and kit fields/actions.

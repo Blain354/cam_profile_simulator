@@ -149,10 +149,13 @@ uvicorn main:app --reload --port 8001
 cd frontend && npm run dev
 ```
 
-Click **Export STL** in the header. The modal will:
+Click **Export STL** in the header. `StlExportModal` is a kit `Modal`
+(`@blain-projects/ui`). It will:
 1. Probe `/api/export/stl-config` and complain about missing env vars
    before you even start.
-2. Stream progress events from `/api/export/stl-stream`.
+2. Stream progress events from `/api/export/stl-stream`. While
+   `phase === 'running'`, Esc / overlay click / the close control are
+   disabled — use **Cancel** (aborts the stream).
 3. On success, show **Download STL** — click it to open the OS file picker
    (or trigger the `<a download>` fallback).
 
