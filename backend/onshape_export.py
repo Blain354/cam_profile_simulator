@@ -42,13 +42,13 @@ ONSHAPE_API_VERSION = "/api/v10"
 
 
 def _load_secret_env() -> None:
-    """Best-effort load of ~/.openclaw/secrets/onshape.env when present.
+    """Best-effort load of ~/.hermes/secrets/onshape.env when present.
 
     In Docker the secrets are normally injected through `ONSHAPE_ACCESS_KEY` /
     `ONSHAPE_SECRET_KEY`; on a dev host we transparently reuse the file the
     OpenClaw skill maintains so the developer doesn't have to duplicate keys.
     """
-    candidate = Path.home() / ".openclaw" / "secrets" / "onshape.env"
+    candidate = Path.home() / ".hermes" / "secrets" / "onshape.env"
     if not candidate.exists():
         return
     try:
@@ -217,7 +217,7 @@ def _request(
     if not access_key or not secret_key:
         raise OnshapeConfigError(
             "Onshape API keys missing. Set ONSHAPE_ACCESS_KEY and "
-            "ONSHAPE_SECRET_KEY (see ~/.openclaw/secrets/onshape.env)."
+            "ONSHAPE_SECRET_KEY (see ~/.hermes/secrets/onshape.env)."
         )
 
     if not path.startswith("/"):

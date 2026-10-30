@@ -437,7 +437,7 @@ def export_stl_config():
     target = onshape_export.get_default_target_or_none()
     has_keys = bool(_os.environ.get("ONSHAPE_ACCESS_KEY") and _os.environ.get("ONSHAPE_SECRET_KEY"))
     if not has_keys:
-        has_keys = (Path.home() / ".openclaw" / "secrets" / "onshape.env").exists()
+        has_keys = (Path.home() / ".hermes" / "secrets" / "onshape.env").exists()
     return {
         "ready": target is not None and has_keys,
         "has_keys": has_keys,
