@@ -78,7 +78,8 @@ npm run dev
 Frontend disponible sur: `http://localhost:5173`
 
 Chrome UI partage (header full-width, theme, champs kit, `SiteFooter`
-sous l'outil plein ecran, labels en sentence case, kit Liquid 2) : voir
+sous l'outil plein ecran, labels en sentence case, kit
+`@blain-projects/ui` ^3.0.0, surfaces plates et motion 250 ms) : voir
 [`docs/ui-uniformity-2026-10-08.md`](docs/ui-uniformity-2026-10-08.md).
 En Docker, passer `APP_VERSION` / `APP_COMMIT` / `APP_COMMIT_DATE` au build
 frontend pour peupler le pied de page (pas de `.git` dans l'image) — voir
