@@ -172,7 +172,7 @@ export function ChartDomainSettingsModal({
               type="checkbox"
               checked={settings.autoX}
               onChange={(e) => onChange({ ...settings, autoX: e.target.checked })}
-              className="rounded border-neutral-600 bg-neutral-900 text-blue-500 focus:ring-blue-500"
+              className="rounded border-neutral-600 bg-neutral-900 text-blue-500"
             />
             Auto X
           </label>
@@ -181,7 +181,7 @@ export function ChartDomainSettingsModal({
               type="checkbox"
               checked={settings.autoY}
               onChange={(e) => onChange({ ...settings, autoY: e.target.checked })}
-              className="rounded border-neutral-600 bg-neutral-900 text-blue-500 focus:ring-blue-500"
+              className="rounded border-neutral-600 bg-neutral-900 text-blue-500"
             />
             Auto Y
           </label>
@@ -238,7 +238,7 @@ export function Accordion({
       <Button variant="ghost"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
-        className="w-full flex cursor-pointer items-center justify-between rounded-lg border border-transparent px-2 py-2 text-sm font-semibold text-neutral-400 transition-all hover:border-neutral-700 hover:bg-neutral-700/30 hover:text-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+        className="w-full flex cursor-pointer items-center justify-between rounded-lg border border-transparent px-2 py-2 text-sm font-semibold text-neutral-400 transition-all hover:border-neutral-700 hover:bg-neutral-700/30 hover:text-neutral-100"
       >
         <span>{title}</span>
         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -249,7 +249,7 @@ export function Accordion({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
             className="overflow-hidden"
           >
             {children}
@@ -339,7 +339,7 @@ export function DelayedHoverHint({
         createPortal(
           <div
             role="tooltip"
-            className="pointer-events-none fixed z-[100001] w-[min(20rem,calc(100vw-1.5rem))] max-h-[min(70vh,24rem)] overflow-y-auto rounded-xl border border-neutral-600 bg-neutral-900/98 p-3 text-left shadow-2xl backdrop-blur-md"
+            className="pointer-events-none fixed z-[100001] w-[min(20rem,calc(100vw-1.5rem))] max-h-[min(70vh,24rem)] overflow-y-auto rounded-xl border border-neutral-600 bg-neutral-900/98 p-3 text-left shadow-2xl"
             style={{ top: pos.top, left: pos.left }}
           >
             {content}
@@ -384,7 +384,7 @@ export function ParameterSlider({
           className={`text-sm tracking-tight flex items-center gap-2 ${isModified ? 'text-amber-400 font-bold' : 'text-neutral-300 font-medium'}`}
         >
           {label}
-          {isModified && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse hidden xl:block" />}
+          {isModified && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 hidden xl:block" />}
           {secondaryValue && (
             <span className={`ml-2 text-xs font-normal ${isModified ? 'text-amber-500/70' : 'text-neutral-500'}`}>
               ({secondaryValue})
@@ -402,7 +402,7 @@ export function ParameterSlider({
             const v = parseFloat(e.target.value);
             if (!isNaN(v)) onChange(v);
           }}
-          className="w-20 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-right text-neutral-100 focus:outline-none focus:border-blue-500 font-mono disabled:cursor-not-allowed"
+          className="w-20 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-right text-neutral-100 font-mono disabled:cursor-not-allowed"
         />
       </div>
       <input
@@ -547,7 +547,7 @@ export function VerticalSystemSvgDiagram({
     <>
       {canInteract && (
         <Button variant="ghost" type="button" onClick={resetView} title="Reset view"
-          className="absolute bottom-2 right-2 z-10 p-2 rounded-lg bg-neutral-800/95 border border-neutral-600 text-neutral-300 hover:bg-neutral-700 hover:text-white shadow-md transition-colors focus:outline-none focus:ring-2 ring-blue-500">
+          className="absolute bottom-2 right-2 z-10 p-2 rounded-lg bg-neutral-800/95 border border-neutral-600 text-neutral-300 hover:bg-neutral-700 hover:text-white shadow-md transition-colors">
           <RefreshCw className="w-4 h-4" />
         </Button>
       )}
@@ -556,9 +556,9 @@ export function VerticalSystemSvgDiagram({
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
         onDoubleClick={(e) => { if (!canInteract) return; e.preventDefault(); resetView(); }}>
 
-        <motion.rect initial={false} animate={{ x: minX, y: minY, width: w, height: h }} transition={{ duration: 0.5, ease: 'easeInOut' }} fill="#171717" />
-        <motion.path initial={false} animate={{ d: `M ${minX} ${0} L ${maxX} ${0}` }} transition={{ duration: 0.5, ease: 'easeInOut' }} stroke="#374151" strokeWidth="0.05" strokeDasharray="0.1 0.1" />
-        <motion.path initial={false} animate={{ d: `M ${0} ${minY} L ${0} ${maxY}` }} transition={{ duration: 0.5, ease: 'easeInOut' }} stroke="#374151" strokeWidth="0.05" strokeDasharray="0.1 0.1" />
+        <motion.rect initial={false} animate={{ x: minX, y: minY, width: w, height: h }} transition={{ duration: 0.25, ease: 'easeOut' }} fill="#171717" />
+        <motion.path initial={false} animate={{ d: `M ${minX} ${0} L ${maxX} ${0}` }} transition={{ duration: 0.25, ease: 'easeOut' }} stroke="#374151" strokeWidth="0.05" strokeDasharray="0.1 0.1" />
+        <motion.path initial={false} animate={{ d: `M ${0} ${minY} L ${0} ${maxY}` }} transition={{ duration: 0.25, ease: 'easeOut' }} stroke="#374151" strokeWidth="0.05" strokeDasharray="0.1 0.1" />
 
         <polyline points={camPoints} fill="none" stroke="#10b981" strokeWidth="0.08" strokeLinejoin="round" />
         <circle cx={cx} cy={cy} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
@@ -651,7 +651,7 @@ export function VerticalSystemView({
         <div className="flex items-center gap-3 mb-4 shrink-0 min-w-0">
           <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Vertical System</h3>
           <Button variant="ghost" type="button" onClick={() => setDetails(!details)}
-            className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white shadow-blue-500/20' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}>
+            className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}>
             {details ? 'Hide Details' : 'Details'}
           </Button>
         </div>
@@ -736,8 +736,8 @@ export function ConfigModal({
                   <div className="flex items-start justify-between gap-2 w-full min-w-0">
                     <span className="font-mono break-all [overflow-wrap:anywhere] text-left leading-snug">{filename}</span>
                     {defaultConfig === filename && (
-                      <div className="flex items-center gap-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded text-[7px] font-black tracking-tighter shadow-sm shrink-0 mt-0.5">
-                        <div className="w-1 h-1 rounded-full bg-white animate-pulse" /> DEFAULT
+                      <div className="flex items-center gap-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 mt-0.5">
+                        Default
                       </div>
                     )}
                   </div>
@@ -755,7 +755,7 @@ export function ConfigModal({
           <div className="p-4 border-t border-neutral-800">
             <Button variant="ghost" disabled={!selectedConfig} onClick={onApply}
               className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-all shadow-lg">
-              OPEN CONFIG
+              Open config
             </Button>
           </div>
         </div>
@@ -765,7 +765,7 @@ export function ConfigModal({
             {selectedConfig && (
               <Button variant="ghost" onClick={() => onSetDefault(selectedConfig)} disabled={defaultConfig === selectedConfig}
                 className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${defaultConfig === selectedConfig ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 opacity-50' : 'bg-blue-600/10 border-blue-500/30 text-blue-400 hover:bg-blue-600/20'}`}>
-                {defaultConfig === selectedConfig ? 'IS DEFAULT' : 'DEFINE AS DEFAULT'}
+                {defaultConfig === selectedConfig ? 'Is default' : 'Set as default'}
               </Button>
             )}
           </div>
@@ -814,7 +814,7 @@ export function ConfigModal({
                 </div>
               </>
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-neutral-600 text-sm font-medium animate-pulse">Hover a config to preview...</div>
+              <div className="w-full h-full flex items-center justify-center text-neutral-600 text-sm font-medium">Hover a config to preview...</div>
             )}
           </div>
         </div>

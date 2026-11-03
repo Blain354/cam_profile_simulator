@@ -397,7 +397,7 @@ function SolverStaleDiffTable({ last, current }: { last: SolveStreamRequestBody;
   return (
     <div className="max-w-[min(100vw-2rem,22rem)] space-y-2">
       <p className="text-[11px] leading-snug text-neutral-300">
-        Ces réglages ne correspondent plus au dernier solve. Relancez <strong className="text-emerald-400">SOLVE</strong> pour mettre à jour les candidats et simulations.
+        Ces réglages ne correspondent plus au dernier solve. Relancez <strong className="text-emerald-400">Solve</strong> pour mettre à jour les candidats et simulations.
       </p>
       <table className="w-full border-collapse text-[10px]">
         <thead>
@@ -411,7 +411,7 @@ function SolverStaleDiffTable({ last, current }: { last: SolveStreamRequestBody;
           {differing.length === 0 ? (
             <tr>
               <td colSpan={3} className="py-2 text-[10px] text-amber-200/90">
-                Écart détecté sans détail ligne à ligne (arrondis). Relancez SOLVE pour actualiser.
+                Écart détecté sans détail ligne à ligne (arrondis). Relancez Solve pour actualiser.
               </td>
             </tr>
           ) : (
@@ -1777,7 +1777,7 @@ export default function ProfileBuilder({
                 <FlowVsYTooltipLikeExplorer />
                 <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
                 <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-                  <Label value="BUSHING CENTER (0mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />
+                  <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />
                 </ReferenceLine>
               </LineChart>
             </ResponsiveContainer>
@@ -1852,7 +1852,7 @@ export default function ProfileBuilder({
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
       {/* Left: Input Parameters */}
-      <div className="lg:col-span-3 xl:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 shadow-xl flex flex-col min-h-0">
+      <div className="lg:col-span-3 xl:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
         <div className="flex items-center gap-3 mb-6 min-w-0">
           <Crosshair className="w-5 h-5 text-emerald-500 shrink-0" />
           <h2 className="text-lg font-bold text-white tracking-tight truncate">Profile Builder</h2>
@@ -1866,7 +1866,7 @@ export default function ProfileBuilder({
                 onChange={(e) => setExperienceNote(e.target.value)}
                 placeholder="Explain this solve context and why it is useful. Parameters are already saved and diplayed in the experience browser"
                 rows={3}
-                className="w-full resize-y min-h-[4.5rem] rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                className="w-full resize-y min-h-[4.5rem] rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600"
               />
             </div>
           </DelayedHoverHint>
@@ -2045,7 +2045,7 @@ export default function ProfileBuilder({
                   type="checkbox"
                   checked={optimizeDefaultDistance}
                   onChange={(e) => setOptimizeDefaultDistance(e.target.checked)}
-                  className="rounded border-neutral-600 bg-neutral-900 text-sky-500 focus:ring-sky-500"
+                  className="rounded border-neutral-600 bg-neutral-900 text-sky-500"
                 />
                 Maximize rest gap per grid cell (advanced)
               </label>
@@ -2060,7 +2060,7 @@ export default function ProfileBuilder({
           <div className="space-y-2 pt-1">
             <div className="text-[10px] font-bold text-neutral-300">Candidate ranking</div>
             <p className="text-[10px] text-neutral-400 leading-snug">
-              Feasible (K, height, deadband) triples are ordered along one axis before listing up to 100 evenly spaced candidates. Choose exactly one method below before <strong className="text-neutral-400">SOLVE</strong>.
+              Feasible (K, height, deadband) triples are ordered along one axis before listing up to 100 evenly spaced candidates. Choose exactly one method below before <strong className="text-neutral-400">Solve</strong>.
             </p>
             <div className="flex flex-col gap-2">
               {CANDIDATE_RANK_OPTIONS.map(({ value, label, hint }) => (
@@ -2069,7 +2069,7 @@ export default function ProfileBuilder({
                     <input
                       type="radio"
                       name="candidate_rank_by"
-                      className="mt-0.5 shrink-0 rounded-full border-neutral-600 bg-neutral-900 text-emerald-500 focus:ring-emerald-500/40"
+                      className="mt-0.5 shrink-0 rounded-full border-neutral-600 bg-neutral-900 text-emerald-500"
                       checked={candidateRankBy === value}
                       onChange={() => setCandidateRankBy(value)}
                       disabled={solving}
@@ -2169,7 +2169,7 @@ export default function ProfileBuilder({
                 </>
               ) : (
                 <span className="flex items-center gap-2">
-                  <span>SOLVE</span>
+                  <span>Solve</span>
                   <span className="text-[11px] font-medium text-emerald-100/90">({solveButtonHint})</span>
                 </span>
               )}
@@ -2193,7 +2193,7 @@ export default function ProfileBuilder({
             <div className="space-y-2">
               <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-700">
                 <div
-                  className={`h-full rounded-full bg-emerald-500 ${solveProgressDisplay.inGridPhase ? '' : 'transition-[width] duration-300 ease-out'}`}
+                  className={`h-full rounded-full bg-emerald-500 ${solveProgressDisplay.inGridPhase ? '' : 'transition-[width] duration-200 ease-out'}`}
                   style={{ width: `${solveProgressDisplay.barPct}%` }}
                 />
               </div>
@@ -2252,12 +2252,12 @@ export default function ProfileBuilder({
         <AnimatePresence mode="wait">
           {solving && !result ? (
             <motion.div key="solving" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-neutral-700 bg-neutral-800/80 p-8 shadow-xl">
+              className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-neutral-700 bg-neutral-800/80 p-8">
               <Loader2 className="h-10 w-10 animate-spin text-emerald-500" />
               <div className="w-full max-w-md space-y-3">
                 <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-700">
                   <div
-                    className={`h-full rounded-full bg-emerald-500 ${solveProgressDisplay.inGridPhase ? '' : 'transition-[width] duration-300 ease-out'}`}
+                    className={`h-full rounded-full bg-emerald-500 ${solveProgressDisplay.inGridPhase ? '' : 'transition-[width] duration-200 ease-out'}`}
                     style={{ width: `${solveProgress?.percent != null ? solveProgressDisplay.barPct : 0}%` }}
                   />
                 </div>
@@ -2308,7 +2308,7 @@ export default function ProfileBuilder({
               className="flex flex-col gap-4 min-h-0 flex-1">
 
               {/* Top bar: found params + stats */}
-              <div className={`shrink-0 p-4 rounded-xl border shadow-xl ${result.success ? 'bg-neutral-800 border-neutral-700' : 'bg-red-900/30 border-red-700/50'}`}>
+              <div className={`shrink-0 p-4 rounded-xl border ${result.success ? 'bg-neutral-800 border-neutral-700' : 'bg-red-900/30 border-red-700/50'}`}>
                 {result.success ? (
                   <div className="flex flex-wrap items-start gap-6">
                     <div>
@@ -2463,14 +2463,14 @@ export default function ProfileBuilder({
                         />
                         <motion.div
                           layoutId={`builder-${maximizedChart}`}
-                          className="absolute inset-0 z-50 flex flex-col overflow-hidden rounded-xl border border-neutral-600 bg-neutral-800 shadow-2xl"
+                          className="absolute inset-0 z-50 flex flex-col overflow-hidden rounded-xl border border-neutral-600 bg-neutral-800"
                         >
-                          <div className="flex shrink-0 items-center justify-between border-b border-neutral-700/50 bg-neutral-800/80 p-6 pb-2 backdrop-blur">
+                          <div className="flex shrink-0 items-center justify-between border-b border-neutral-700/50 bg-neutral-800/80 p-6 pb-2">
                             <h3 className="text-xl font-bold text-neutral-100">{maximizedInfo.title}</h3>
                             <Button variant="ghost"
                               type="button"
                               onClick={() => setMaximizedChart(null)}
-                              className="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-white"
                               title="Exit fullscreen"
                             >
                               <Minimize2 className="h-6 w-6" />
@@ -2484,7 +2484,7 @@ export default function ProfileBuilder({
 
                   <motion.div
                     layoutId="builder-flowY"
-                    className="row-span-2 flex min-h-0 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3 shadow-xl"
+                    className="row-span-2 flex min-h-0 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3"
                   >
                     <div className="relative mb-2 flex shrink-0 items-center justify-between">
                       <div className="absolute inset-0 flex items-center justify-center">
@@ -2494,7 +2494,7 @@ export default function ProfileBuilder({
                         <Button variant="ghost"
                           type="button"
                           onClick={() => setChartSettingsTarget('flowY')}
-                          className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
+                          className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                           title="Chart settings"
                         >
                           <Cog className="h-4 w-4" />
@@ -2502,7 +2502,7 @@ export default function ProfileBuilder({
                         <Button variant="ghost"
                           type="button"
                           onClick={() => setMaximizedChart('flowY')}
-                          className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
+                          className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                           title="Expand chart"
                         >
                           <Maximize2 className="h-4 w-4" />
@@ -2541,7 +2541,7 @@ export default function ProfileBuilder({
                   <div className="row-span-1 flex min-h-0 flex-col gap-4 lg:flex-row">
                     <motion.div
                       layoutId="builder-pressure"
-                      className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3 shadow-xl"
+                      className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3"
                     >
                       <div className="relative mb-2 flex shrink-0 items-center justify-between">
                         <div className="absolute inset-0 flex items-center justify-center">
@@ -2551,7 +2551,7 @@ export default function ProfileBuilder({
                           <Button variant="ghost"
                             type="button"
                             onClick={() => setChartSettingsTarget('pressure')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
+                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Chart settings"
                           >
                             <Cog className="h-3.5 w-3.5" />
@@ -2559,7 +2559,7 @@ export default function ProfileBuilder({
                           <Button variant="ghost"
                             type="button"
                             onClick={() => setMaximizedChart('pressure')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
+                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Expand chart"
                           >
                             <Maximize2 className="h-3.5 w-3.5" />
@@ -2608,7 +2608,7 @@ export default function ProfileBuilder({
 
                     <motion.div
                       layoutId="builder-vertical"
-                      className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3 shadow-xl"
+                      className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3"
                     >
                       <div className="relative mb-2 flex shrink-0 items-center justify-between">
                         <div className="absolute inset-0 flex items-center justify-center">
@@ -2618,7 +2618,7 @@ export default function ProfileBuilder({
                           <Button variant="ghost"
                             type="button"
                             onClick={() => setChartSettingsTarget('vertical')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
+                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Chart settings"
                           >
                             <Cog className="h-3.5 w-3.5" />
@@ -2626,7 +2626,7 @@ export default function ProfileBuilder({
                           <Button variant="ghost"
                             type="button"
                             onClick={() => setMaximizedChart('vertical')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
+                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
                             title="Expand view"
                           >
                             <Maximize2 className="h-3.5 w-3.5" />
@@ -2653,7 +2653,7 @@ export default function ProfileBuilder({
               className="flex-1 flex items-center justify-center">
               <div className="text-center space-y-3">
                 <Crosshair className="w-12 h-12 text-neutral-700 mx-auto" />
-                <p className="text-neutral-500 text-sm">Configure parameters and click <strong className="text-emerald-400">SOLVE</strong> to find optimal cam profile.</p>
+                <p className="text-neutral-500 text-sm">Configure parameters and click <strong className="text-emerald-400">Solve</strong> to find optimal cam profile.</p>
                 <p className="text-neutral-600 text-xs max-w-md mx-auto">
                   The solver will find the height, curve gain (K), and deadband that make the tube open exactly at Y=0
                   and deliver the target volume to your chamber.
@@ -2689,7 +2689,7 @@ export default function ProfileBuilder({
                   value={experienceQuery}
                   onChange={(e) => setExperienceQuery(e.target.value)}
                   placeholder="Search"
-                  className="w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2.5 py-1.5 text-[11px] text-neutral-200 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/40"
+                  className="w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2.5 py-1.5 text-[11px] text-neutral-200 placeholder:text-neutral-500"
                 />
               </div>
               <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">

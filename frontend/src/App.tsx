@@ -10,7 +10,7 @@ import {
   Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
   ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ChartDomainSettingsModal, ClosureRampToggle,
@@ -79,7 +79,7 @@ export default function App() {
   const [activeBuilderExperienceName, setActiveBuilderExperienceName] = useState('Unsaved');
   const [openBuilderExperienceSignal, setOpenBuilderExperienceSignal] = useState(0);
   const [saveBuilderExperienceSignal, setSaveBuilderExperienceSignal] = useState(0);
-  /** Profile Builder: show SAVE/UPDATE in header when a solve can be persisted and is not yet saved. */
+  /** Profile Builder: show Save/Update in header when a solve can be persisted and is not yet saved. */
   const [builderSaveExperienceVisible, setBuilderSaveExperienceVisible] = useState(false);
   const [guidanceMode, setGuidanceMode] = useState(true);
   const [chartSettingsTarget, setChartSettingsTarget] = useState<ExplorerChartKey | null>(null);
@@ -417,16 +417,16 @@ export default function App() {
         {data && (
           <>
             <ReferenceLine y={data.gap_at_Y0} stroke="#d946ef" strokeDasharray="3 3">
-              {maximizedChart === 'gapY' && <Label value={`GAP AT CENTER: ${data.gap_at_Y0.toFixed(3)} mm`} position="insideLeft" fill="#d946ef" fontSize={11} fontWeight="bold" />}
+              {maximizedChart === 'gapY' && <Label value={`Gap at center: ${data.gap_at_Y0.toFixed(3)} mm`} position="insideLeft" fill="#d946ef" fontSize={11} fontWeight="bold" />}
             </ReferenceLine>
             <ReferenceLine y={data.default_distance} stroke="#f59e0b" strokeDasharray="3 3">
-              {maximizedChart === 'gapY' && <Label value={`REST GAP: ${data.default_distance.toFixed(3)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} fontWeight="bold" />}
+              {maximizedChart === 'gapY' && <Label value={`Rest gap: ${data.default_distance.toFixed(3)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} fontWeight="bold" />}
             </ReferenceLine>
           </>
         )}
         <Line type="monotone" dataKey="gap" name="Gap" stroke="#3b82f6" strokeWidth={3} dot={false} isAnimationActive={false} />
         <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-          {maximizedChart === 'gapY' && <Label value="BUSHING CENTER (0mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+          {maximizedChart === 'gapY' && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
         </ReferenceLine>
       </LineChart>
     </ResponsiveContainer>
@@ -442,17 +442,17 @@ export default function App() {
         {data && (
           <>
             <ReferenceLine y={data.gap_at_Y0} stroke="#d946ef" strokeDasharray="3 3">
-              {maximizedChart === 'gapTime' && <Label value={`GAP AT CENTER: ${data.gap_at_Y0.toFixed(2)} mm`} position="insideTopLeft" fill="#d946ef" fontSize={11} />}
+              {maximizedChart === 'gapTime' && <Label value={`Gap at center: ${data.gap_at_Y0.toFixed(2)} mm`} position="insideTopLeft" fill="#d946ef" fontSize={11} />}
             </ReferenceLine>
             <ReferenceLine y={data.default_distance} stroke="#f59e0b" strokeDasharray="3 3">
-              {maximizedChart === 'gapTime' && <Label value={`REST GAP: ${data.default_distance.toFixed(2)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} />}
+              {maximizedChart === 'gapTime' && <Label value={`Rest gap: ${data.default_distance.toFixed(2)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} />}
             </ReferenceLine>
           </>
         )}
         <Line type="monotone" dataKey="gap" name="Gap" stroke="#ef4444" strokeWidth={3} dot={false} isAnimationActive={false} />
         {data && (
           <ReferenceLine x={(-data.Y_positions[0] / (params.motor_speed * params.lead_screw_pitch / 60)) * 1000} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-            {maximizedChart === 'gapTime' && <Label value="BUSHING TIME" position="insideTopRight" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+            {maximizedChart === 'gapTime' && <Label value="Bushing time" position="insideTopRight" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
           </ReferenceLine>
         )}
       </LineChart>
@@ -509,7 +509,7 @@ export default function App() {
         )}
         <Line type="monotone" dataKey="gap" name="gap" stroke="#3b82f6" strokeWidth={0} strokeOpacity={0} dot={false} activeDot={false} isAnimationActive={false} legendType="none" />
         <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-          {maximizedChart === 'pneumatic' && <Label value="BUSHING CENTER (0mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+          {maximizedChart === 'pneumatic' && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
         </ReferenceLine>
       </LineChart>
     </ResponsiveContainer>
@@ -526,6 +526,7 @@ export default function App() {
   const maximizedInfo = getChartContent(maximizedChart);
 
   return (
+    <MotionConfig reducedMotion="user" transition={{ duration: 0.25, ease: 'easeOut' }}>
     <TooltipHintsProvider enabled={guidanceMode}>
     <div className="bui-workspace-shell cam-workspace w-full text-neutral-100 px-4 pb-4 overflow-hidden flex flex-col gap-4">
 
@@ -534,7 +535,7 @@ export default function App() {
       <Header variant="full-width" className="cam-kit-header">
         <div className="flex items-center gap-6">
           <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent leading-tight hidden lg:block">
+            <h1 className="text-2xl font-bold text-neutral-100 leading-tight hidden lg:block">
               Cam Profile Simulator
             </h1>
             <p className="text-xs text-neutral-400 mt-0.5">Pneumatic valve opening simulation</p>
@@ -543,11 +544,11 @@ export default function App() {
           {/* Tab Bar */}
           <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
             <Button variant="ghost" onClick={() => setActiveTab('explorer')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'explorer' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'explorer' ? 'bg-blue-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <Search className="w-3.5 h-3.5" /> Explorer
             </Button>
             <Button variant="ghost" onClick={() => setActiveTab('builder')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <FlaskConical className="w-3.5 h-3.5" /> Profile Builder
             </Button>
           </div>
@@ -563,7 +564,7 @@ export default function App() {
                   </span>
                 </div>
                 <Button variant="ghost" type="button" onClick={() => { fetchConfigs(); setShowImportModal(true); }}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70"
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white"
                   title="Browse and import a JSON config from the repo" aria-label="Import configuration from repository">
                   <Import className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
                   <span className="hidden sm:inline">Import</span>
@@ -571,15 +572,14 @@ export default function App() {
               </div>
               <AnimatePresence>
                 {hasChanges && (
-                  <motion.button initial={{ opacity: 0, scale: 0.8, x: -10 }} animate={{ opacity: 1, scale: 1, x: 0 }} exit={{ opacity: 0, scale: 0.8, x: -10 }}
+                  <motion.button initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
                     onClick={handleUpdateConfig}
-                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)] flex items-center gap-1.5 transition-all outline-none font-bold text-[10px]"
+                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center gap-1.5 transition-all font-bold text-[10px]"
                     title="Update currently loaded config">
                     <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-100" />
                     </span>
-                    <RefreshCw className="w-3 h-3" /> UPDATE
+                    <RefreshCw className="w-3 h-3" /> Update
                   </motion.button>
                 )}
               </AnimatePresence>
@@ -600,7 +600,7 @@ export default function App() {
                 <Button variant="ghost"
                   type="button"
                   onClick={() => setOpenBuilderExperienceSignal((n) => n + 1)}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70"
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white"
                   title="Browse and import a saved builder experience"
                   aria-label="Import builder experience"
                 >
@@ -611,11 +611,11 @@ export default function App() {
               <AnimatePresence>
                 {builderSaveExperienceVisible && (
                   <motion.button
-                    initial={{ opacity: 0, scale: 0.8, x: -10 }}
-                    animate={{ opacity: 1, scale: 1, x: 0 }}
-                    exit={{ opacity: 0, scale: 0.8, x: -10 }}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
                     onClick={() => setSaveBuilderExperienceSignal((n) => n + 1)}
-                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)] flex items-center gap-1.5 transition-all outline-none font-bold text-[10px]"
+                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center gap-1.5 transition-all font-bold text-[10px]"
                     title={
                       activeBuilderExperienceName === 'Unsaved'
                         ? 'Save this solve as a new builder experience'
@@ -623,11 +623,10 @@ export default function App() {
                     }
                   >
                     <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-100" />
                     </span>
                     <RefreshCw className="w-3 h-3" />{' '}
-                    {activeBuilderExperienceName === 'Unsaved' ? 'SAVE' : 'UPDATE'}
+                    {activeBuilderExperienceName === 'Unsaved' ? 'Save' : 'Update'}
                   </motion.button>
                 )}
               </AnimatePresence>
@@ -674,7 +673,7 @@ export default function App() {
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
 
           {/* Panel 1: Parameters */}
-          <motion.div layout className="lg:col-span-3 xl:col-span-2 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 shadow-xl flex flex-col min-h-0">
+          <motion.div layout className="lg:col-span-3 xl:col-span-2 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
             <div className="flex items-center gap-3 mb-6 min-w-0">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Settings className="w-5 h-5 text-blue-500 shrink-0" />
@@ -694,12 +693,12 @@ export default function App() {
               <div className="space-y-2 pb-2 border-b border-neutral-700/50">
                 <label className={`text-sm font-medium tracking-tight flex items-center gap-2 ${isModified('note') ? 'text-amber-400' : 'text-neutral-300'}`}>
                   Note
-                  {isModified('note') && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse hidden xl:block" />}
+                  {isModified('note') && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 hidden xl:block" />}
                 </label>
                 <Textarea value={params.note} onChange={(e) => handleNoteChange(e.target.value)}
                   placeholder="Describe this profile..."
                   rows={3}
-                  className={`w-full resize-y min-h-[4.5rem] rounded-lg border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 ${isModified('note') ? 'border-amber-500/50' : 'border-neutral-700'}`} />
+                  className={`w-full resize-y min-h-[4.5rem] rounded-lg border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600 ${isModified('note') ? 'border-amber-500/50' : 'border-neutral-700'}`} />
               </div>
 
               <Accordion title="Cam & Actuator Geometry">
@@ -778,23 +777,23 @@ export default function App() {
           </motion.div>
 
           {/* Panel 2: Vertical System View */}
-          <motion.div layout transition={{ duration: 0.5, ease: 'easeInOut' }} className={`min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 shadow-xl flex flex-col min-h-0 ${detailsView ? 'lg:col-span-4 xl:col-span-4' : 'lg:col-span-2 xl:col-span-2'}`}>
+          <motion.div layout transition={{ duration: 0.25, ease: 'easeOut' }} className={`min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 ${detailsView ? 'lg:col-span-4 xl:col-span-4' : 'lg:col-span-2 xl:col-span-2'}`}>
             <VerticalSystemView data={data} params={params} details={detailsView} setDetails={setDetailsView} />
           </motion.div>
 
           {/* Panel 3: Charts Area */}
-          <motion.div layout transition={{ duration: 0.5, ease: 'easeInOut' }} className={`relative min-w-0 grid grid-rows-3 gap-4 min-h-0 ${detailsView ? 'lg:col-span-5 xl:col-span-6' : 'lg:col-span-7 xl:col-span-8'}`}>
+          <motion.div layout transition={{ duration: 0.25, ease: 'easeOut' }} className={`relative min-w-0 grid grid-rows-3 gap-4 min-h-0 ${detailsView ? 'lg:col-span-5 xl:col-span-6' : 'lg:col-span-7 xl:col-span-8'}`}>
             <AnimatePresence>
               {maximizedChart && (
                 <>
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     onClick={() => setMaximizedChart(null)} className="absolute -inset-4 z-40 rounded-xl bg-neutral-900/40" />
                   <motion.div layoutId={`card-${maximizedChart}`}
-                    className="absolute inset-0 z-50 bg-neutral-800 rounded-xl border border-neutral-600 shadow-2xl flex flex-col items-stretch overflow-hidden">
-                    <div className="flex justify-between items-center p-6 pb-2 border-b border-neutral-700/50 bg-neutral-800/80 backdrop-blur">
+                    className="absolute inset-0 z-50 bg-neutral-800 rounded-xl border border-neutral-600 flex flex-col items-stretch overflow-hidden">
+                    <div className="flex justify-between items-center p-6 pb-2 border-b border-neutral-700/50 bg-neutral-800/80">
                       <h3 className="text-xl font-bold text-neutral-100">{maximizedInfo?.title}</h3>
                       <Button variant="ghost" onClick={() => setMaximizedChart(null)}
-                        className="p-2 rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors focus:outline-none focus:ring-2 ring-blue-500">
+                        className="p-2 rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors">
                         <Minimize2 className="w-6 h-6" />
                       </Button>
                     </div>
@@ -804,19 +803,19 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            <motion.div layoutId="card-pneumatic" className="row-span-2 bg-neutral-800 p-3 rounded-xl border border-neutral-700 shadow-xl flex flex-col items-stretch min-h-0">
+            <motion.div layoutId="card-pneumatic" className="row-span-2 bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col items-stretch min-h-0">
               <div className="flex justify-between items-center mb-2 shrink-0 relative">
                 <div className="absolute inset-0 flex items-center justify-center">
                   <h3 className="text-sm font-bold text-neutral-200">Pneumatic Flow vs Y</h3>
                 </div>
                 <div className="z-10 w-full flex justify-end gap-1">
                   <Button variant="ghost" onClick={() => setChartSettingsTarget('pneumatic')}
-                    className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'pneumatic' ? 'opacity-0' : isExplorerChartSettingsModified('pneumatic') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
+                    className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'pneumatic' ? 'opacity-0' : isExplorerChartSettingsModified('pneumatic') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
                     title="Chart settings">
                     <Cog className="w-4 h-4" />
                   </Button>
                   <Button variant="ghost" onClick={() => setMaximizedChart('pneumatic')}
-                    className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'pneumatic' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
+                    className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'pneumatic' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
                     <Maximize2 className="w-4 h-4" />
                   </Button>
                 </div>
@@ -827,19 +826,19 @@ export default function App() {
             </motion.div>
 
             <div className="row-span-1 flex flex-col lg:flex-row gap-4 min-h-0">
-              <motion.div layoutId="card-gapY" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 shadow-xl flex flex-col items-stretch flex-1 min-h-0">
+              <motion.div layoutId="card-gapY" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col items-stretch flex-1 min-h-0">
                 <div className="flex justify-between items-center mb-2 shrink-0 relative">
                   <div className="absolute inset-0 flex items-center justify-center">
                     <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Gap vs Y</h3>
                   </div>
                   <div className="z-10 w-full flex justify-end gap-1">
                     <Button variant="ghost" onClick={() => setChartSettingsTarget('gapY')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapY' ? 'opacity-0' : isExplorerChartSettingsModified('gapY') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
+                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapY' ? 'opacity-0' : isExplorerChartSettingsModified('gapY') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
                       title="Chart settings">
                       <Cog className="w-3.5 h-3.5" />
                     </Button>
                     <Button variant="ghost" onClick={() => setMaximizedChart('gapY')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
+                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
                       <Maximize2 className="w-3.5 h-3.5" />
                     </Button>
                   </div>
@@ -847,19 +846,19 @@ export default function App() {
                 <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'gapY' ? 'opacity-0' : 'opacity-100'}`}>{renderGapY()}</div>
               </motion.div>
 
-              <motion.div layoutId="card-gapTime" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 shadow-xl flex flex-col items-stretch flex-1 min-h-0">
+              <motion.div layoutId="card-gapTime" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col items-stretch flex-1 min-h-0">
                 <div className="flex justify-between items-center mb-2 shrink-0 relative">
                   <div className="absolute inset-0 flex items-center justify-center">
                     <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Gap vs Time</h3>
                   </div>
                   <div className="z-10 w-full flex justify-end gap-1">
                     <Button variant="ghost" onClick={() => setChartSettingsTarget('gapTime')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapTime' ? 'opacity-0' : isExplorerChartSettingsModified('gapTime') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
+                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapTime' ? 'opacity-0' : isExplorerChartSettingsModified('gapTime') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
                       title="Chart settings">
                       <Cog className="w-3.5 h-3.5" />
                     </Button>
                     <Button variant="ghost" onClick={() => setMaximizedChart('gapTime')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors focus:outline-none focus:ring-2 ring-blue-500 ${maximizedChart === 'gapTime' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
+                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapTime' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
                       <Maximize2 className="w-3.5 h-3.5" />
                     </Button>
                   </div>
@@ -909,9 +908,9 @@ export default function App() {
 
       <AnimatePresence>
         {toast.visible && (
-          <motion.div initial={{ opacity: 0, y: 50, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 50, scale: 0.9 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] bg-neutral-800 border-2 border-blue-500/50 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 backdrop-blur-xl">
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] bg-neutral-800 border-2 border-blue-500/50 text-white px-6 py-3 rounded-2xl flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-blue-500" />
             <span className="text-sm font-bold tracking-tight">{toast.message}</span>
           </motion.div>
         )}
@@ -924,5 +923,6 @@ export default function App() {
       commit={__APP_COMMIT__ ? { sha: __APP_COMMIT__, age: ageOf(__APP_COMMIT_DATE__) } : undefined}
     />
     </TooltipHintsProvider>
+    </MotionConfig>
   );
 }

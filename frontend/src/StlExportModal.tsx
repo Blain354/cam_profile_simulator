@@ -348,7 +348,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
             type="button"
             onClick={handleStart}
             disabled={busy || params.ramp_enabled || (status !== null && !ready)}
-            className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-xs font-semibold shadow-lg shadow-emerald-600/30"
+            className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-xs font-semibold"
             title={params.ramp_enabled ? 'The Onshape sketch does not support the closure ramp yet' : ready ? 'Start the Onshape STL export pipeline' : 'Configure Onshape credentials first'}
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}

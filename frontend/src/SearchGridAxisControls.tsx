@@ -70,11 +70,11 @@ const accentFill: Record<SearchGridAxisControlsProps['accent'], string> = {
 /** Radix thumbs (track + range from the primitive — consistent alignment) */
 const thumbClass: Record<SearchGridAxisControlsProps['accent'], string> = {
   emerald:
-    'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-md ring-neutral-900 hover:bg-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/80 active:cursor-grabbing',
-  sky: 'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-sky-400 bg-sky-500 shadow-md ring-neutral-900 hover:bg-sky-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/80 active:cursor-grabbing',
+    'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-md ring-neutral-900 hover:bg-emerald-400 active:cursor-grabbing',
+  sky: 'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-sky-400 bg-sky-500 shadow-md ring-neutral-900 hover:bg-sky-400 active:cursor-grabbing',
   violet:
-    'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-violet-400 bg-violet-500 shadow-md ring-neutral-900 hover:bg-violet-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80 active:cursor-grabbing',
-  red: 'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-red-400 bg-red-500 shadow-md ring-neutral-900 hover:bg-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300/80 active:cursor-grabbing',
+    'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-violet-400 bg-violet-500 shadow-md ring-neutral-900 hover:bg-violet-400 active:cursor-grabbing',
+  red: 'block h-3.5 w-3.5 cursor-grab rounded-full border-2 border-red-400 bg-red-500 shadow-md ring-neutral-900 hover:bg-red-400 active:cursor-grabbing',
 };
 
 export default function SearchGridAxisControls({
@@ -184,7 +184,7 @@ export default function SearchGridAxisControls({
           type="checkbox"
           checked={fix}
           onChange={(e) => onFix(e.target.checked)}
-          className="rounded border-neutral-600 bg-neutral-900 text-emerald-500 focus:ring-emerald-500"
+          className="rounded border-neutral-600 bg-neutral-900 text-emerald-500"
         />
         Fix to a single value (within min–max)
       </label>
