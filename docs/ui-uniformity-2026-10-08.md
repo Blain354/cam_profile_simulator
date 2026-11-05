@@ -2,7 +2,7 @@
 
 The owner requested shared layouts and effective blain-ui use across template-derived applications, including secondary routes and mobile screens, while preserving specialized interactions.
 
-- Kit dependency: `@blain-projects/ui ^3.0.0` (`frontend/package.json`).
+- Kit dependency: `@blain-projects/ui ^3.1.0` (`frontend/package.json`).
 - Header format: full-width; shared `ThemeToggle`.
 - Header clearance: the workspace shell owns spacing under the header. In `frontend/src/App.tsx`, `.bui-workspace-shell` uses `gap-4`; the error banner and the Explorer / Profile Builder grids add **no** top margin of their own (`mt-4` removed). `frontend/shell-contract.test.ts` pins that contract.
 - Typography / safe area: `frontend/index.html` loads the F4 webfonts (Hanken Grotesk, JetBrains Mono from Google Fonts) and sets `viewport-fit=cover` on the viewport meta — also pinned by `frontend/shell-contract.test.ts`.
