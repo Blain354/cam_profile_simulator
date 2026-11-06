@@ -1,4 +1,4 @@
-import { Button, Modal } from '@blain-projects/ui';
+import { Button, Loader, Modal } from '@blain-projects/ui';
 /**
  * STL Export modal — drives the backend `/api/export/stl-stream` NDJSON
  * pipeline and surfaces every Onshape stage (auth, variables, translation
@@ -14,7 +14,7 @@ import { Button, Modal } from '@blain-projects/ui';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Box, Loader2, CheckCircle2, AlertTriangle, FolderDown, Play, StopCircle } from 'lucide-react';
+import { Box, CheckCircle2, AlertTriangle, FolderDown, Play, StopCircle } from 'lucide-react';
 import type { SimulationParams } from './components';
 import { apiUrl } from './components';
 
@@ -347,11 +347,13 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
           <Button variant="ghost"
             type="button"
             onClick={handleStart}
-            disabled={busy || params.ramp_enabled || (status !== null && !ready)}
-            className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 text-xs font-semibold"
+            disabled={params.ramp_enabled || (status !== null && !ready)}
+            loading={busy}
+            loadingLabel="Exporting"
+            className={`inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 text-xs font-semibold ${busy ? '' : 'disabled:opacity-50 disabled:cursor-not-allowed'}`}
             title={params.ramp_enabled ? 'The Onshape sketch does not support the closure ramp yet' : ready ? 'Start the Onshape STL export pipeline' : 'Configure Onshape credentials first'}
           >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+            {!busy && <Play className="h-3.5 w-3.5" />}
             {phase === 'success' || phase === 'error' || phase === 'cancelled' ? 'Run again' : 'Start export'}
           </Button>
         </>
@@ -405,7 +407,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 min-w-0">
                     {phase === 'running' ? (
-                      <Loader2 className="h-3.5 w-3.5 text-emerald-400 animate-spin shrink-0" />
+                      <Loader size="sm" state="connecting" label="Exporting to Onshape" />
                     ) : phase === 'success' ? (
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                     ) : phase === 'error' ? (

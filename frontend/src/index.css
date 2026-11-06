@@ -26,17 +26,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; background: transparent; 
   .cam-kit-header > div { gap: 8px; max-width: 100%; }
 }
 
-/* Loading cue: fade, not a rotation. Tailwind's spin is a loop the changelog forbids. */
-@keyframes cam-load-fade {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-.cam-workspace .animate-spin {
-  animation: cam-load-fade 250ms ease-out infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .cam-workspace .animate-spin,
   .cam-workspace .animate-pulse,
   .cam-workspace .animate-ping {
     animation: none;

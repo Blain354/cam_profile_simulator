@@ -1,10 +1,10 @@
 import { Textarea } from '@blain-projects/ui';
-import { Button, Input, Modal } from '@blain-projects/ui';
+import { Button, Input, LoadingState, Modal } from '@blain-projects/ui';
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
-import { Crosshair, ArrowRight, Loader2, Maximize2, Minimize2, OctagonX, Trash2, ChevronDown, ChevronRight, Cog, AlertTriangle } from 'lucide-react';
+import { Crosshair, ArrowRight, Maximize2, Minimize2, OctagonX, Trash2, ChevronDown, ChevronRight, Cog, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult } from './components';
 import {
@@ -2160,14 +2160,12 @@ export default function ProfileBuilder({
             <Button variant="ghost"
               type="button"
               onClick={handleSolve}
-              disabled={solving || theoreticalGapMm <= 0}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={theoreticalGapMm <= 0}
+              loading={solving}
+              loadingLabel="Solving"
+              className={`flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-emerald-500 ${solving ? '' : 'disabled:cursor-not-allowed disabled:opacity-40'}`}
             >
-              {solving ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Solving...
-                </>
-              ) : (
+              {solving ? 'Solving...' : (
                 <span className="flex items-center gap-2">
                   <span>Solve</span>
                   <span className="text-[11px] font-medium text-emerald-100/90">({solveButtonHint})</span>
@@ -2253,7 +2251,10 @@ export default function ProfileBuilder({
           {solving && !result ? (
             <motion.div key="solving" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
               className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-neutral-700 bg-neutral-800/80 p-8">
-              <Loader2 className="h-10 w-10 animate-spin text-emerald-500" />
+              <LoadingState
+                state="solving"
+                label={solveProgress?.message ?? 'Solving…'}
+              />
               <div className="w-full max-w-md space-y-3">
                 <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-700">
                   <div
@@ -2261,7 +2262,6 @@ export default function ProfileBuilder({
                     style={{ width: `${solveProgress?.percent != null ? solveProgressDisplay.barPct : 0}%` }}
                   />
                 </div>
-                <p className="text-center text-xs text-neutral-300">{solveProgress?.message ?? '…'}</p>
                 <p className="text-center font-mono text-sm text-amber-400/95">
                   {(solveProgress?.feasibleCount ?? 0) === 1
                     ? '1 combinaison trouvée'
