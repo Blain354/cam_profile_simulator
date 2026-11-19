@@ -588,6 +588,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
     flexA: data!.flex_a[i] ?? null, flexB: data!.flex_b[i] ?? null, flexLink: data!.flex_link_a[i] ?? null, flexBend: data!.flex_bend_a[i] ?? null,
   })), [data]);
   const forces = data != null && data.seal_force != null;
+  /** The pin reaches the wall within the stroke: forces there are capped, so they are lower bounds. */
+  const crushed = (data?.max_wall_strain ?? 0) >= 0.95;
   const n2 = (v: number | null | undefined, unit: string, digits = 2) => (v == null ? 'N/A' : `${v.toFixed(digits)} ${unit}`);
   const cycleData = useMemo(() => (data?.time_ms ?? []).map((t, i) => ({
     t: t / 1000, flowIn: data!.flow_in_l_min[i], flowOut: data!.flow_out_l_min[i], kpa: data!.chamber_kpa[i], y: data!.y_time[i],
@@ -816,10 +818,10 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <StatRow label="Force to seal at Y=0" value={`${n2(data.seal_force, 'N')} per tube`} highlight />
               <StatRow label="Fold flat / squeeze / air" value={`${data.seal_force_flatten!.toFixed(2)} / ${data.seal_force_squeeze!.toFixed(2)} / ${data.seal_force_pressure!.toFixed(2)} N`} />
               <StatRow label="Tube wall modulus" value={n2(data.tube_modulus_mpa, 'MPa')} />
-              <StatRow label="Worst pin force" value={n2(data.max_pinch_force, 'N', 1)} />
+              <StatRow label="Worst pin force" value={`${crushed ? '≥ ' : ''}${n2(data.max_pinch_force, 'N', 1)}`} />
               <StatRow label="Worst wall squeeze" value={<span className={data.max_wall_strain! > 0.25 ? 'text-amber-400' : undefined}>{(data.max_wall_strain! * 100).toFixed(0)} %</span>} />
               <StatRow label="Screw thrust at Y=0" value={n2(data.thrust_y0, 'N')} />
-              <StatRow label="Worst screw thrust" value={n2(data.thrust_needed, 'N', 1)} />
+              <StatRow label="Worst screw thrust" value={`${crushed ? '≥ ' : ''}${n2(data.thrust_needed, 'N', 1)}`} />
               <StatRow label="Motor thrust available" value={n2(data.thrust_available, 'N', 1)} />
               <StatRow label="Motor margin" highlight value={data.motor_margin == null ? 'N/A'
                 : <span className={data.motor_margin < 1 ? 'text-red-400' : undefined}>{`× ${data.motor_margin.toFixed(1)} (${n2(data.motor_torque_needed_mnm, 'mN·m', 1)})`}</span>} />
@@ -837,7 +839,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               )}
               {data.max_wall_strain! > 0.25 && (
                 <p className="text-[10px] leading-snug text-amber-400">
-                  The closed tube is squeezed past 25 % of its walls within this stroke: worst-case figures there are an order of magnitude, and the real mechanism jams when the pin reaches the wall. Shorten the stroke to the travel needed for full flow.
+                  {crushed
+                    ? 'The pin reaches the wall through the closed tube within this stroke: the real mechanism jams there, and the worst-case figures are lower bounds. Shorten the stroke to the travel needed for full flow.'
+                    : 'The closed tube is squeezed past 25 % of its walls within this stroke: worst-case figures there are an order of magnitude.'}
                 </p>
               )}
             </div>
@@ -938,7 +942,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
               {xAxisY}
               <YAxis type="number" stroke="#888" scale="log" domain={[0.1, 'auto']} allowDataOverflow tickFormatter={(v) => String(Number(v))}
-                label={{ value: 'Force (N, log)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
+                label={{ value: 'Force (N)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(2)} N`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
               <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
               <Line type="linear" dataKey="forceA" name="Pin on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
@@ -955,7 +959,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
               {xAxisY}
               <YAxis type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(3)}
-                label={{ value: 'Deflection (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 0 }} />
+                label={{ value: 'Flex (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 0 }} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(4)} mm`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
               <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
               <ReferenceLine y={params.preload} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'preload', fill: '#ef4444', fontSize: 11, position: 'insideTopRight' }} />

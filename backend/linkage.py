@@ -374,7 +374,8 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
         g = np.nan_to_num(gap, nan=1e9)
         parts = _pinch_force(p, g, np.nan_to_num(st), np.nan_to_num(ct, nan=1.0))
         force = np.where(ok, sum(parts), np.nan)
-        stiff = (force - sum(_pinch_force(p, g + 1e-3, np.nan_to_num(st), np.nan_to_num(ct, nan=1.0)))) / 1e-3
+        st0, ct0 = np.nan_to_num(st), np.nan_to_num(ct, nan=1.0)
+        stiff = (sum(_pinch_force(p, g - 0.02, st0, ct0)) - sum(_pinch_force(p, g + 0.02, st0, ct0))) / 0.04
 
         ux, uy = (xb - jx) / l1, (h0 + sgn * y - jy) / l1
         lever = (jx - xa) * uy - jy * ux
