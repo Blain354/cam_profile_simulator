@@ -5,7 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 import { Pause, Play, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
-import { useReportProfileState } from './lib/profiles';
+import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
 import type { ProfileHandle, ProfileState } from './lib/profiles';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
 import type { SubTab } from './SubTabs';
@@ -957,14 +957,31 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
     } catch (e) { setMaterialMessage(`Not deleted: ${e instanceof Error ? e.message : e}`); }
   };
 
-  const snapshot = JSON.stringify({ params, search });
+  // Key order free: a profile read back from the server compares equal to the same values on screen.
+  const snapshot = stableJson({ params, search });
   const chartSettingsDirty = savedChartSettings != null
     && (Object.keys(savedChartSettings) as LinkageChartKey[]).some((k) => !sameDomainSettings(chartSettings[k], savedChartSettings[k]));
   const profileDirty = activeProfile != null && ((savedSnapshot != null && savedSnapshot !== snapshot) || chartSettingsDirty);
 
   // No note field here: an update keeps the note stored with the profile.
   useReportProfileState({ name: activeProfile, dirty: profileDirty, canSave: true }, onProfileStateChange);
+  // After a reload the profile named in localStorage is read once, without touching the values on screen,
+  // so the unsaved marker and Update work against what it holds on the server.
+  useEffect(() => {
+    const name = stored.profile;
+    if (!name) return;
+    let live = true;
+    getProfile(kind, name).then((p) => {
+      if (!live) return;
+      const f = fromProfilePayload(kind, p.payload);
+      setSavedSnapshot((prev) => prev ?? stableJson({ params: f.params, search: f.search }));
+      setSavedChartSettings((prev) => prev ?? f.chart_settings);
+    }).catch(() => { /* unknown, as before: no marker */ });
+    return () => { live = false; };
+  }, [kind, stored.profile]);
+
   useImperativeHandle(profileRef, () => ({
+    type: kind,
     getPayload: () => ({ params, search, chart_settings: chartSettings }),
     apply: (profile) => {
       const { params: p, search: s, chart_settings: c } = fromProfilePayload(kind, profile.payload);
@@ -974,11 +991,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       setChartSettings(c);
       setSavedChartSettings(c);
       setActiveProfile(profile.name);
-      setSavedSnapshot(JSON.stringify({ params: p, search: s }));
+      setSavedSnapshot(stableJson({ params: p, search: s }));
     },
     markSaved: (name, _note, payload) => {
       setActiveProfile(name);
-      setSavedSnapshot(JSON.stringify({ params: payload.params, search: payload.search }));
+      setSavedSnapshot(stableJson({ params: payload.params, search: payload.search }));
       setSavedChartSettings(payload.chart_settings as LinkageChartSettings);
     },
     detach: () => {

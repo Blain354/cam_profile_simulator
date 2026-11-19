@@ -1229,6 +1229,7 @@ export default function ProfileBuilder({
   };
 
   useImperativeHandle(profileRef, () => ({
+    type: 'cam-finder' as const,
     getPayload: () => ({
       builder_params: collectBuilderParams(),
       solver_result: result,
@@ -2401,7 +2402,7 @@ export default function ProfileBuilder({
 export function FinderProfilePreview({ payload }: { payload: Record<string, unknown> }) {
   const exp = payload as unknown as BuilderExperiencePayload;
   const sim = exp.solver_result?.simulation;
-  if (!sim) {
+  if (!sim || !Array.isArray(sim.Y_positions) || !Array.isArray(sim.flow_l_min)) {
     return <div className="h-full flex items-center justify-center text-neutral-600 text-sm font-medium">No solve saved with this profile</div>;
   }
   const p = (exp.builder_params ?? {}) as Record<string, unknown>;

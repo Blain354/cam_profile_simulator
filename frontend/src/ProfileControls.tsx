@@ -1,5 +1,5 @@
 import { Button, Input, Modal, Textarea } from '@blain-projects/ui';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Import, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -127,6 +127,23 @@ export function ProfileSaveDialog({ open, type, initialNote, onClose, onSave }: 
 }
 
 // ─── Import window ───────────────────────────────────────────────
+
+/** A preview that throws on an odd payload says so instead of taking the window down. */
+class PreviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (this.state.failed) {
+      return <div className="w-full h-full flex items-center justify-center p-4 text-center text-neutral-500 text-sm">No preview for this profile; it can still be opened.</div>;
+    }
+    return this.props.children;
+  }
+}
+
+/** Calls the feature's preview inside the boundary, so what it throws is caught there. */
+function PreviewOf({ render, payload }: { render: (payload: ProfilePayload) => ReactNode; payload: ProfilePayload }) {
+  return <>{render(payload)}</>;
+}
 
 /**
  * The app's one import window: the saved profiles of one type, a search, a preview on hover,
@@ -294,7 +311,9 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {preview ? (
               <>
-                <div className="min-h-0 flex-1 overflow-hidden" data-testid="profile-preview">{renderPreview(preview.payload)}</div>
+                <div className="min-h-0 flex-1 overflow-hidden" data-testid="profile-preview">
+                  <PreviewBoundary key={preview.name}><PreviewOf render={renderPreview} payload={preview.payload} /></PreviewBoundary>
+                </div>
                 {preview.note.trim() ? (
                   <div className="shrink-0 p-4 bg-neutral-900 border-t border-neutral-800 space-y-1">
                     <div className="text-[10px] text-neutral-500 font-bold">Note</div>

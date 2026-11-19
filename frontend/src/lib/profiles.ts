@@ -111,6 +111,8 @@ export interface ProfileState {
 
 /** What the header calls on the feature of the open tab. */
 export interface ProfileHandle {
+  /** The profile type this feature saves: every write checks it against the type it is about to send. */
+  type: ProfileType;
   /** The payload to store, in the feature's own shape. */
   getPayload: (note: string) => ProfilePayload;
   /** Load a stored profile into the feature. */
@@ -134,6 +136,13 @@ export function useReportProfileState(state: ProfileState, onChange?: (state: Pr
     last.current = state;
     onChange(state);
   });
+}
+
+/** JSON with sorted keys, to compare two payloads whatever order their fields were built in. */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => (v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+    : v));
 }
 
 /** `2026-03-26 23:39` in local time, or nothing for a missing date. */

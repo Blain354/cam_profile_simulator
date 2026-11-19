@@ -774,11 +774,6 @@ export function VerticalSystemView({
 
 // ─── Cam profile preview ─────────────────────────────────────────
 
-/** A stored cam profile's parameters, its note column over the payload's note as the old route served it. */
-export function camParamsFromProfile(payload: Record<string, unknown>, note: string): SimulationParams {
-  return mergeConfigParams('note' in payload || note ? { ...payload, note } : payload);
-}
-
 function staticFlowAt(sim: SimulationResult, yMm: number): number | null {
   const ys = sim.Y_positions;
   const vals = sim.flow_l_min;

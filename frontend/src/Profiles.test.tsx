@@ -3,6 +3,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 import { profileTypeOf } from './lib/profiles'
 import { ProfileImportModal } from './ProfileControls'
+import { CamProfilePreview } from './components'
+import { FinderProfilePreview } from './ProfileBuilder'
+import { LinkageProfilePreview } from './LinkageExplorer'
 import { simulateDefault } from './simulate.fixture'
 
 type Call = { url: string; method: string; body: Record<string, unknown> | null }
@@ -90,6 +93,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 /** The save dialog; the import window may still be closing behind it. */
 const dialog = () => [...document.querySelectorAll('[role=dialog]')].find((d) => d.textContent?.includes('Save as new profile')) as HTMLElement
+/** The save dialog of a linkage tab opens once the loaded profile's note is read. */
+const openedDialog = () => waitFor(() => { const d = dialog(); expect(d).toBeTruthy(); return d })
 
 test('the window lists only its type and filters by name and note', async () => {
   const { calls } = stubStore(allProfiles)
@@ -225,7 +230,8 @@ test('a linkage profile round-trips its params, ranges and chart settings, and i
 
   // Save as new: the owner names it; the loaded note is offered.
   fireEvent.click(first.getByRole('button', { name: 'Save as new profile' }))
-  const d = dialog()
+  const d = await openedDialog()
+  expect((within(d).getByLabelText('Profile note') as HTMLTextAreaElement).value).toBe('kept note')
   expect((within(d).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
   fireEvent.change(within(d).getByLabelText('Profile name'), { target: { value: 'copy' } })
   fireEvent.click(within(d).getByRole('button', { name: 'Save' }))
@@ -245,8 +251,73 @@ test('a linkage profile round-trips its params, ranges and chart settings, and i
   first.unmount()
   const again = render(<App />)
   await waitFor(() => expect(again.getByTestId('profile-name').textContent).toBe('copy'))
-  // After a reload the stored state is not compared, so nothing is flagged.
+  // After a reload the stored profile is read back: the same values flag nothing...
+  await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.url === '/api/profiles/pendulum/copy').length).toBeGreaterThan(0))
   expect(again.queryByRole('button', { name: /Update/ })).toBeNull()
+  // ...and an edit can be written back to it by Update, with its note.
+  fireEvent.click(again.getByText('Pneumatic system'))
+  const box = again.getByText('Pressure (kPa)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
+  fireEvent.change(box, { target: { value: '130' } })
+  fireEvent.click(await again.findByRole('button', { name: /Update/ }))
+  await waitFor(() => expect(store.find((p) => p.name === 'copy')!.payload).toMatchObject({ params: { input_pressure_kpa: 130 } }))
+  expect(store.find((p) => p.name === 'copy')!.note).toBe('note on copy')
+})
+
+test('an existing name asks before it is overwritten, and a refusal writes nothing', async () => {
+  const { calls } = stubStore(allProfiles)
+  vi.mocked(window.confirm).mockReturnValue(false)
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: { pendulum: 'explorer' } }))
+  const { getByRole } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Save as new profile' }))
+  const d = await openedDialog()
+  fireEvent.change(within(d).getByLabelText('Profile name'), { target: { value: 'custom-interessant' } })
+  fireEvent.click(within(d).getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('"custom-interessant"')))
+  expect(calls.some((c) => c.method === 'PUT' || c.method === 'POST')).toBe(false)
+})
+
+test('the linkage Update writes nothing when the stored note cannot be read', async () => {
+  const { calls, store } = stubStore(allProfiles)
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: { pendulum: 'explorer' } }))
+  const { getByRole, getByTestId, findByText, findByRole, getByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Import profile' }))
+  fireEvent.doubleClick(await findByText('custom-interessant'))
+  await waitFor(() => expect(getByTestId('profile-name').textContent).toBe('custom-interessant'))
+  fireEvent.click(getByText('Pneumatic system'))
+  const box = getByText('Pressure (kPa)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
+  fireEvent.change(box, { target: { value: '120' } })
+  const update = await findByRole('button', { name: /Update/ })
+  const real = vi.mocked(fetch).getMockImplementation()!
+  vi.mocked(fetch).mockImplementation(async (input, init) =>
+    (!init?.method && String(input).includes('/api/profiles/pendulum/custom-interessant') ? new Response('{}', { status: 500 }) : real(input, init)))
+  fireEvent.click(update)
+  await findByText(/Not saved/)
+  expect(calls.some((c) => c.method === 'PUT')).toBe(false)
+  expect(store.find((p) => p.name === 'custom-interessant')!.note).toBe('kept note')
+})
+
+test.each([
+  ['cam', (payload: Record<string, unknown>) => <CamProfilePreview payload={payload} />],
+  ['cam-finder', (payload: Record<string, unknown>) => <FinderProfilePreview payload={payload} />],
+  ['elbow', (payload: Record<string, unknown>) => <LinkageProfilePreview kind="elbow" payload={payload} />],
+  ['pendulum', (payload: Record<string, unknown>) => <LinkageProfilePreview kind="pendulum" payload={payload} />],
+])('the %s preview renders an old or empty payload', (_type, preview) => {
+  stubStore([])
+  for (const payload of [{}, { params: {}, search: {} }, { solver_result: {} }, { solver_result: { simulation: {} }, builder_params: null }]) {
+    expect(() => { render(preview(payload)); cleanup() }).not.toThrow()
+  }
+})
+
+test('a preview that throws leaves the window working', async () => {
+  stubStore(allProfiles)
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const onOpen = vi.fn()
+  const { findByText, getByText } = render(
+    <ProfileImportModal open onClose={() => {}} type="pendulum" renderPreview={() => { throw new Error('bad payload') }} onOpen={onOpen} />)
+  fireEvent.mouseEnter(await findByText('custom-interessant'))
+  await findByText(/No preview for this profile/)
+  fireEvent.doubleClick(getByText('custom-interessant'))
+  await waitFor(() => expect(onOpen).toHaveBeenCalled())
 })
 
 test('the linkage Update resends the stored note', async () => {
