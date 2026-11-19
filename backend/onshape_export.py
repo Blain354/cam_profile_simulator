@@ -286,7 +286,7 @@ def _request(
         if location:
             parsed = urllib.parse.urlsplit(location)
             host = (parsed.hostname or "").lower()
-            if host.endswith("onshape.com"):
+            if host == "onshape.com" or host.endswith(".onshape.com"):
                 # Same auth scheme, different region host (e.g.
                 # cad-usw2.onshape.com/modelexport). Re-sign for the
                 # redirected pathname + query string.
@@ -347,8 +347,13 @@ def _request(
     return resp
 
 
-def _request_json(method: str, path: str, *, query: Optional[dict] = None, body: Optional[dict] = None) -> Any:
-    resp = _request(method, path, query=query, body=body)
+def _request_json(
+    method: str, path: str, *, query: Optional[dict] = None, body: Optional[Any] = None, follow_redirects: bool = True,
+) -> Any:
+    resp = _request(method, path, query=query, body=body, follow_redirects=follow_redirects)
+    if not follow_redirects and 300 <= resp.status < 400:
+        # A redirect is never followed here: a POST must not turn into a GET reported as done.
+        raise OnshapeAPIError(resp.status, "unexpected redirect, request not followed")
     if not resp.body:
         return None
     try:

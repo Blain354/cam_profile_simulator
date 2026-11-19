@@ -179,29 +179,97 @@ Click **Export STL** in the header. `StlExportModal` is a kit `Modal`
 - **Closure ramp profiles cannot be exported** until the Onshape sketch
   reproduces the ramp; the API refuses those jobs with 422.
 
-## Linkage tabs: write the dimensions to the Onshape variable table
+## Linkage tabs: write the dimensions to a variable table of their own
 
 The Bar, Lever and Pendulum linkage tabs have a **Write to Onshape variables** button
 (`OnshapeVariablesModal` in `frontend/src/LinkageExplorer.tsx`, `backend/onshape_variables.py`).
-It does not export anything: it overwrites variable expressions, matched by name.
+It does not export anything. It writes the dimensions into a Variable Studio that belongs to the
+simulator, in the configured document and workspace (`ONSHAPE_DOCUMENT_ID`, `ONSHAPE_WORKSPACE_ID`),
+and nowhere else: no Part Studio and no other Variable Studio is read or written.
 
-1. Opening the window reads the tables (`POST /api/linkage/onshape/preview`, 1 or 2 API calls)
-   and lists, for each variable, what Onshape holds now and what the simulator would write.
-2. **Overwrite N variables in Onshape** writes the ticked rows (`POST /api/linkage/onshape/apply`).
-   The tables are read again first, so the write merges into fresh data.
+The table is found by name among the document's Variable Studios. The default name is
+`cam_sim_<kind>`: `cam_sim_pendulum`, `cam_sim_lever`, `cam_sim_elbow`. The window has a
+**Variable table name** field (1 to 60 characters: letters, digits, space, dash, underscore),
+remembered per linkage kind in the browser. A new name gives a brand-new table. If several
+Variable Studios carry that exact name, the app refuses (HTTP 409) rather than pick one.
 
-Two places are looked at, the Part Studio first:
+The match is exact: the name typed is trimmed, then compared as is with the Onshape names, case
+and spaces included (`Cam_Sim_Pendulum` or `cam_sim_pendulum ` in Onshape is not
+`cam_sim_pendulum`). Only elements of type `VARIABLESTUDIO` count: a Part Studio or a drawing
+with the same name is never the table, nor a duplicate of it.
 
-| Where | Env | How it is written |
-|-------|-----|-------------------|
-| `assignVariable` features of a Part Studio (`#L1`, `#L2`…) | `ONSHAPE_LINKAGE_PART_STUDIO_ID` | one POST per changed variable; a configured variable is updated in every configuration |
-| a Variable Studio | `ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID` | one POST of the whole list; an unchanged variable goes back as name, type, expression and description only |
+1. Opening the window, or **Look up** after changing the name, calls
+   `POST /api/linkage/onshape/preview` with `table_name`. If the table does not exist the window
+   says so and lists every variable as new (1 API call). If it exists, it is read and each
+   variable shows what the table holds and what the simulator would write (2 API calls).
+2. The button writes the ticked rows (`POST /api/linkage/onshape/apply`, same `table_name` and
+   `names`). It reads **Create the table and write N variables** when the table does not exist,
+   **Overwrite N variables in <name>** when it does. The table is looked up again first:
+   - missing: it is created, then the ticked variables are written (3 calls: list, create, write);
+   - present: it is read, the ticked rows are merged into what it holds, and the whole list is
+     posted back (3 calls: list, read, write). Variables added by hand in that table are kept,
+     as name, type, expression and description. A variable it already holds with the same value
+     is left alone.
+   With nothing ticked nothing is created or written (1 call). The reply says whether the table
+   was created and gives its element id and `https://cad.onshape.com/documents/{did}/w/{wid}/e/{eid}`,
+   shown as **Open the table in Onshape**.
+   A variable written by the simulator gets the type of its unit: `LENGTH` for mm, `ANGLE` for
+   deg, `NUMBER` without a unit; the expression is a plain number with up to 4 decimals and its
+   unit (`14.43 mm`, `100 deg`).
 
-A name found nowhere is left alone, unless **Also create the variables Onshape does not have yet**
-is ticked: they are then added to the Variable Studio (never to a Part Studio).
-Only this studio's own variables are read. A table with `variableStudioReference` set is skipped,
-so a name that exists only in the referenced studio shows up as absent, and creating it adds a
-variable on this studio.
+What can go wrong:
+
+- **Created, then the write fails.** The reply has `table_created: true`, the element id and
+  `write_error`, and every ticked row is `error`. The window says the table now exists and that
+  the write did not go through (after a refusal nothing was written; after a timeout it may
+  have landed, and the next look-up shows it). Writing again finds that table by name: no second table is made.
+- **Two clicks at once.** The button is disabled while a request runs, and the backend holds a
+  lock per (document, workspace, table name) around list, create and write, so only one table
+  is created. The lock is in memory: it holds with the single uvicorn worker the image runs.
+- **An odd reply from Onshape.** A listing that is not a list, a read that is not one block of
+  the table's own variables (plus referenced ones), or a variable without a name stops the
+  apply before any write, so a bad read is never written back as an emptier table. Ids that
+  are not plain alphanumeric are refused before they go into a path, and a redirect is never
+  followed (a POST must not become a GET reported as done).
+- **The table references another Variable Studio.** The read then has one block per referenced
+  studio. Only the table's own block is merged and written back; referenced variables are not
+  copied into it. A ticked name that only a referenced studio defines is added to the table's
+  own list, and its row says so.
+- **Many elements.** The listing is read as one array; the app does not page it. A document
+  with very many tabs is not expected here, but if Onshape ever paged that reply, a table
+  beyond the first page would be missed and a second one created.
+
+The table is a tab of the Onshape document. A Part Studio uses its values only once it
+references the table (**Insert > Variable Studio reference**), which the owner does once by hand.
+Until then writing changes no part. A Variable Studio has no configuration to write into: what
+is written is what every Part Studio referencing it sees.
+
+Request and reply:
+
+```json
+// POST /api/linkage/onshape/preview   (any /api/linkage/simulate body, plus)
+{ "linkage_type": "pendulum", "...": "...", "table_name": "cam_sim_pendulum" }
+// POST /api/linkage/onshape/apply      (same, plus)
+{ "...": "...", "table_name": "cam_sim_pendulum", "names": ["pend_arm_L", "pend_anchor"] }
+// reply of both
+{ "rows": [{ "name": "pend_arm_L", "key": "bar2_length", "label": "...", "new_expression": "14.43 mm",
+             "current_expression": "10 mm", "status": "update", "detail": "" }],
+  "api_calls": 2, "table_name": "cam_sim_pendulum", "table_exists": true, "table_created": false,
+  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null }
+```
+
+Row status: preview gives `update`, `same` or `new`; apply turns them into `written`, `created`,
+`skipped` (not ticked) or `error` (with `detail`). `table_name` empty or absent means the default.
+
+Onshape REST v10 endpoints used (from the official OpenAPI description that backs the API
+explorer, `https://cad.onshape.com/api/openapi`, explorer at https://cad.onshape.com/glassworks/explorer/):
+
+| Call | Operation |
+|------|-----------|
+| `GET /documents/d/{did}/w/{wid}/elements?elementType=VARIABLESTUDIO` | `getElementsInDocument` (Document) |
+| `POST /variables/d/{did}/w/{wid}/variablestudio`, body `{"name": "..."}` | `createVariableStudio` (Variables) |
+| `GET /variables/d/{did}/w/{wid}/e/{eid}/variables` | `getVariables` (Variables) |
+| `POST /variables/d/{did}/w/{wid}/e/{eid}/variables`, body `[{"name", "type", "expression", "description"}]` | `setVariables` (Variables), replaces the whole list |
 
 Default names are in `DEFAULT_MAPPING` (`backend/onshape_variables.py`): `pend_*` for the pendulum,
 `lever_*` for the lever, `L1` / `L2` and `elbow_*` for the bar linkage, plus `pinch_tube_OD` and
@@ -213,17 +281,6 @@ The value keys are listed in `VALUES` in the same file. Derived values can be se
 `link_length`, `total_height`, `pivot_height_y0`, `link_arc_radius`. A straight link has no
 `link_arc_radius`, so that name is left out of the list.
 
-Both writes reach past the `automation` configuration of the STL export.
-A Variable Studio has no configuration to write into: what is written is what every Part Studio
-using that variable sees. On a Part Studio `assignVariable`, this path calls
-`_patch_assign_variable_expression` (`backend/onshape_export.py`) with no
-`ONSHAPE_CONFIG_ENUM_VALUE`, so a configured variable is overwritten in every configuration.
-`push_variables` passes that value, so an STL export overwrites only the named configuration
-when the value is set.
-
-Opening the window is one read per place that is configured (1 or 2). Apply reads those places
-again, then posts the Variable Studio list once when a ticked row is updated or created there,
-and posts once per Part Studio variable that actually changes. With nothing ticked there is no
-write. These calls are made from the container and are not in
-`~/automation/state/onshape-appels.jsonl`. Missing keys, an unusable target, or a geometry that
-cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
+These calls are made from the container and are not in `~/automation/state/onshape-appels.jsonl`.
+A bad table name comes back as HTTP 422 with the rule. Duplicate table names, missing keys, an
+unusable target, or a geometry that cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
