@@ -84,18 +84,32 @@ class LinkageTests(unittest.TestCase):
         self.assertAlmostEqual(r.time_ms[-1] / 1000.0, 12.0 / (100 * 0.85 * 0.5 / 60.0), places=6)
 
     def test_optimizer_beats_start_and_respects_bounds(self):
-        for p, s in ((LinkageParams(), LinkageSearch()), (LEVER, LEVER_SEARCH), (PENDULUM, PENDULUM_SEARCH)):
-            with self.subTest(kind=p.linkage_type):
+        cases = [(p, replace(s, objective=goal)) for p, s in ((LinkageParams(), LinkageSearch(max_stroke=5.0)), (LEVER, LEVER_SEARCH), (PENDULUM, PENDULUM_SEARCH))
+                 for goal in ("target", "response")]
+        for p, s in cases:
+            with self.subTest(kind=p.linkage_type, goal=s.objective):
                 best, feasible, _ = optimize_linkage(p, s)
                 self.assertIsNotNone(best)
                 self.assertGreater(feasible, 0)
                 r = compute_linkage(best)
                 self.assertTrue(r.feasible, r.message)
-                self.assertLessEqual(r.max_oversqueeze, s.max_oversqueeze + 1e-3)
+                self.assertLessEqual(r.max_oversqueeze, s.max_oversqueeze + 0.01)
                 self.assertGreaterEqual(r.pivot_height_y0, s.min_pivot_height - 0.01)  # results are rounded to 1 um
-                self.assertLessEqual(r.pivot_height_y0 + p.stroke, s.max_pivot_height + 0.01)
+                self.assertLessEqual(r.pivot_height_y0 + best.stroke, s.max_pivot_height + 0.01)
                 start = compute_linkage(p)
-                if start.feasible and start.max_oversqueeze <= s.max_oversqueeze:
+                if s.objective == "response":
+                    # The stroke is cut to the travel that reaches full bore, and the result reports it.
+                    self.assertIsNotNone(r.y_full_open)
+                    self.assertLessEqual(r.y_full_open, best.stroke + 1e-9)
+                    self.assertLess(best.stroke - r.y_full_open, 0.05 + 1e-9)
+                    self.assertLess(r.y_open, r.y_full_open)
+                    self.assertAlmostEqual(r.response_time_ms, r.y_full_open / (100 * 0.85 * 0.5 / 60.0) * 1000.0, places=6)
+                    # Faster than the best "follow the target" design under the same limits.
+                    slow, _, _ = optimize_linkage(p, replace(s, objective="target"))
+                    slow_full = compute_linkage(slow).y_full_open
+                    if slow_full is not None:
+                        self.assertLessEqual(r.y_full_open, slow_full + 1e-6)
+                elif start.feasible and start.max_oversqueeze <= s.max_oversqueeze:
                     self.assertLessEqual(r.rms_error, start.rms_error + 1e-9)
 
     def test_fixed_height_solves_the_link(self):

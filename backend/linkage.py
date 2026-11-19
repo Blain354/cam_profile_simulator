@@ -44,8 +44,12 @@ TYPE_ELBOW = "elbow"
 TYPE_LEVER = "lever"
 TYPE_PENDULUM = "pendulum"
 
+OBJECTIVE_RESPONSE = "response"
+OBJECTIVE_TARGET = "target"
+
 N_SAMPLES = 241
 N_SCORE = 60
+N_RESPONSE = 121
 N_TIME = 601
 _EPS = 1e-9
 
@@ -101,6 +105,8 @@ class LinkageResult:
     y_min: float = 0.0               # reachable carriage range
     y_max: float = 0.0
     y_full_open: Optional[float] = None
+    y_open: Optional[float] = None           # carriage travel to first flow: half the dead band
+    response_time_ms: Optional[float] = None  # Y = 0 to full bore at the loaded motor speed
     sensitivity_y0: float = 0.0      # d(gap)/dY at Y = 0
     pinch_slide: float = 0.0         # pinch point travel along the tube over the stroke
     max_oversqueeze: float = 0.0     # worst squeeze past closure of the closed tube
@@ -299,7 +305,10 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         lo -= 1
     while hi < N_SAMPLES - 1 and ok[hi + 1]:
         hi += 1
-    full = np.where(pos & ok & (gap_a >= full_open_gap))[0]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        y_open = float(_crossing(y[pos], gap_a[pos][None, :], closed_gap)[0])
+        y_full = float(_crossing(y[pos], gap_a[pos][None, :], full_open_gap)[0])
+    speed = p.motor_speed * p.speed_factor * p.lead_screw_pitch / 60.0
     feasible = bool(np.all(ok))
     sens = float((gap_a[i0 + 1] - gap_a[i0]) / (y[1] - y[0])) if ok[i0] and ok[i0 + 1] else 0.0
     rms = None
@@ -337,7 +346,9 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         full_open_gap=full_open_gap,
         y_min=float(y[lo]),
         y_max=float(y[hi]),
-        y_full_open=float(y[full[0]]) if len(full) else None,
+        y_full_open=y_full if np.isfinite(y_full) else None,
+        y_open=y_open if np.isfinite(y_open) else None,
+        response_time_ms=y_full / speed * 1000.0 if np.isfinite(y_full) and speed > 0 else None,
         sensitivity_y0=sens,
         pinch_slide=float(abs(ty[hi] - ty[i0])) if ok[i0] else 0.0,
         max_oversqueeze=float(max(closed_gap - np.nanmin(gap_a[~pos | (y == 0.0)]), 0.0)) if ok[i0] else 0.0,
@@ -366,11 +377,31 @@ class LinkageSearch:
     anchor_max: float = 6.0
     min_pivot_height: float = 3.0     # mm, carriage pivot above the anchor at Y = 0
     max_pivot_height: float = 16.0    # mm, carriage pivot above the anchor at the top of the stroke
-    max_oversqueeze: float = 0.5      # mm, closed tube over the stroke
+    max_oversqueeze: float = 0.5      # mm, closed tube over the travel used
+    objective: str = OBJECTIVE_RESPONSE
+    max_stroke: float = 3.0           # mm, longest travel the response search may use to reach full bore
+
+
+def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
+    """First y (last axis, linear interpolation) where gap reaches level; inf where it never does."""
+    above = gap >= level
+    i1 = np.clip(np.argmax(above, axis=-1), 1, None)
+    g0 = np.take_along_axis(gap, (i1 - 1)[..., None], axis=-1)[..., 0]
+    g1 = np.take_along_axis(gap, i1[..., None], axis=-1)[..., 0]
+    yc = y[i1 - 1] + (level - g0) / (g1 - g0) * (y[i1] - y[i1 - 1])
+    yc = np.where(above[..., 0], y[0], yc)
+    return np.where(np.any(above, axis=-1) & np.isfinite(yc), yc, np.inf)
 
 
 def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.ndarray:
-    """RMS opening error for broadcastable arrays of candidates; inf where infeasible."""
+    """Score for broadcastable arrays of candidates, lower is better; inf where infeasible.
+
+    "target": RMS distance of the opening from (Y / stroke) ** exponent over the stroke.
+    "response": carriage travel to full bore plus travel to first flow, i.e. the most
+    sideways motion per mm of carriage: shortest response time and narrowest dead band.
+    Only the travel actually needed (up to full bore) has to be reachable and gentle on
+    the closed tube.
+    """
     wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
@@ -378,6 +409,7 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.nd
     xa, xb = side * a, p.pivot_offset
     reach, delta = _body(p, l2, lever_length)
     delta_ = delta[..., None] if isinstance(delta, np.ndarray) else delta
+    fast = s.objective == OBJECTIVE_RESPONSE
     with np.errstate(invalid="ignore", divide="ignore"):
         half, phi = _pad(p)
         cx0, cy0 = _closed_joint(l2, reach, delta, half, phi, xa, x_closed)
@@ -386,31 +418,39 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.nd
             l1 = np.hypot(xb - cx0, h0 - cy0)
         else:
             h0 = _pivot_height_y0(l1, root, xb, cx0, cy0)
-        y = np.linspace(0.0, p.stroke, N_SCORE)
+        y = np.linspace(0.0, s.max_stroke, N_RESPONSE) if fast else np.linspace(0.0, p.stroke, N_SCORE)
         ratio = (reach / l2)[..., None]
         xa_ = xa[..., None]
-        # Tube A opening over [0, stroke]; the same linkage at -Y is what the closed tube sees.
+        # Tube A opening over the travel; the same linkage at -Y is what the closed tube sees.
         jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn * y)
         cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn * y)
         gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - _pad_reach(xa_, jx, jy, half, phi) - r_pin
         squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - _pad_reach(xa_, cx, cy, half, phi) - r_pin)
-        target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
-        err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
-        rms = np.sqrt(np.mean(err * err, axis=-1))
+        pose_ok = np.isfinite(jx) & (jy >= 0.0) & np.isfinite(cx) & (cy >= 0.0)
+        if fast:
+            y_full = _crossing(y, gap, full_open_gap)
+            score = y_full + _crossing(y, gap, closed_gap)
+            # A little past full bore, so the stroke rounded up to 0.05 mm is covered too.
+            used = y <= y_full[..., None] + 0.05
+            travel = y_full + 0.05
+        else:
+            target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
+            err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
+            score = np.sqrt(np.mean(err * err, axis=-1))
+            used = np.ones_like(gap, dtype=bool)
+            travel = p.stroke
         ok = (
-            np.isfinite(rms)
+            np.isfinite(score)
             & ((reach >= l2) | (p.linkage_type != TYPE_LEVER))
-            & (h0 > p.stroke)
-            & np.all(jy >= 0.0, axis=-1)
-            & np.all(np.isfinite(cx), axis=-1)
-            & np.all(cy >= 0.0, axis=-1)
-            & (np.max(np.where(np.isfinite(squeeze), squeeze, np.inf), axis=-1) <= s.max_oversqueeze)
+            & (h0 > travel)
+            & np.all(pose_ok | ~used, axis=-1)
+            & (np.max(np.where(used & pose_ok, squeeze, -np.inf), axis=-1) <= s.max_oversqueeze)
         )
         if p.fixed_height > 0:
             ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
         else:
-            ok &= (h0 >= s.min_pivot_height) & (h0 + p.stroke <= s.max_pivot_height)
-    return np.where(ok, rms, np.inf)
+            ok &= (h0 >= s.min_pivot_height) & (h0 + travel <= s.max_pivot_height)
+    return np.where(ok, score, np.inf)
 
 
 def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[LinkageParams], int, int]:
@@ -452,6 +492,12 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
             window.append((max(blo, c - half), min(bhi, c + half)))
     values = {**p.__dict__, **{name: round(v, 3) for name, v in zip(names, best)}}
     out = LinkageParams(**values)
+    if s.objective == OBJECTIVE_RESPONSE:
+        # Show and run exactly the travel the design needs: full bore, rounded up to 0.05 mm.
+        out.stroke = s.max_stroke
+        y_full = compute_linkage(out).y_full_open
+        if y_full is not None:
+            out.stroke = min(s.max_stroke, round(float(np.ceil(y_full / 0.05 - 1e-9)) * 0.05, 2))
     if p.fixed_height > 0:
         out.bar1_length = round(compute_linkage(out).link_length, 3)
     return out, feasible, tested

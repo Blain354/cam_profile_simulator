@@ -49,6 +49,8 @@ interface LinkageSearch {
   min_pivot_height: number;
   max_pivot_height: number;
   max_oversqueeze: number;
+  objective: 'response' | 'target';
+  max_stroke: number;
 }
 
 type Series = (number | null)[];
@@ -76,6 +78,8 @@ interface LinkageResult {
   y_min: number;
   y_max: number;
   y_full_open: number | null;
+  y_open: number | null;
+  response_time_ms: number | null;
   sensitivity_y0: number;
   pinch_slide: number;
   max_oversqueeze: number;
@@ -119,9 +123,9 @@ const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0 },
 };
 
-const SEARCH_COMMON = { lever_min: 10, lever_max: 22, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5 };
+const SEARCH_COMMON = { lever_min: 10, lever_max: 22, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3 };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
-  elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6 },
+  elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6, max_stroke: 5 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
   pendulum: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 16, bar2_min: 8, bar2_max: 18, anchor_min: 0, anchor_max: 8 },
 };
@@ -364,7 +368,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const motion = useRef({ d: 0, speed: 0, stroke: 1 });
 
   const set = <K extends keyof LinkageParams>(key: K, value: LinkageParams[K]) => setParams((p) => ({ ...p, [key]: value }));
-  const setS = (key: keyof LinkageSearch, value: number) => setSearch((s) => ({ ...s, [key]: value }));
+  const setS = (key: Exclude<keyof LinkageSearch, 'objective'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
 
   useEffect(() => {
     try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile })); } catch { /* ignore */ }
@@ -460,6 +464,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
   const yPose = Math.min(Math.max(y, -params.stroke), params.stroke);
   const heightFixed = params.fixed_height > 0;
+  const fast = search.objective === 'response';
 
   // What the motor really turns under load and friction, and the carriage speed that gives.
   const loadedRpm = params.motor_speed * params.speed_factor;
@@ -507,7 +512,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const out = await res.json();
       if (!out.found) {
-        setOptMessage({ ok: false, text: `No feasible geometry among ${out.tested} combinations. Widen the ranges, raise the pivot height limit or allow more over-squeeze.` });
+        setOptMessage({ ok: false, text: `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze.` });
         return;
       }
       const p: LinkageParams = out.params;
@@ -519,7 +524,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
         : `L1 ${p.bar1_length.toFixed(2)}, L2 ${p.bar2_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}`;
       setOptMessage({
         ok: true,
-        text: `Applied ${found} mm: ${(out.result.rms_error * 100).toFixed(1)} % RMS from target, ${out.result.max_oversqueeze.toFixed(2)} mm over-squeeze (${out.feasible} of ${out.tested} coarse combinations feasible).`,
+        text: fast
+          ? `Applied ${found} mm: full flow in ${out.result.y_full_open.toFixed(2)} mm of travel (${out.result.response_time_ms != null ? `${out.result.response_time_ms.toFixed(0)} ms` : 'motor stopped'}), dead band ${(2 * (out.result.y_open ?? 0)).toFixed(2)} mm, ${out.result.max_oversqueeze.toFixed(2)} mm over-squeeze. Stroke set to ${p.stroke.toFixed(2)} mm (${out.feasible} of ${out.tested} coarse combinations feasible).`
+          : `Applied ${found} mm: ${(out.result.rms_error * 100).toFixed(1)} % RMS from target, ${out.result.max_oversqueeze.toFixed(2)} mm over-squeeze (${out.feasible} of ${out.tested} coarse combinations feasible).`,
       });
     } catch {
       setOptMessage({ ok: false, text: 'Optimizer request failed.' });
@@ -647,9 +654,30 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
           <Accordion title="Optimizer" defaultOpen={false}>
             <div className="space-y-3 pt-2">
-              <ParameterSlider label="Target exponent" value={params.target_exponent} min={0.3} max={3} step={0.05} onChange={(v) => set('target_exponent', v)}
+              <div className="space-y-1.5">
+                <span className="text-sm font-medium text-neutral-300">Goal</span>
+                <div className="flex gap-1 rounded-lg border border-neutral-700 p-1">
+                  {(['response', 'target'] as const).map((goal) => (
+                    <Button key={goal} variant="ghost" type="button" aria-pressed={search.objective === goal}
+                      onClick={() => setSearch((s) => ({ ...s, objective: goal }))}
+                      className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${search.objective === goal ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
+                      {goal === 'response' ? 'Fastest response' : 'Follow target'}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-[10px] leading-snug text-neutral-400">
+                  {fast
+                    ? 'Most sideways pinch travel per mm of carriage: shortest travel to full flow and narrowest dead band, within the over-squeeze limit. The stroke is then set to the travel needed.'
+                    : 'Opening as close as possible to the target curve over the stroke.'}
+                </p>
+              </div>
+              {fast && (
+                <ParameterSlider label="Max travel (mm)" value={search.max_stroke} min={0.5} max={10} step={0.1} onChange={(v) => setS('max_stroke', v)}
+                  description="Longest carriage travel each way the search may use to reach full flow." />
+              )}
+              {!fast && <ParameterSlider label="Target exponent" value={params.target_exponent} min={0.3} max={3} step={0.05} onChange={(v) => set('target_exponent', v)}
                 secondaryValue={params.target_exponent === 1 ? 'linear' : undefined}
-                description="Target opening = (Y / stroke)^exponent, closed at Y = 0 and full bore at the end of the stroke. 1 is strictly proportional; above 1 is finer near closure." />
+                description="Target opening = (Y / stroke)^exponent, closed at Y = 0 and full bore at the end of the stroke. 1 is strictly proportional; above 1 is finer near closure." />}
               {lever && <RangeRow label="L range" min={search.lever_min} max={search.lever_max} onMin={(v) => setS('lever_min', v)} onMax={(v) => setS('lever_max', v)} />}
               <RangeRow label={pendulum ? 'L range' : lever ? 'c range' : 'L2 range'} min={search.bar2_min} max={search.bar2_max} onMin={(v) => setS('bar2_min', v)} onMax={(v) => setS('bar2_max', v)} />
               <RangeRow label={lever || pendulum ? 'r range' : 'L1 range'} min={search.bar1_min} max={search.bar1_max} onMin={(v) => setS('bar1_min', v)} onMax={(v) => setS('bar1_max', v)} />
@@ -712,6 +740,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <StatRow label="Anchor to anchor height" value={`${(2 * data.pivot_height_y0).toFixed(2)} mm`} />
               <StatRow label="Gain at Y=0" value={`${data.sensitivity_y0.toFixed(3)} mm/mm`} />
               <StatRow label="Full flow at" value={data.y_full_open != null ? `Y = ${data.y_full_open.toFixed(2)} mm` : 'not reached'} />
+              <StatRow label="Time to full flow" value={data.response_time_ms != null ? `${data.response_time_ms.toFixed(0)} ms` : 'N/A'} highlight />
+              <StatRow label="Dead band (both ways)" value={data.y_open != null ? `${(2 * data.y_open).toFixed(3)} mm` : 'N/A'} />
               <StatRow label="Deviation from target" value={data.rms_error != null ? `${(data.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />
               <StatRow label="Closed-tube over-squeeze" value={`${data.max_oversqueeze.toFixed(3)} mm`} />
               <StatRow label="Pinch slide on tube" value={`${data.pinch_slide.toFixed(2)} mm`} />

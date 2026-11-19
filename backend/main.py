@@ -668,6 +668,8 @@ class LinkageOptimizeRequest(LinkageRequest):
     min_pivot_height: float = 3.0
     max_pivot_height: float = 16.0
     max_oversqueeze: float = 0.5
+    objective: str = "response"
+    max_stroke: float = Field(3.0, gt=0, le=50)
 
 
 def _linkage_params(req: LinkageRequest) -> LinkageParams:
