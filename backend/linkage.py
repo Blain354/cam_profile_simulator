@@ -30,7 +30,7 @@ y = 2 * h0). It therefore sees the first tube's law at -Y: the carriage opens on
 tube while it squeezes the other. Tube A feeds the chamber, tube B vents it.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -573,11 +573,15 @@ class LinkageSearch:
     lever_max: float = 22.0
     anchor_min: float = 0.0
     anchor_max: float = 6.0
+    foot_min: float = 1.0             # mm, pendulum foot; min = max keeps it as it is
+    foot_max: float = 6.0
+    foot_angle_min: float = 45.0      # deg
+    foot_angle_max: float = 135.0
     min_pivot_height: float = 3.0     # mm, carriage pivot above the anchor at Y = 0
     max_pivot_height: float = 16.0    # mm, carriage pivot above the anchor at the top of the stroke
     max_oversqueeze: float = 0.5      # mm, closed tube over the travel used
     objective: str = OBJECTIVE_RESPONSE
-    max_stroke: float = 3.0           # mm, longest travel the response search may use to reach full bore
+    max_stroke: float = 3.0           # mm, longest travel the response search may use
 
 
 def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
@@ -591,15 +595,17 @@ def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
     return np.where(np.any(above, axis=-1) & np.isfinite(yc), yc, np.inf)
 
 
-def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.ndarray:
-    """Score for broadcastable arrays of candidates, lower is better; inf where infeasible.
+def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=None, foot_angle_deg=None) -> np.ndarray:
+    """Score for arrays of candidates (one per row), lower is better; inf where infeasible.
 
     "target": RMS distance of the opening from (Y / stroke) ** exponent over the stroke.
-    "response": carriage travel to full bore plus travel to first flow, i.e. the most
-    sideways motion per mm of carriage: shortest response time and narrowest dead band.
-    Only the travel actually needed (up to full bore) has to be reachable and gentle on
-    the closed tube.
+    "response": most flow first, then the narrowest dead band, then the shortest travel.
+    The carriage may travel until the closed tube is squeezed past the limit, the bars
+    lock, or max_stroke. The flow is the best opening reached within that travel; a
+    design that cannot reach full bore is ranked by how far it gets, not thrown out.
     """
+    if p.linkage_type == TYPE_PENDULUM and foot is not None:
+        p = replace(p, foot_length=foot, foot_angle_deg=foot_angle_deg)
     wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
@@ -609,7 +615,8 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.nd
     delta_ = delta[..., None] if isinstance(delta, np.ndarray) else delta
     fast = s.objective == OBJECTIVE_RESPONSE
     with np.errstate(invalid="ignore", divide="ignore"):
-        half, phi = _pad(p)
+        half, phi = p.pad_length / 2.0 if p.linkage_type == TYPE_PENDULUM else 0.0, np.radians(p.foot_angle_deg)
+        phi_ = phi[..., None] if isinstance(phi, np.ndarray) else phi
         cx0, cy0 = _closed_joint(l2, reach, delta, half, phi, xa, x_closed)
         if p.fixed_height > 0:
             h0 = np.full_like(l2, p.fixed_height / 2.0)
@@ -622,80 +629,108 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.nd
         # Tube A opening over the travel; the same linkage at -Y is what the closed tube sees.
         jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn * y)
         cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn * y)
-        gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - _pad_reach(xa_, jx, jy, half, phi) - r_pin
-        squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - _pad_reach(xa_, cx, cy, half, phi) - r_pin)
+        gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - _pad_reach(xa_, jx, jy, half, phi_) - r_pin
+        squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - _pad_reach(xa_, cx, cy, half, phi_) - r_pin)
         pose_ok = np.isfinite(jx) & (jy >= 0.0) & np.isfinite(cx) & (cy >= 0.0)
         if fast:
-            y_full = _crossing(y, gap, full_open_gap)
-            score = y_full + _crossing(y, gap, closed_gap)
-            # A little past full bore, so the stroke rounded up to 0.05 mm is covered too.
-            used = y <= y_full[..., None] + 0.05
-            travel = y_full + 0.05
+            # Travel the design can use: up to the first pose that locks or crushes the closed tube.
+            usable = np.logical_and.accumulate(pose_ok & (squeeze <= s.max_oversqueeze) & (h0[..., None] > y), axis=-1)
+            if p.fixed_height <= 0:
+                usable &= h0[..., None] + y <= s.max_pivot_height
+            # Credit a travel only if the design is still fine 0.05 mm further (the stroke is
+            # rounded up to that) and the bars are still 0.2 mm short of locking: a design
+            # that works right at dead centre does not survive a real assembly.
+            step = y[1] - y[0]
+            for ahead, good in ((0.05, usable), (0.2, np.logical_and.accumulate(pose_ok, axis=-1))):
+                k = min(int(np.ceil(ahead / step - 1e-9)), N_RESPONSE - 1)
+                usable = usable & np.concatenate([good[..., k:], np.repeat(good[..., -1:], k, axis=-1)], axis=-1)
+            seen = np.where(usable, gap, -np.inf)
+            bore = full_open_gap - closed_gap
+            flow = np.clip(np.max(seen, axis=-1) - closed_gap, 0.0, bore) / bore
+            y_open = np.minimum(_crossing(y, seen, closed_gap), s.max_stroke)
+            y_full = _crossing(y, seen, full_open_gap)
+            travel = np.where(np.isfinite(y_full), y_full, y[np.sum(usable, axis=-1) - 1])
+            score = 100.0 * (1.0 - flow) + 2.0 * y_open + 0.2 * travel
+            ok = usable[..., 0] & (flow > 0.0)
         else:
             target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
             err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
             score = np.sqrt(np.mean(err * err, axis=-1))
-            used = np.ones_like(gap, dtype=bool)
-            travel = p.stroke
-        ok = (
-            np.isfinite(score)
-            & ((reach >= l2) | (p.linkage_type != TYPE_LEVER))
-            & (h0 > travel)
-            & np.all(pose_ok | ~used, axis=-1)
-            & (np.max(np.where(used & pose_ok, squeeze, -np.inf), axis=-1) <= s.max_oversqueeze)
-        )
+            ok = (
+                (h0 > p.stroke)
+                & np.all(pose_ok, axis=-1)
+                & (np.max(np.where(pose_ok, squeeze, -np.inf), axis=-1) <= s.max_oversqueeze)
+            )
+            if p.fixed_height <= 0:
+                ok &= h0 + p.stroke <= s.max_pivot_height
+        ok &= np.isfinite(score) & ((reach >= l2) | (p.linkage_type != TYPE_LEVER))
         if p.fixed_height > 0:
             ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
         else:
-            ok &= (h0 >= s.min_pivot_height) & (h0 + travel <= s.max_pivot_height)
+            ok &= h0 >= s.min_pivot_height
     return np.where(ok, score, np.inf)
 
 
-def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[LinkageParams], int, int]:
-    """Coarse grid over the bar lengths and anchor distance, then three zooms around the best cell.
+N_FIRST = 30000   # candidates drawn over the whole ranges
+N_ROUND = 12000   # candidates per refinement round
+N_ELITE = 24
 
-    Returns (best params or None, feasible count on the coarse grid, coarse grid size).
+
+def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[LinkageParams], int, int]:
+    """Random draw over the ranges, then rounds of tighter draws around the best designs.
+
+    Searched: the bar lengths and the anchor distance, plus the lever length (lever) or the
+    foot length and angle (pendulum). With a fixed height bar 1 is solved, not searched.
+    Returns (best params or None, feasible count in the first draw, size of the first draw).
     """
-    lever = p.linkage_type == TYPE_LEVER
-    names = ["bar1_length", "bar2_length", "anchor_distance"] + (["lever_length"] if lever else [])
+    names = ["bar1_length", "bar2_length", "anchor_distance"]
     bounds = [(s.bar1_min, s.bar1_max), (s.bar2_min, s.bar2_max), (s.anchor_min, s.anchor_max)]
-    if lever:
+    if p.linkage_type == TYPE_LEVER:
+        names.append("lever_length")
         bounds.append((s.lever_min, s.lever_max))
-    bounds = [(min(lo, hi), max(lo, hi)) for lo, hi in bounds]
-    n = 18 if lever else 36
-    best, best_score, feasible, tested = None, np.inf, 0, 0
-    window = bounds
-    for level in range(4):
-        axes = [np.linspace(lo, hi, n) for lo, hi in window]
-        if p.fixed_height > 0:
-            axes[0] = axes[0][:1]  # bar 1 is solved from the height, not searched
-        if level == 0:
-            tested = int(np.prod([len(ax) for ax in axes]))
-        # One slice of the first axis at a time keeps the 4-D lever search within a few tens of MB.
-        for v in axes[0]:
-            rest = np.meshgrid(*axes[1:], indexing="ij")
-            l2, a = rest[0], rest[1]
-            score = _score(p, s, np.full_like(l2, v), l2, a, rest[2] if lever else None)
-            if level == 0:
-                feasible += int(np.isfinite(score).sum())
-            idx = np.unravel_index(int(np.argmin(score)), score.shape)
-            if score[idx] < best_score:
-                best_score = float(score[idx])
-                best = [float(v)] + [float(r[idx]) for r in rest]
-        if best is None:
-            return None, 0, tested
-        window = []
-        for ax, (blo, bhi), c in zip(axes, bounds, best):
-            half = 1.5 * (ax[-1] - ax[0]) / (n - 1)
-            window.append((max(blo, c - half), min(bhi, c + half)))
-    values = {**p.__dict__, **{name: round(v, 3) for name, v in zip(names, best)}}
-    out = LinkageParams(**values)
+    if p.linkage_type == TYPE_PENDULUM:
+        names += ["foot_length", "foot_angle_deg"]
+        bounds += [(s.foot_min, s.foot_max), (s.foot_angle_min, s.foot_angle_max)]
+    lo = np.array([min(b) for b in bounds], dtype=float)
+    hi = np.array([max(b) for b in bounds], dtype=float)
+    width = hi - lo
+    rng = np.random.default_rng(0)   # same answer for the same inputs
+
+    def evaluate(x):
+        col = dict(zip(names, x.T))
+        return _score(p, s, col["bar1_length"], col["bar2_length"], col["anchor_distance"],
+                      col.get("lever_length"), col.get("foot_length"), col.get("foot_angle_deg"))
+
+    # The design on screen competes too when it lies inside the ranges.
+    start = np.clip(np.array([getattr(p, n) for n in names], dtype=float), lo, hi)
+    x = np.vstack([start, lo + rng.random((N_FIRST, len(names))) * width])
+    score = evaluate(x)
+    tested, feasible = len(x), int(np.isfinite(score).sum())
+    if feasible == 0:
+        return None, 0, tested
+    spread = 0.12
+    for _ in range(6):
+        order = np.argsort(score)[:N_ELITE]
+        elite, elite_score = x[order], score[order]
+        elite = elite[np.isfinite(elite_score)]
+        draws = elite[rng.integers(0, len(elite), N_ROUND)] + rng.normal(0.0, spread, (N_ROUND, len(names))) * width
+        x = np.vstack([elite, np.clip(draws, lo, hi)])
+        score = evaluate(x)
+        spread *= 0.5
+    best = x[int(np.argmin(score))]
+    out = replace(p, **{name: round(float(v), 3) for name, v in zip(names, best)})
     if s.objective == OBJECTIVE_RESPONSE:
-        # Show and run exactly the travel the design needs: full bore, rounded up to 0.05 mm.
+        # Show and run exactly the travel the design uses: full bore, or as far as the closed
+        # tube allows, rounded to 0.05 mm.
         out.stroke = s.max_stroke
-        y_full = compute_linkage(out).y_full_open
-        if y_full is not None:
-            out.stroke = min(s.max_stroke, round(float(np.ceil(y_full / 0.05 - 1e-9)) * 0.05, 2))
+        r = compute_linkage(out)
+        if r.y_full_open is not None:
+            out.stroke = min(s.max_stroke, round(float(np.ceil(r.y_full_open / 0.05 - 1e-9)) * 0.05, 2))
+        else:
+            y, gap = np.array(r.Y_positions), np.array([np.nan if g is None else g for g in r.gap_a])
+            crushed = np.abs(y[np.isfinite(gap) & (r.closed_gap - gap > s.max_oversqueeze)])
+            limit = min([s.max_stroke, r.y_max, -r.y_min] + ([float(crushed.min())] if crushed.size else []))
+            out.stroke = max(0.05, round(float(np.floor(limit / 0.05 + 1e-9)) * 0.05, 2))
     if p.fixed_height > 0:
         out.bar1_length = round(compute_linkage(out).link_length, 3)
     return out, feasible, tested

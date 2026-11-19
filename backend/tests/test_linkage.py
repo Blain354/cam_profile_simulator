@@ -152,14 +152,32 @@ class LinkageTests(unittest.TestCase):
                     self.assertLessEqual(r.y_full_open, best.stroke + 1e-9)
                     self.assertLess(best.stroke - r.y_full_open, 0.05 + 1e-9)
                     self.assertLess(r.y_open, r.y_full_open)
+                    self.assertIsNone(r.jam_y)
                     self.assertAlmostEqual(r.response_time_ms, r.y_full_open / (100 * 0.85 * 0.5 / 60.0) * 1000.0, places=6)
-                    # Faster than the best "follow the target" design under the same limits.
-                    slow, _, _ = optimize_linkage(p, replace(s, objective="target"))
-                    slow_full = compute_linkage(slow).y_full_open
-                    if slow_full is not None:
-                        self.assertLessEqual(r.y_full_open, slow_full + 1e-6)
+                    # Never worse than the design it started from, when that one was within the limits.
+                    if start.jam_y is None and start.y_full_open is not None and start.max_oversqueeze <= s.max_oversqueeze and start.y_full_open <= s.max_stroke:
+                        self.assertLessEqual(r.y_open, start.y_open + 0.03)
                 elif start.feasible and start.max_oversqueeze <= s.max_oversqueeze:
                     self.assertLessEqual(r.rms_error, start.rms_error + 1e-9)
+
+    def test_response_search_ranks_partial_flow_and_searches_the_foot(self):
+        tight = replace(PENDULUM_SEARCH, max_stroke=0.3)
+        best, feasible, _ = optimize_linkage(PENDULUM, tight)
+        self.assertIsNotNone(best)   # cannot reach full bore: still gives the most flow it can
+        r = compute_linkage(best)
+        self.assertTrue(r.feasible, r.message)
+        self.assertGreater(max(v or 0.0 for v in r.flow_a), 0.0)
+        self.assertIsNone(r.y_full_open)
+        self.assertLessEqual(best.stroke, 0.3 + 1e-9)
+        self.assertLessEqual(r.max_oversqueeze, tight.max_oversqueeze + 0.01)
+        # The foot is searched within its ranges, and held when the range is a single value.
+        free, _, _ = optimize_linkage(PENDULUM, PENDULUM_SEARCH)
+        held, _, _ = optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, foot_min=1.5, foot_max=1.5, foot_angle_min=100.0, foot_angle_max=100.0))
+        self.assertEqual((held.foot_length, held.foot_angle_deg), (1.5, 100.0))
+        self.assertTrue(1.0 <= free.foot_length <= 6.0 and 45.0 <= free.foot_angle_deg <= 135.0)
+        self.assertLessEqual(compute_linkage(free).y_open, compute_linkage(held).y_open + 1e-6)
+        # Over-squeeze below the preload leaves nothing feasible.
+        self.assertIsNone(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, max_oversqueeze=0.05))[0])
 
     def test_fixed_height_solves_the_link(self):
         free = compute_linkage(PENDULUM)
