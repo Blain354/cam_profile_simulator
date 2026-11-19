@@ -654,6 +654,12 @@ class LinkageRequest(BaseModel):
     motor_speed: float = Field(100.0, ge=0, le=100000)
     lead_screw_pitch: float = Field(0.5, ge=0, le=100)
     speed_factor: float = Field(0.85, ge=0, le=1)
+    motor_torque_mnm: float = Field(30.0, ge=0, le=100000)
+    screw_diameter: float = Field(3.0, gt=0, le=100)
+    screw_friction: float = Field(0.3, ge=0, le=5)
+    member_modulus_mpa: float = Field(2500.0, ge=0, le=1e6)
+    member_width: float = Field(2.0, ge=0, le=100)
+    member_thickness: float = Field(3.0, ge=0, le=100)
 
 
 class LinkageOptimizeRequest(LinkageRequest):

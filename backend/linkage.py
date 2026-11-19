@@ -79,6 +79,13 @@ class LinkageParams:
     motor_speed: float = 100.0       # RPM
     lead_screw_pitch: float = 0.5    # mm/rev
     speed_factor: float = 0.85       # share of the no-load speed kept under load and friction
+    # Forces and structure. The four defaults below are assumed, not measured.
+    motor_torque_mnm: float = 30.0   # mN.m the gearmotor gives at the firmware's current limit
+    screw_diameter: float = 3.0      # mm, lead screw major diameter (M3)
+    screw_friction: float = 0.3      # thread friction coefficient
+    member_modulus_mpa: float = 2500.0  # MPa, bar material (printed plastic)
+    member_width: float = 2.0        # mm, bar section in the plane of the mechanism (the bending direction)
+    member_thickness: float = 3.0    # mm, bar section out of the plane
 
 
 @dataclass
@@ -120,6 +127,38 @@ class LinkageResult:
     chamber_kpa: List[float] = field(default_factory=list)      # gauge
     volume_in_ml: float = 0.0
     volume_out_ml: float = 0.0
+    # Forces and structure (see _forces). Empty / None when they cannot be computed.
+    forces_message: str = ""
+    force_a: List[Optional[float]] = field(default_factory=list)    # N, pin on tube A
+    force_b: List[Optional[float]] = field(default_factory=list)
+    thrust: List[Optional[float]] = field(default_factory=list)     # N, screw thrust that balances the two tubes
+    flex_a: List[Optional[float]] = field(default_factory=list)     # mm, pin of tube A pushed back by bar flex
+    flex_b: List[Optional[float]] = field(default_factory=list)
+    flex_link_a: List[Optional[float]] = field(default_factory=list)  # share of flex_a from the link's stretch
+    flex_bend_a: List[Optional[float]] = field(default_factory=list)  # share of flex_a from bending
+    tube_modulus_mpa: Optional[float] = None       # wall modulus implied by the compliance
+    seal_force: Optional[float] = None             # N per tube at Y = 0
+    seal_force_flatten: Optional[float] = None     # of which: folding the tube flat
+    seal_force_squeeze: Optional[float] = None     # of which: squeezing the two walls together
+    seal_force_pressure: Optional[float] = None    # of which: air pressure on the pin
+    max_pinch_force: Optional[float] = None        # N, worst pin force over the stroke
+    max_wall_strain: Optional[float] = None        # worst wall squeeze / wall stack
+    thrust_y0: Optional[float] = None              # N, the two tubes cancel at Y = 0
+    thrust_needed: Optional[float] = None          # N, worst over the stroke
+    thrust_available: Optional[float] = None       # N, from the motor torque through the screw
+    motor_torque_needed_mnm: Optional[float] = None
+    motor_margin: Optional[float] = None           # available / needed
+    stall_y: Optional[float] = None                # mm of travel where the thrust needed passes the motor's
+    screw_self_locking: Optional[bool] = None
+    max_link_force: Optional[float] = None         # N, signed: + tension, - compression
+    max_side_load: Optional[float] = None          # N, sideways on the carriage pivot
+    max_bending_stress_mpa: Optional[float] = None
+    max_axial_stress_mpa: Optional[float] = None
+    buckling_factor: Optional[float] = None        # Euler load / worst compression, None without compression
+    pin_stiffness: Optional[float] = None          # N/mm at the pin, bars only, at Y = 0
+    flex_y0: Optional[float] = None                # mm
+    seal_pressure_y0_psi: Optional[float] = None   # pressure the seal at Y = 0 holds once the bars have flexed
+    sealed_after_flex: Optional[bool] = None
 
 
 def _joint(l1, l2, xa, xb, h):
@@ -250,6 +289,153 @@ def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: 
     return t * 1000.0, y_t, q_in, q_out, p_g, float(q_in.sum() * to_ml), float(q_out.sum() * to_ml)
 
 
+N_FOOT = 161
+
+
+def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarray):
+    """Pin force (N) on one tube for a pin-to-wall gap, as (flatten, squeeze, pressure) parts.
+
+    The tube is cut in slices along its axis; each slice is pressed to the local height h
+    under the pin (round ends of the pin diameter, flat pad between them, tilted by
+    st = sin, ct = cos of its angle to the tube axis). With W = OD - ID the two walls:
+      h >= OD       no contact
+      W < h < OD    the ring is being folded flat: ring stiffness, and the air pushes
+                    on the flat width (pi / 2) * (OD - h)
+      h <= W        walls squeezed by W - h. The compliance already in the model says a
+                    squeeze of compliance * pressure seals that pressure, so the walls
+                    answer with a stress of squeeze / compliance. Where that stress is
+                    below the line pressure the bore still holds air, which makes up
+                    the difference.
+    Folding a tube under a narrow pin also drags down the tube on each side of it: that
+    is counted as OD / 2 more length at the deepest slice.
+    Rubber does not compress: the wall stress is divided by (1 - squeeze / W), capped at
+    95 % squeeze, so a pin driven into the wall shows up as a force the motor cannot give
+    rather than as a small linear one. Past roughly 25 % squeeze this is an order of
+    magnitude, not a prediction.
+    """
+    wall = p.tube_od - p.tube_id
+    k_wall = 1.0 / p.compliance                       # MPa per mm of squeeze
+    e_tube = wall / p.compliance
+    t, r_mid = wall / 2.0, (p.tube_id + p.tube_od) / 4.0
+    k_ring = e_tube * t ** 3 / (12.0 * 0.1488 * r_mid ** 3)   # N/mm of tube per mm, ring between two plates
+    pressure = p.input_pressure_psi * 0.00689476
+    w_flat = np.pi / 2.0 * p.tube_id + wall
+
+    r = p.pin_diameter / 2.0
+    half = p.pad_length / 2.0 if p.linkage_type == TYPE_PENDULUM else 0.0
+    gap, st, ct = gap[:, None], st[:, None], np.maximum(ct, 1e-6)[:, None]
+    span = half * ct + r
+    s = np.linspace(-1.0, 1.0, N_FOOT)[None, :] * span
+    d0 = gap + half * st + r                          # pad centre to wall
+    with np.errstate(invalid="ignore"):
+        face = np.where(np.abs(s - r * st) <= half * ct, d0 + (s - r * st) * st / ct - r * ct, np.inf)
+        near = d0 - half * st - np.sqrt(r * r - (s + half * ct) ** 2)
+        far = d0 + half * st - np.sqrt(r * r - (s - half * ct) ** 2)
+    h = np.fmin(face, np.fmin(near, far))
+
+    def slices(h):
+        fold = np.clip(p.tube_od - h, 0.0, p.tube_id)
+        squeeze = np.clip(wall - h, 0.0, 0.95 * wall)
+        return (
+            k_ring * fold * (1.0 + (fold / p.tube_id) ** 2),
+            k_wall * squeeze / (1.0 - squeeze / wall) * w_flat,
+            pressure * np.pi / 2.0 * fold - np.minimum(k_wall * squeeze, pressure) * np.pi / 2.0 * p.tube_id * (squeeze > 0.0),
+        )
+
+    ds = 2.0 * span[:, 0] / (N_FOOT - 1)
+    parts = [np.nan_to_num(f, nan=0.0).sum(axis=1) * ds for f in slices(h)]
+    deepest = slices(gap[:, 0])
+    parts[0] = parts[0] + deepest[0] * p.tube_od / 2.0
+    parts[2] = parts[2] + deepest[2] * p.tube_od / 2.0
+    return parts
+
+
+def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap, closed_gap, half, phi):
+    """Pin forces, screw thrust and bar flex over the stroke; fills the force fields of `out`.
+
+    Statics of the hinged body about its anchor A: the tube pushes the pin away from the
+    wall with F, the link (a two-force bar along B-C) holds it with a tension T. The
+    second linkage is the first at -Y with its pull on the carriage reversed.
+    Friction in the pivots and on the tube is left out.
+    """
+    if p.compliance <= 0:
+        out.forces_message = "No forces: they are derived from the tube compliance, which is 0."
+        return
+    if p.pin_diameter <= 0 and half == 0.0:
+        out.forces_message = "No forces: the pin has no diameter and no pad, so no contact area."
+        return
+    if min(p.member_modulus_mpa, p.member_width, p.member_thickness) <= 0:
+        out.forces_message = "No forces: the bar section and modulus must be positive."
+        return
+    wall = p.tube_od - p.tube_id
+    with np.errstate(invalid="ignore", divide="ignore"):
+        tilt = np.arctan2(jy, jx - xa) + phi
+        st, ct = np.abs(np.sin(tilt)), np.abs(np.cos(tilt))
+        g = np.nan_to_num(gap, nan=1e9)
+        parts = _pinch_force(p, g, np.nan_to_num(st), np.nan_to_num(ct, nan=1.0))
+        force = np.where(ok, sum(parts), np.nan)
+        stiff = (force - sum(_pinch_force(p, g + 1e-3, np.nan_to_num(st), np.nan_to_num(ct, nan=1.0)))) / 1e-3
+
+        ux, uy = (xb - jx) / l1, (h0 + sgn * y - jy) / l1
+        lever = (jx - xa) * uy - jy * ux
+        t_unit = ty / lever                              # link tension per N on the pin
+        l2 = np.hypot(jx - xa, jy)
+        axial_unit = ((-1.0 - t_unit * ux) * (jx - xa) + (-t_unit * uy) * jy) / l2   # + = arm in compression
+        arm = ty - jy                                    # moment arm of the pin force about the joint
+        area = p.member_width * p.member_thickness
+        inertia = p.member_thickness * p.member_width ** 3 / 12.0
+        e = p.member_modulus_mpa
+        c_link = t_unit ** 2 * l1 / (e * area)
+        c_bend = arm ** 2 * (l2 + np.hypot(tx - jx, ty - jy)) / (3.0 * e * inertia)
+        c_all = c_link + c_bend + axial_unit ** 2 * l2 / (e * area)   # mm of pin per N, from the strain energy
+        flex = force * c_all / (1.0 + np.clip(stiff, 0.0, None) * c_all)
+        pull = sgn * -t_unit * uy * force                # along +Y, linkage A on the carriage
+    thrust = pull - pull[::-1]
+
+    i0 = N_SAMPLES // 2
+    out.force_a, out.force_b = _nan_to_none(force), _nan_to_none(force[::-1])
+    out.thrust = _nan_to_none(np.abs(thrust))
+    out.flex_a, out.flex_b = _nan_to_none(flex), _nan_to_none(flex[::-1])
+    out.flex_link_a, out.flex_bend_a = _nan_to_none(flex * c_link / c_all), _nan_to_none(flex * c_bend / c_all)
+    out.tube_modulus_mpa = wall / p.compliance
+    if not ok[i0]:
+        return
+    out.seal_force = float(force[i0])
+    out.seal_force_flatten, out.seal_force_squeeze, out.seal_force_pressure = (float(v[i0]) for v in parts)
+    out.max_pinch_force = float(np.nanmax(force))
+    out.max_wall_strain = float(np.clip(wall - np.nanmin(gap), 0.0, wall) / wall)
+    out.thrust_y0 = float(abs(thrust[i0]))
+    out.thrust_needed = float(np.nanmax(np.abs(thrust))) if np.any(np.isfinite(thrust)) else out.thrust_y0
+
+    d_m = p.screw_diameter - 0.6495 * p.lead_screw_pitch
+    if d_m > 0:
+        helix = np.arctan(p.lead_screw_pitch / (np.pi * d_m))
+        friction = np.arctan(p.screw_friction / np.cos(np.radians(30.0)))   # 60 degree metric flank
+        per_n = d_m / 2.0 * np.tan(helix + friction)     # N.mm of torque per N of thrust, pushing
+        out.screw_self_locking = bool(friction > helix)
+        if per_n > 0:
+            out.thrust_available = float(p.motor_torque_mnm / per_n)
+            out.motor_torque_needed_mnm = float(out.thrust_needed * per_n)
+            out.motor_margin = out.thrust_available / out.thrust_needed if out.thrust_needed > 1e-9 else None
+            over = np.abs(y[np.nan_to_num(np.abs(thrust)) > out.thrust_available])
+            out.stall_y = float(over.min()) if over.size else None
+
+    tension = t_unit * force
+    out.max_link_force = float(tension[np.nanargmax(np.abs(tension))])
+    out.max_side_load = float(np.nanmax(np.abs(tension * ux)))
+    out.max_bending_stress_mpa = float(np.nanmax(np.abs(arm) * force) * 6.0 / (p.member_thickness * p.member_width ** 2))
+    compression = np.nanmax(np.stack([-tension, axial_unit * force]), axis=1)   # link, arm
+    out.max_axial_stress_mpa = float(max(np.nanmax(np.abs(tension)), np.nanmax(np.abs(axial_unit * force))) / area)
+    euler = np.pi ** 2 * e * min(inertia, p.member_width * p.member_thickness ** 3 / 12.0)
+    factors = [euler / length ** 2 / c for length, c in zip((l1, float(np.nanmax(l2))), compression) if c > 1e-9]
+    out.buckling_factor = float(min(factors)) if factors else None
+    out.pin_stiffness = float(1.0 / c_all[i0]) if c_all[i0] > 0 else None
+    out.flex_y0 = float(flex[i0])
+    held = (wall - (gap[i0] + flex[i0])) / p.compliance          # MPa
+    out.seal_pressure_y0_psi = float(max(held, 0.0) / 0.00689476)
+    out.sealed_after_flex = bool(gap[i0] + flex[i0] <= closed_gap + 1e-12)
+
+
 def compute_linkage(p: LinkageParams) -> LinkageResult:
     if min(p.bar1_length, p.bar2_length, p.lever_length, p.stroke, p.tube_id) <= 0 or p.tube_od <= p.tube_id:
         return LinkageResult(False, "Lengths, stroke and tube sizes must be positive, with OD > ID.")
@@ -355,6 +541,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         max_flow_l_min=q_max,
         rms_error=rms,
     )
+    _forces(p, out, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap_a, closed_gap, half, phi)
     if feasible:
         cycle = _chamber_cycle(p, y, area_a, area_b)
         if cycle is not None:

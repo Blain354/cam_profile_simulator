@@ -45,6 +45,43 @@ class LinkageTests(unittest.TestCase):
                         # Anchor, joint and pinch point stay on one line.
                         self.assertAlmostEqual((jx - r.anchor_x) * ty - jy * (tx - r.anchor_x), 0.0, places=8)
 
+    def test_carriage_force_from_statics_matches_virtual_work(self):
+        # Point pin, one tube at a time: the link's pull on the carriage must be F * d(gap)/dY.
+        for p in (LinkageParams(), LEVER, replace(PENDULUM, pad_length=0.0)):
+            with self.subTest(kind=p.linkage_type):
+                r = compute_linkage(replace(p, stroke=0.4))
+                y, gap, force = np.array(r.Y_positions), np.array(r.gap_a), np.array(r.force_a)
+                net = force * np.gradient(gap, y)
+                thrust = np.abs(net - net[::-1])
+                np.testing.assert_allclose(np.array(r.thrust)[5:-5], thrust[5:-5], rtol=2e-3, atol=1e-4)
+                self.assertAlmostEqual(r.thrust_y0, 0.0, places=9)
+
+    def test_seal_force_and_flex(self):
+        r = compute_linkage(replace(PENDULUM, pad_length=1.0))
+        self.assertAlmostEqual(r.seal_force, r.seal_force_flatten + r.seal_force_squeeze + r.seal_force_pressure, places=9)
+        self.assertTrue(0.3 < r.seal_force < 10.0, r.seal_force)
+        self.assertTrue(r.sealed_after_flex)
+        self.assertGreater(r.seal_pressure_y0_psi, PENDULUM.input_pressure_psi)
+        # More pressure needs more force; a thinner bar flexes more and holds less pressure.
+        self.assertGreater(compute_linkage(replace(PENDULUM, input_pressure_psi=30.0)).seal_force, compute_linkage(PENDULUM).seal_force)
+        thin = compute_linkage(replace(PENDULUM, pad_length=1.0, member_width=0.5))
+        self.assertGreater(thin.flex_y0, r.flex_y0)
+        self.assertLess(thin.seal_pressure_y0_psi, r.seal_pressure_y0_psi)
+        # Flex shares add up to the total; the mirror holds for the forces too.
+        i0 = len(r.Y_positions) // 2
+        self.assertLessEqual(r.flex_link_a[i0] + r.flex_bend_a[i0], r.flex_a[i0] + 1e-12)
+        self.assertEqual(r.force_b, r.force_a[::-1])
+
+    def test_forces_absent_rather_than_infinite(self):
+        for change in ({"compliance": 0.0}, {"pin_diameter": 0.0}, {"member_width": 0.0}):
+            r = compute_linkage(replace(LinkageParams(), **change))
+            self.assertIsNone(r.seal_force)
+            self.assertTrue(r.forces_message)
+        r = compute_linkage(replace(LinkageParams(), lead_screw_pitch=0.0, motor_torque_mnm=0.0))
+        self.assertEqual(r.thrust_available, 0.0)
+        import json
+        json.dumps(r.__dict__, allow_nan=False)
+
     def test_reference_sketch_poses(self):
         r = compute_linkage(LinkageParams(preload=0.0, pin_diameter=0.0))
         self.assertAlmostEqual(r.pivot_height_y0, 7.83, delta=0.6)

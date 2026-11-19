@@ -35,6 +35,12 @@ export interface LinkageParams {
   motor_speed: number;
   lead_screw_pitch: number;
   speed_factor: number;
+  motor_torque_mnm: number;
+  screw_diameter: number;
+  screw_friction: number;
+  member_modulus_mpa: number;
+  member_width: number;
+  member_thickness: number;
 }
 
 interface LinkageSearch {
@@ -92,6 +98,37 @@ interface LinkageResult {
   chamber_kpa: number[];
   volume_in_ml: number;
   volume_out_ml: number;
+  forces_message: string;
+  force_a: Series;
+  force_b: Series;
+  thrust: Series;
+  flex_a: Series;
+  flex_b: Series;
+  flex_link_a: Series;
+  flex_bend_a: Series;
+  tube_modulus_mpa: number | null;
+  seal_force: number | null;
+  seal_force_flatten: number | null;
+  seal_force_squeeze: number | null;
+  seal_force_pressure: number | null;
+  max_pinch_force: number | null;
+  max_wall_strain: number | null;
+  thrust_y0: number | null;
+  thrust_needed: number | null;
+  thrust_available: number | null;
+  motor_torque_needed_mnm: number | null;
+  motor_margin: number | null;
+  stall_y: number | null;
+  screw_self_locking: boolean | null;
+  max_link_force: number | null;
+  max_side_load: number | null;
+  max_bending_stress_mpa: number | null;
+  max_axial_stress_mpa: number | null;
+  buckling_factor: number | null;
+  pin_stiffness: number | null;
+  flex_y0: number | null;
+  seal_pressure_y0_psi: number | null;
+  sealed_after_flex: boolean | null;
 }
 
 export type LinkageShared = Pick<LinkageParams, 'tube_id' | 'tube_od' | 'input_pressure_psi' | 'compliance' | 'motor_speed' | 'lead_screw_pitch'>;
@@ -114,6 +151,13 @@ const COMMON = {
   motor_speed: 100.0,
   lead_screw_pitch: 0.5,
   speed_factor: 0.85,
+  // Assumed, not measured: set them to the real motor, screw and printed bars.
+  motor_torque_mnm: 30,
+  screw_diameter: 3.0,
+  screw_friction: 0.3,
+  member_modulus_mpa: 2500,
+  member_width: 2.0,
+  member_thickness: 3.0,
 };
 
 // All sets were measured on the concept sketches (about 30 px/mm).
@@ -191,6 +235,9 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   const gapB = interpAt(y, data.Y_positions, data.gap_b);
   const flowA = interpAt(y, data.Y_positions, data.flow_a) ?? 0;
   const flowB = interpAt(y, data.Y_positions, data.flow_b) ?? 0;
+  const forceA = interpAt(y, data.Y_positions, data.force_a);
+  const forceB = interpAt(y, data.Y_positions, data.force_b);
+  const newtons = (f: number | null) => (f == null ? '' : `, ${f.toFixed(f < 10 ? 2 : 1)} N`);
 
   const hw = params.pivot_offset + 1.0;
   const carriage = [
@@ -301,8 +348,8 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
           </g>
           {label(a.anchor[0] / 2, onTop ? top + 1.35 : -1.35, `a ${params.anchor_distance.toFixed(2)}`, ORANGE)}
           {label(-wall + 0.25, h0 + 0.55, `h₀ ${h0.toFixed(2)}`, BLUE, 'start')}
-          {gapA != null && label(-wall + 0.2, a.tip[1] + (onTop ? -1.1 : 1.1), `gap ${gapA.toFixed(3)}`, 'var(--bui-text)', 'start')}
-          {gapB != null && poseB.tip && label(wall - 0.2, poseB.tip[1] + (onTop ? 1.1 : -1.1), `gap ${gapB.toFixed(3)}`, 'var(--bui-text)', 'end')}
+          {gapA != null && label(-wall + 0.2, a.tip[1] + (onTop ? -1.1 : 1.1), `gap ${gapA.toFixed(3)}${newtons(forceA)}`, 'var(--bui-text)', 'start')}
+          {gapB != null && poseB.tip && label(wall - 0.2, poseB.tip[1] + (onTop ? 1.1 : -1.1), `gap ${gapB.toFixed(3)}${newtons(forceB)}`, 'var(--bui-text)', 'end')}
         </g>
       )}
     </svg>
@@ -537,7 +584,11 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
   const chartData = useMemo(() => (data?.Y_positions ?? []).map((yy, i) => ({
     y: yy, flowA: data!.flow_a[i], flowB: data!.flow_b[i], target: data!.flow_target[i], gapA: data!.gap_a[i], gapB: data!.gap_b[i],
+    forceA: data!.force_a[i] ?? null, forceB: data!.force_b[i] ?? null, thrust: data!.thrust[i] ?? null,
+    flexA: data!.flex_a[i] ?? null, flexB: data!.flex_b[i] ?? null, flexLink: data!.flex_link_a[i] ?? null, flexBend: data!.flex_bend_a[i] ?? null,
   })), [data]);
+  const forces = data != null && data.seal_force != null;
+  const n2 = (v: number | null | undefined, unit: string, digits = 2) => (v == null ? 'N/A' : `${v.toFixed(digits)} ${unit}`);
   const cycleData = useMemo(() => (data?.time_ms ?? []).map((t, i) => ({
     t: t / 1000, flowIn: data!.flow_in_l_min[i], flowOut: data!.flow_out_l_min[i], kpa: data!.chamber_kpa[i], y: data!.y_time[i],
   })), [data]);
@@ -733,6 +784,65 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             </div>
           </Accordion>
 
+          <Accordion title="Forces and structure" defaultOpen={false}>
+            <div className="space-y-5 pt-2">
+              <p className="text-[10px] leading-snug text-neutral-400">
+                Forces are for the pressure set under Pneumatic system, taken as the maximum the seal must hold. The defaults here are assumed: set them to the real motor and bars.
+              </p>
+              <ParameterSlider label="Motor torque (mN·m)" value={params.motor_torque_mnm} min={1} max={300} step={1} onChange={(v) => set('motor_torque_mnm', v)}
+                secondaryValue={`${(params.motor_torque_mnm / 98.0665).toFixed(2)} kg·cm`}
+                description="Torque the gearmotor gives at its output shaft at the firmware's current limit (150 mA on the 100 RPM profile), not its stall torque." />
+              <ParameterSlider label="Screw Ø (mm)" value={params.screw_diameter} min={1} max={12} step={0.1} onChange={(v) => set('screw_diameter', v)}
+                secondaryValue={`pitch ${params.lead_screw_pitch}`}
+                description="Major diameter of the lead screw: 3 for M3." />
+              <ParameterSlider label="Thread friction" value={params.screw_friction} min={0.05} max={0.6} step={0.01} onChange={(v) => set('screw_friction', v)}
+                description="Friction coefficient between the screw and the nut. It sets how much of the motor torque becomes thrust, and whether the screw holds its position with the motor off." />
+              <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={100} onChange={(v) => set('member_modulus_mpa', v)}
+                secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(1)} GPa`}
+                description="Young's modulus of the bars: about 2 500 for printed PETG, 3 500 for PLA, 70 000 for aluminium." />
+              <ParameterSlider label="Bar width (mm)" value={params.member_width} min={0.5} max={10} step={0.1} onChange={(v) => set('member_width', v)}
+                description="Bar section in the plane of the mechanism. Bending stiffness goes with its cube." />
+              <ParameterSlider label="Bar thickness (mm)" value={params.member_thickness} min={0.5} max={15} step={0.1} onChange={(v) => set('member_thickness', v)}
+                description="Bar section out of the plane of the mechanism." />
+            </div>
+          </Accordion>
+
+          {data && data.forces_message && (
+            <p className="rounded-lg border border-neutral-700 p-2 text-xs text-neutral-400" role="status">{data.forces_message}</p>
+          )}
+          {data && forces && (
+            <div className="space-y-2 pb-1">
+              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Forces at {params.input_pressure_psi} PSI</h3>
+              <StatRow label="Force to seal at Y=0" value={`${n2(data.seal_force, 'N')} per tube`} highlight />
+              <StatRow label="Fold flat / squeeze / air" value={`${data.seal_force_flatten!.toFixed(2)} / ${data.seal_force_squeeze!.toFixed(2)} / ${data.seal_force_pressure!.toFixed(2)} N`} />
+              <StatRow label="Tube wall modulus" value={n2(data.tube_modulus_mpa, 'MPa')} />
+              <StatRow label="Worst pin force" value={n2(data.max_pinch_force, 'N', 1)} />
+              <StatRow label="Worst wall squeeze" value={<span className={data.max_wall_strain! > 0.25 ? 'text-amber-400' : undefined}>{(data.max_wall_strain! * 100).toFixed(0)} %</span>} />
+              <StatRow label="Screw thrust at Y=0" value={n2(data.thrust_y0, 'N')} />
+              <StatRow label="Worst screw thrust" value={n2(data.thrust_needed, 'N', 1)} />
+              <StatRow label="Motor thrust available" value={n2(data.thrust_available, 'N', 1)} />
+              <StatRow label="Motor margin" highlight value={data.motor_margin == null ? 'N/A'
+                : <span className={data.motor_margin < 1 ? 'text-red-400' : undefined}>{`× ${data.motor_margin.toFixed(1)} (${n2(data.motor_torque_needed_mnm, 'mN·m', 1)})`}</span>} />
+              {data.stall_y != null && <StatRow label="Motor stalls from" value={<span className="text-red-400">{`Y = ±${data.stall_y.toFixed(2)} mm`}</span>} />}
+              <StatRow label="Screw holds with motor off" value={data.screw_self_locking == null ? 'N/A' : data.screw_self_locking ? 'yes' : 'no'} />
+              <StatRow label="Pin pushed back at Y=0" value={n2(data.flex_y0, 'mm', 4)} />
+              <StatRow label="Seal at Y=0 holds" highlight value={data.seal_pressure_y0_psi == null ? 'N/A'
+                : <span className={data.sealed_after_flex ? undefined : 'text-red-400'}>{`${data.seal_pressure_y0_psi.toFixed(1)} PSI${data.sealed_after_flex ? '' : ', leaks'}`}</span>} />
+              <StatRow label="Bar stiffness at the pin" value={n2(data.pin_stiffness, 'N/mm', 0)} />
+              <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />
+              <StatRow label="Worst side load on carriage" value={n2(data.max_side_load, 'N', 1)} />
+              <StatRow label="Worst bending / axial stress" value={`${data.max_bending_stress_mpa!.toFixed(1)} / ${data.max_axial_stress_mpa!.toFixed(1)} MPa`} />
+              {data.buckling_factor != null && (
+                <StatRow label="Buckling margin" value={<span className={data.buckling_factor < 3 ? 'text-amber-400' : undefined}>{`× ${data.buckling_factor.toFixed(1)}`}</span>} />
+              )}
+              {data.max_wall_strain! > 0.25 && (
+                <p className="text-[10px] leading-snug text-amber-400">
+                  The closed tube is squeezed past 25 % of its walls within this stroke: worst-case figures there are an order of magnitude, and the real mechanism jams when the pin reaches the wall. Shorten the stroke to the travel needed for full flow.
+                </p>
+              )}
+            </div>
+          )}
+
           {data && (
             <div className="space-y-2 pb-1">
               <h3 className="text-xs font-semibold text-neutral-400 mb-2">Derived</h3>
@@ -822,6 +932,41 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
           </LineChart>
         </ChartCard>
+        {forces && (
+          <ChartCard title="Pin force and screw thrust vs carriage Y">
+            <LineChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              {xAxisY}
+              <YAxis type="number" stroke="#888" scale="log" domain={[0.1, 'auto']} allowDataOverflow tickFormatter={(v) => String(Number(v))}
+                label={{ value: 'Force (N, log)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(2)} N`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
+              <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+              <Line type="linear" dataKey="forceA" name="Pin on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+              <Line type="linear" dataKey="forceB" name="Pin on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+              <Line type="linear" dataKey="thrust" name="Screw thrust needed" stroke="#a78bfa" strokeWidth={2} dot={false} isAnimationActive={false} />
+              {data!.thrust_available != null && <ReferenceLine y={data!.thrust_available} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'motor limit', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />}
+              <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
+            </LineChart>
+          </ChartCard>
+        )}
+        {forces && (
+          <ChartCard title="Pin pushed back by bar flex vs carriage Y">
+            <LineChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              {xAxisY}
+              <YAxis type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(3)}
+                label={{ value: 'Deflection (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 0 }} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(4)} mm`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
+              <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+              <ReferenceLine y={params.preload} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'preload', fill: '#ef4444', fontSize: 11, position: 'insideTopRight' }} />
+              <Line type="linear" dataKey="flexA" name="Tube A pin" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+              <Line type="linear" dataKey="flexB" name="Tube B pin" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+              <Line type="linear" dataKey="flexBend" name="A: from bending" stroke="#f472b6" strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
+              <Line type="linear" dataKey="flexLink" name="A: from the link" stroke="#a3e635" strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
+              <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
+            </LineChart>
+          </ChartCard>
+        )}
         <ChartCard title={`Chamber (${params.chamber_volume_ml} mL): air in vs out over one cycle`}>
           <LineChart data={cycleData} margin={margin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
