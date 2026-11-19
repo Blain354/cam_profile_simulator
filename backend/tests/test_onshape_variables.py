@@ -167,6 +167,21 @@ class OnshapeEndpointsTests(unittest.TestCase):
         self.assertEqual(c.delete("/api/linkage/materials/Nylon PA12").status_code, 404)
         self.assertEqual(names(), [("PETG", True), ("PLA", True)])
 
+    def test_linkage_profile_keeps_chart_settings(self):
+        c = self.client
+        url = "/api/linkage/profiles/lever/charts"
+        flow = {"autoX": True, "autoY": False, "xMin": -1, "xMax": 1, "yMin": 0, "yMax": 30}
+        c.put(url, json={"params": {"bar1_length": 6.9}, "search": {}, "chart_settings": {"flow": flow}})
+        self.assertEqual(c.get(url).json()["chart_settings"], {"flow": flow})
+        # A client that does not send the field still saves, with no chart settings.
+        c.put(url, json={"params": {"bar1_length": 7.0}})
+        self.assertEqual(c.get(url).json(), {"params": {"bar1_length": 7.0}, "search": {}, "chart_settings": {}})
+        # A profile stored before the field existed still loads.
+        self.main.linkage_storage.save_profile("lever", "old", {"params": {"bar1_length": 5.0}, "search": {}})
+        self.assertEqual(c.get("/api/linkage/profiles/lever/old").json(), {"params": {"bar1_length": 5.0}, "search": {}})
+        c.delete(url)
+        c.delete("/api/linkage/profiles/lever/old")
+
     def test_preview_then_apply(self):
         fake = FakeOnshape()
         body = {"linkage_type": "pendulum", "bar1_length": 11.95, "bar2_length": 14.43, "anchor_distance": 4.79,

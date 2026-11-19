@@ -6,6 +6,9 @@ import {
 } from 'recharts';
 import { Pause, Play, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
+import type { ChartDomainSettings } from './components';
+import { ChartCard } from './ChartCard';
+import { chartDomain, sameDomainSettings } from './lib/chartDomain';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
 
@@ -228,7 +231,28 @@ const BUILTIN_MATERIALS: Material[] = [
 
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
 
-function loadStored(kind: LinkageKind, shared: LinkageShared): { params: LinkageParams; search: LinkageSearch; profile: string | null } {
+type LinkageChartKey = 'flow' | 'gap' | 'force' | 'stress' | 'flex' | 'chamber';
+type LinkageChartSettings = Record<LinkageChartKey, ChartDomainSettings>;
+const AUTO_DOMAIN: ChartDomainSettings = { autoX: true, autoY: true, xMin: -1, xMax: 1, yMin: 0, yMax: 1 };
+const DEFAULT_CHART_SETTINGS: LinkageChartSettings = {
+  flow: AUTO_DOMAIN,
+  gap: AUTO_DOMAIN,
+  // The force axis is logarithmic: its typed floor has to stay above zero.
+  force: { ...AUTO_DOMAIN, yMin: 0.1, yMax: 100 },
+  stress: AUTO_DOMAIN,
+  flex: AUTO_DOMAIN,
+  chamber: { ...AUTO_DOMAIN, xMin: 0 },
+};
+
+/** Every chart's settings, the stored ones over the defaults; a missing or partial map is fine. */
+function resolveChartSettings(raw: unknown): LinkageChartSettings {
+  const map = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<LinkageChartKey, Partial<ChartDomainSettings>>>;
+  const out = {} as LinkageChartSettings;
+  for (const key of Object.keys(DEFAULT_CHART_SETTINGS) as LinkageChartKey[]) out[key] = { ...DEFAULT_CHART_SETTINGS[key], ...map[key] };
+  return out;
+}
+
+function loadStored(kind: LinkageKind, shared: LinkageShared): { params: LinkageParams; search: LinkageSearch; profile: string | null; chart_settings: LinkageChartSettings } {
   try {
     const raw = JSON.parse(localStorage.getItem(storageKey(kind)) ?? 'null');
     if (raw && typeof raw === 'object') {
@@ -238,10 +262,11 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
         // Ranges stored before the foot was searched kept the anchor on the tube side only: open them up once.
         search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}) },
         profile: typeof raw.profile === 'string' ? raw.profile : null,
+        chart_settings: resolveChartSettings(raw.chart_settings),
       };
     }
   } catch { /* storage unavailable or corrupt: fall back to defaults */ }
-  return { params: { ...DEFAULT_PARAMS[kind], ...shared }, search: DEFAULT_SEARCH[kind], profile: null };
+  return { params: { ...DEFAULT_PARAMS[kind], ...shared }, search: DEFAULT_SEARCH[kind], profile: null, chart_settings: DEFAULT_CHART_SETTINGS };
 }
 
 /** Linear interpolation on the uniform Y grid returned by the backend. */
@@ -563,15 +588,8 @@ function Switch({ label, on, onChange, title }: { label: string; on: boolean; on
   );
 }
 
-function ChartCard({ title, children }: { title: string; children: ReactElement }) {
-  return (
-    <div className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col min-h-0">
-      <h3 className="text-sm font-bold text-neutral-200 text-center mb-1 shrink-0">{title}</h3>
-      <div className="flex-1 w-full min-h-0">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={170}>{children}</ResponsiveContainer>
-      </div>
-    </div>
-  );
+function FitChart({ children }: { children: ReactElement }) {
+  return <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={170}>{children}</ResponsiveContainer>;
 }
 
 // ─── Onshape variable table ──────────────────────────────────────
@@ -721,6 +739,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const [stored] = useState(() => loadStored(kind, shared));
   const [params, setParams] = useState<LinkageParams>(stored.params);
   const [search, setSearch] = useState<LinkageSearch>(stored.search);
+  const [chartSettings, setChartSettings] = useState<LinkageChartSettings>(stored.chart_settings);
+  /** Chart settings the loaded profile holds; unknown after a page reload, like `savedSnapshot`. */
+  const [savedChartSettings, setSavedChartSettings] = useState<LinkageChartSettings | null>(null);
   const [data, setData] = useState<LinkageResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [y, setY] = useState(0);
@@ -748,8 +769,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const setS = (key: Exclude<keyof LinkageSearch, 'objective'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile })); } catch { /* ignore */ }
-  }, [kind, params, search, activeProfile]);
+    try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile, chart_settings: chartSettings })); } catch { /* ignore */ }
+  }, [kind, params, search, activeProfile, chartSettings]);
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -807,9 +828,12 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
       const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind };
       const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search };
+      const c = resolveChartSettings(raw.chart_settings);
       setPlaying(false);
       setParams(p);
       setSearch(s);
+      setChartSettings(c);
+      setSavedChartSettings(c);
       setActiveProfile(name);
       setProfileName(name);
       setSavedSnapshot(JSON.stringify({ params: p, search: s }));
@@ -825,12 +849,14 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
     if (name.includes('/')) { setProfileMessage({ ok: false, text: 'A profile name cannot contain a slash.' }); return; }
     if (name !== activeProfile && profiles.some((p) => p.name === name) && !confirm(`Overwrite the saved profile "${name}"?`)) return;
     try {
-      const res = await apiFetch(profileUrl(name), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: snapshot });
+      const res = await apiFetch(profileUrl(name), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ params, search, chart_settings: chartSettings }) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const out = await res.json();
       setActiveProfile(out.name);
       setProfileName(out.name);
       setSavedSnapshot(snapshot);
+      setSavedChartSettings(chartSettings);
       setProfileMessage({ ok: true, text: out.status === 'updated' ? `"${out.name}" updated.` : `"${out.name}" saved.` });
       refreshProfiles();
     } catch {
@@ -846,6 +872,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       setProfileMessage({ ok: true, text: `"${activeProfile}" deleted.` });
       setActiveProfile(null);
       setSavedSnapshot(null);
+      setSavedChartSettings(null);
       refreshProfiles();
     } catch {
       setProfileMessage({ ok: false, text: 'Delete failed.' });
@@ -966,10 +993,17 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
   const tooltipStyle = { backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' };
   const margin = { top: 6, right: 16, bottom: 18, left: 16 };
-  const xAxisY = (
-    <XAxis dataKey="y" type="number" domain={['dataMin', 'dataMax']} stroke="#888"
+  const xAxisY = (c: ChartDomainSettings) => (
+    <XAxis dataKey="y" type="number" domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={!c.autoX} stroke="#888"
       label={{ value: 'Carriage Y (mm)', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(v) => Number(v).toFixed(1)} />
   );
+  const cardProps = (key: LinkageChartKey) => ({
+    settings: chartSettings[key],
+    onSettingsChange: (next: ChartDomainSettings) => setChartSettings((prev) => ({ ...prev, [key]: next })),
+    // Against the loaded profile, or the defaults with no profile; a profile reloaded from storage is unknown, so not flagged.
+    modified: activeProfile == null ? !sameDomainSettings(chartSettings[key], DEFAULT_CHART_SETTINGS[key])
+      : savedChartSettings != null && !sameDomainSettings(chartSettings[key], savedChartSettings[key]),
+  });
 
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
@@ -1407,11 +1441,12 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
       {/* Panel 3: charts */}
       <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
-        <ChartCard title="Static flow vs carriage Y">
+        <ChartCard title="Static flow vs carriage Y" {...cardProps('flow')}>
+          {({ settings: c }) => (<FitChart>
           <LineChart data={chartData} margin={margin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            {xAxisY}
-            <YAxis type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(0)}
+            {xAxisY(c)}
+            <YAxis type="number" stroke="#888" domain={chartDomain(c, 'y')} allowDataOverflow={!c.autoY} tickFormatter={(v) => Number(v).toFixed(0)}
               label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
             <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(3)} L/min`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
             <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
@@ -1420,12 +1455,14 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <Line type="linear" dataKey="flowB" name="Tube B (exhaust)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
             <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
           </LineChart>
+          </FitChart>)}
         </ChartCard>
-        <ChartCard title="Pinch gap vs carriage Y">
+        <ChartCard title="Pinch gap vs carriage Y" {...cardProps('gap')}>
+          {({ settings: c }) => (<FitChart>
           <LineChart data={chartData} margin={margin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            {xAxisY}
-            <YAxis type="number" stroke="#888" domain={['auto', 'auto']} tickFormatter={(v) => Number(v).toFixed(1)}
+            {xAxisY(c)}
+            <YAxis type="number" stroke="#888" domain={chartDomain(c, 'y', ['auto', 'auto'])} allowDataOverflow={!c.autoY} tickFormatter={(v) => Number(v).toFixed(1)}
               label={{ value: 'Pin to wall (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
             <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(3)} mm`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
             {data && <ReferenceLine y={data.closed_gap} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'closed', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />}
@@ -1436,13 +1473,15 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <Line type="linear" dataKey="gapB" name="Tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
             <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
           </LineChart>
+          </FitChart>)}
         </ChartCard>
         {forces && (
-          <ChartCard title="Pin force and screw thrust vs carriage Y">
+          <ChartCard title="Pin force and screw thrust vs carriage Y" {...cardProps('force')}>
+            {({ settings: c }) => (<FitChart>
             <LineChart data={chartData} margin={margin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              {xAxisY}
-              <YAxis type="number" stroke="#888" scale="log" domain={[0.1, 'auto']} allowDataOverflow tickFormatter={(v) => String(Number(v))}
+              {xAxisY(c)}
+              <YAxis type="number" stroke="#888" scale="log" domain={c.autoY ? [0.1, 'auto'] : [Math.max(c.yMin, 1e-3), c.yMax]} allowDataOverflow tickFormatter={(v) => String(Number(v))}
                 label={{ value: 'Force (N)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(2)} N`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
               <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
@@ -1452,14 +1491,16 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               {data!.thrust_available != null && <ReferenceLine y={data!.thrust_available} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'motor limit', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />}
               <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
             </LineChart>
+            </FitChart>)}
           </ChartCard>
         )}
         {data?.flexure && data.max_stress_mpa != null && (
-          <ChartCard title="Worst stress in the one-piece part vs carriage Y">
+          <ChartCard title="Worst stress in the one-piece part vs carriage Y" {...cardProps('stress')}>
+            {({ settings: c }) => (<FitChart>
             <LineChart data={chartData} margin={margin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              {xAxisY}
-              <YAxis type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(0)}
+              {xAxisY(c)}
+              <YAxis type="number" stroke="#888" domain={chartDomain(c, 'y')} allowDataOverflow={!c.autoY} tickFormatter={(v) => Number(v).toFixed(0)}
                 label={{ value: 'Stress (MPa)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)} MPa`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
               <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
@@ -1468,14 +1509,16 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <Line type="linear" dataKey="stressB" name="Part on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
               <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
             </LineChart>
+            </FitChart>)}
           </ChartCard>
         )}
         {forces && (
-          <ChartCard title="Pin pushed back by bar flex vs carriage Y">
+          <ChartCard title="Pin pushed back by bar flex vs carriage Y" {...cardProps('flex')}>
+            {({ settings: c }) => (<FitChart>
             <LineChart data={chartData} margin={margin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              {xAxisY}
-              <YAxis type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(3)}
+              {xAxisY(c)}
+              <YAxis type="number" stroke="#888" domain={chartDomain(c, 'y')} allowDataOverflow={!c.autoY} tickFormatter={(v) => Number(v).toFixed(3)}
                 label={{ value: 'Flex (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 0 }} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(4)} mm`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
               <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
@@ -1486,14 +1529,16 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <Line type="linear" dataKey="flexLink" name="A: from the link" stroke="#a3e635" strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
               <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
             </LineChart>
+            </FitChart>)}
           </ChartCard>
         )}
-        <ChartCard title={`Chamber (${params.chamber_volume_ml} mL): air in vs out over one cycle`}>
+        <ChartCard title={`Chamber (${params.chamber_volume_ml} mL): air in vs out over one cycle`} {...cardProps('chamber')}>
+          {({ settings: c }) => (<FitChart>
           <LineChart data={cycleData} margin={margin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} stroke="#888"
+            <XAxis dataKey="t" type="number" domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={!c.autoX} stroke="#888"
               label={{ value: 'Time (s): Y goes 0, +stroke, 0, -stroke, 0', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(v) => Number(v).toFixed(1)} />
-            <YAxis yAxisId="q" type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(1)}
+            <YAxis yAxisId="q" type="number" stroke="#888" domain={chartDomain(c, 'y')} allowDataOverflow={!c.autoY} tickFormatter={(v) => Number(v).toFixed(1)}
               label={{ value: 'Free air (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
             <YAxis yAxisId="p" orientation="right" type="number" stroke="#a78bfa" tickFormatter={(v) => Number(v).toFixed(0)}
               label={{ value: 'Chamber (kPa g)', angle: 90, position: 'insideRight', fill: '#a78bfa', offset: 10 }} />
@@ -1506,6 +1551,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <Line yAxisId="p" type="linear" dataKey="kpa" name="Chamber pressure" stroke="#a78bfa" strokeWidth={2} dot={false} isAnimationActive={false} />
             {cycleT != null && <ReferenceLine yAxisId="q" x={cycleT} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
           </LineChart>
+          </FitChart>)}
         </ChartCard>
       </div>
     </div>
