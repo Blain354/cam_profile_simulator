@@ -68,6 +68,7 @@ VALUES = {
     "pivot_height_y0": ("Carriage pivot height at Y = 0", "mm"),
     "total_height": ("Anchor to anchor height", "mm"),
     "link_arc_radius": ("Curved link radius", "mm"),
+    "pin_gap_y0": ("Pin (or pad) to the wall the tube rests on, at Y = 0, part at rest", "mm"),
 }
 
 _TUBE = {"pinch_tube_OD": "tube_od", "pinch_tube_ID": "tube_id"}
@@ -79,13 +80,13 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
         "L1": "bar2_length", "L2": "bar1_length",
         "elbow_anchor": "anchor_distance", "elbow_pivot_offset": "pivot_offset",
         "elbow_tube_center": "tube_center_x", "elbow_pin_dia": "pin_diameter",
-        "elbow_height": "total_height", "elbow_stroke": "stroke", **_TUBE,
+        "elbow_height": "total_height", "elbow_stroke": "stroke", "elbow_pin_gap": "pin_gap_y0", **_TUBE,
     },
     "lever": {
         "lever_L": "lever_length", "lever_c": "bar2_length", "lever_r": "bar1_length",
         "lever_anchor": "anchor_distance", "lever_pivot_offset": "pivot_offset",
         "lever_tube_center": "tube_center_x", "lever_pin_dia": "pin_diameter",
-        "lever_height": "total_height", "lever_stroke": "stroke", **_TUBE,
+        "lever_height": "total_height", "lever_stroke": "stroke", "lever_pin_gap": "pin_gap_y0", **_TUBE,
     },
     "pendulum": {
         "pend_arm_L": "bar2_length", "pend_link_r": "link_length",
@@ -93,7 +94,7 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
         "pend_anchor": "anchor_distance", "pend_pivot_offset": "pivot_offset",
         "pend_tube_center": "tube_center_x", "pend_pin_dia": "pin_diameter",
         "pend_height": "total_height", "pend_stroke": "stroke",
-        "pend_link_radius": "link_arc_radius",
+        "pend_link_radius": "link_arc_radius", "pend_pin_gap": "pin_gap_y0",
         "pend_bar_width": "member_width", "pend_bar_thickness": "member_thickness", **_TUBE,
     },
 }
@@ -203,6 +204,8 @@ def wanted_rows(params: LinkageParams) -> list[Row]:
         pivot_height_y0=result.pivot_height_y0,
         total_height=2.0 * result.pivot_height_y0,
         link_arc_radius=result.link_arc_radius,
+        # Where the pin sits against the closed tube in the shape the part is made in: the check that the CAD pinches.
+        pin_gap_y0=result.closed_gap - params.preload,
     )
     rows = []
     for name, key in mapping_for(params.linkage_type).items():
