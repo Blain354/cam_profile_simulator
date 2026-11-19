@@ -95,6 +95,7 @@ interface LinkageResult {
   stress_b: Series;
   max_stress_mpa: number | null;
   max_stress_where: 'arm' | 'foot' | 'link' | null;
+  max_stress_spot: 'shell' | 'joint' | 'carriage' | 'span' | null;
   stress_margin: number | null;
   stress_limit_y: number | null;
   spring_rate: number | null;
@@ -1181,7 +1182,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
           {data && data.flexure && data.max_stress_mpa != null && (
             <div className="space-y-2 pb-1">
               <h3 className="text-xs font-semibold text-neutral-400 mb-2">One-piece part{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
-              <StatRow label={`Worst stress (${data.max_stress_where})`} highlight value={
+              <StatRow label={`Worst stress (${data.max_stress_where}${data.max_stress_spot === 'shell' ? ', at the shell' : data.max_stress_spot === 'joint' ? ', at the joint' : data.max_stress_spot === 'carriage' ? ', at the carriage' : ''})`} highlight value={
                 <span className={data.stress_margin != null && data.stress_margin < 1 ? 'text-red-400' : data.stress_margin != null && data.stress_margin < 2 ? 'text-amber-400' : undefined}>
                   {`${data.max_stress_mpa.toFixed(0)} MPa${data.stress_margin != null ? `, × ${data.stress_margin.toFixed(2)} of ${params.member_strength_mpa} MPa` : ''}`}
                 </span>} />
@@ -1195,6 +1196,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                   The part is stressed past its strength within this stroke. Make it thinner in the plane (bar width), longer, softer (modulus), or shorten the stroke.
                 </p>
               )}
+              <p className="text-[10px] leading-snug text-neutral-400">
+                One section for arm, foot and link. Fillets at the joints are not modelled: a generous radius there lowers the real peak, a sharp corner raises it.
+              </p>
             </div>
           )}
           {data && forces && (

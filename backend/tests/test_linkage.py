@@ -316,6 +316,16 @@ class LinkageTests(unittest.TestCase):
         self.assertAlmostEqual(r.stress_margin, p.member_strength_mpa / r.max_stress_mpa, places=9)
         self.assertEqual(r.stress_b, r.stress_a[::-1])
         self.assertIn(r.max_stress_where, ("arm", "foot", "link"))
+        self.assertIn(r.max_stress_spot, ("shell", "joint", "carriage", "span"))
+        # The search still runs with the one-piece switch on (it works on the pivoted version).
+        best, feasible, _ = optimize_linkage(replace(p, stroke=3.0), PENDULUM_SEARCH)
+        self.assertIsNotNone(best)
+        self.assertTrue(best.compliant)
+        json.dumps(compute_linkage(best).__dict__, allow_nan=False)
+        # A stroke long enough to jam the closed tube still gives a clean result.
+        long = compute_linkage(replace(p, stroke=4.0))
+        self.assertIsNotNone(long.jam_y)
+        json.dumps(long.__dict__, allow_nan=False)
         # A thinner section bends more easily: less thrust and less stress for the same travel.
         thin = compute_linkage(replace(p, member_width=1.0))
         self.assertLess(thin.spring_rate, r.spring_rate / 4.0)

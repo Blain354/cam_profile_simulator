@@ -122,6 +122,7 @@ class LinkageResult:
     stress_b: List[Optional[float]] = field(default_factory=list)
     max_stress_mpa: Optional[float] = None
     max_stress_where: Optional[str] = None         # "arm" | "foot" | "link"
+    max_stress_spot: Optional[str] = None          # "shell" | "joint" | "carriage" | "span": where along it
     stress_margin: Optional[float] = None          # strength / worst stress
     stress_limit_y: Optional[float] = None         # mm of travel where the stress passes the strength
     spring_rate: Optional[float] = None            # N of screw thrust per mm of travel, bending the two parts, no tube
@@ -728,7 +729,9 @@ class _Flexure:
         wall = p.tube_od - p.tube_id
         force_out, flex_out, thrust_out, stress_out = force.astype(float), pushed.astype(float), thrust.astype(float), stress.astype(float)
         if parts is not None:
-            crushed = np.abs(y[gap <= 0.05 * wall])
+            # The part gives way, so what counts is the gap left once it has: the closed tube is
+            # crushed to the wall only if the part is stiff enough to do it.
+            crushed = np.abs(y[loaded <= 0.05 * wall])
             if crushed.size:
                 out.jam_y = float(crushed.min())
                 past = np.abs(y) >= out.jam_y
@@ -739,14 +742,23 @@ class _Flexure:
         out.stress_a, out.stress_b = _nan_to_none(stress_out), _nan_to_none(stress_out[::-1])
         worst = int(np.nanargmax(np.where(valid, stress, -1.0)))
         out.max_stress_mpa = float(stress[worst])
-        out.max_stress_where = self.parts[int(np.argmax(stress_all[:, worst]))]
+        at = int(np.argmax(stress_all[:, worst]))
+        out.max_stress_where = self.parts[at]
+        first_of_part = at == 0 or self.parts[at - 1] != self.parts[at]
+        last_of_part = at == len(self.parts) - 1 or self.parts[at + 1] != self.parts[at]
+        if self.parts[at] == "arm":
+            out.max_stress_spot = "shell" if first_of_part else "joint" if last_of_part else "span"
+        elif self.parts[at] == "link":
+            out.max_stress_spot = "joint" if first_of_part else "carriage" if last_of_part else "span"
+        else:
+            out.max_stress_spot = "joint" if first_of_part else "span"
         out.max_bending_stress_mpa = float((bending / self.section)[:, valid].max())
         out.max_axial_stress_mpa = float((axial / self.area)[:, valid].max())
         if alpha_link := [i for i, part in enumerate(self.parts) if part == "link"]:
             out.link_bending_stress_mpa = float((bending[alpha_link] / self.section)[:, valid].max())
         if p.member_strength_mpa > 0 and out.max_stress_mpa > 1e-9:
             out.stress_margin = float(p.member_strength_mpa / out.max_stress_mpa)
-            over = np.abs(y[stress > p.member_strength_mpa])
+            over = np.abs(y[valid & (stress > p.member_strength_mpa)])
             out.stress_limit_y = float(over.min()) if over.size else None
         out.max_rotation_deg = float(np.degrees(rotation[valid].max()))
         out.max_side_load = float(side_load[valid].max())
