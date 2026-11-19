@@ -17,7 +17,6 @@ import {
   apiFetch,
   defaultParams,
   DelayedHoverHint,
-  interpAt,
 } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
@@ -47,7 +46,8 @@ import {
   builderCandidateRankFlowYPosition,
 } from './parameterTooltips';
 import SearchGridAxisControls from './SearchGridAxisControls';
-import { CamSchematicCard, useCamTravel } from './CamSchematic';
+import { CamSchematicCard } from './CamSchematic';
+import { interpAt, useCamTravel } from './lib/camTravel';
 
 /** Must match backend `candidate_rank_by` strings. */
 export const CANDIDATE_RANK_BY_VALUES = ['equalization_rel_time', 'flow_rise_20_80', 'flow_exp', 'flow_at_y'] as const;
@@ -1736,13 +1736,14 @@ export default function ProfileBuilder({
       K: activeCandidate?.K ?? result.K,
       deadband: activeCandidate?.deadband ?? result.deadband,
       default_distance: activeCandidate?.default_distance ?? result.default_distance,
-      tube_id: tubeId,
-      tube_od: tubeOd,
+      // The tube the solve ran with, so the schematic's walls match the simulated gaps.
+      tube_id: lastSolveRequestBody?.tube_id ?? tubeId,
+      tube_od: lastSolveRequestBody?.tube_od ?? tubeOd,
       input_pressure_psi: pressurePsi,
       compliance,
       chamber_volume_ml: chamberVolume,
     };
-  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressurePsi, compliance, chamberVolume]);
+  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressurePsi, compliance, chamberVolume, lastSolveRequestBody]);
 
   const builderCard = (key: BuilderChartSettingsKey) => ({
     settings: builderChartSettings[key],
@@ -2359,7 +2360,7 @@ export default function ProfileBuilder({
               {chartSim && builderViewParams && (
                 <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-9 gap-4">
                   <CamSchematicCard id="finder" data={chartSim} params={builderViewParams} travel={travel} details={schematicDetails} setDetails={setSchematicDetails}
-                    speedNote={`${motorSpeed} RPM × ${builderViewParams.lead_screw_pitch} mm pitch`}
+                    speedNote={`${(chartSim.linear_speed_mm_s * 60 / builderViewParams.lead_screw_pitch).toFixed(0)} RPM × ${builderViewParams.lead_screw_pitch} mm pitch`}
                     domain={builderChartSettings.vertical} onDomainChange={(next) => setBuilderChartSettings((prev) => ({ ...prev, vertical: next }))} />
                   <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
                     <ChartCard title="Flow vs Y" {...builderCard('flowY')}>

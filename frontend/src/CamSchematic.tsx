@@ -1,70 +1,9 @@
 import { Button } from '@blain-projects/ui';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Cog, Pause, Play } from 'lucide-react';
 import type { ChartDomainSettings, SimulationParams, SimulationResult } from './components';
 import { ChartDomainSettingsModal, VerticalSystemSvgDiagram } from './components';
-
-export interface CamTravel {
-  y: number;
-  setY: (y: number) => void;
-  playing: boolean;
-  toggle: () => void;
-  /** Put on the card: the travel stops by itself once the card is hidden behind another tab. */
-  ref: React.RefObject<HTMLDivElement | null>;
-  min: number;
-  max: number;
-  speed: number;
-}
-
-/**
- * Carriage position over the simulated Y range, and Oscillate: Y_start to Y_end and back at the
- * simulation's own linear speed (motor speed x lead-screw pitch; the cam model has no load factor).
- */
-export function useCamTravel(data: SimulationResult | null): CamTravel {
-  const min = data?.Y_positions[0] ?? 0;
-  const max = data?.Y_positions[data.Y_positions.length - 1] ?? 0;
-  const speed = data?.linear_speed_mm_s ?? 0;
-  const [rawY, setRawY] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const live = useRef({ d: 0, speed, min, max });
-  const y = Math.min(Math.max(rawY, min), max);
-
-  useEffect(() => {
-    live.current.speed = speed;
-    live.current.min = min;
-    live.current.max = max;
-  }, [speed, min, max]);
-
-  useEffect(() => {
-    if (!playing) return;
-    let raf = 0;
-    let last: number | null = null;
-    let shown = 0;
-    const step = (now: number) => {
-      const m = live.current;
-      const span = m.max - m.min;
-      if (m.speed <= 0 || span <= 0 || !ref.current || ref.current.offsetParent === null) { setPlaying(false); return; }
-      if (last != null) m.d = (m.d + (now - last) / 1000 * m.speed) % (2 * span);
-      last = now;
-      if (now - shown > 30) {
-        shown = now;
-        setRawY(m.min + (m.d <= span ? m.d : 2 * span - m.d));
-      }
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [playing]);
-
-  const toggle = () => {
-    // Resume from where the carriage is, on the way up.
-    if (!playing) live.current.d = y - min;
-    setPlaying(!playing);
-  };
-  const setY = (v: number) => { setPlaying(false); setRawY(v); };
-  return { y, setY, playing, toggle, ref, min, max, speed };
-}
+import type { CamTravel } from './lib/camTravel';
 
 /** The cam's schematic card: same header, carriage slider and Oscillate as the linkage tabs. */
 export function CamSchematicCard({ id, data, params, travel, details, setDetails, speedNote, domain, onDomainChange }: {
@@ -81,8 +20,9 @@ export function CamSchematicCard({ id, data, params, travel, details, setDetails
   onDomainChange?: (next: ChartDomainSettings) => void;
 }) {
   const [domainOpen, setDomainOpen] = useState(false);
+  const { attach } = travel;
   return (
-    <div ref={travel.ref} className="lg:col-span-4 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
+    <div ref={attach} className="lg:col-span-4 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
       <div className="flex items-center gap-3 mb-3 shrink-0 min-w-0">
         <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Schematic</h3>
         {domain && onDomainChange && (

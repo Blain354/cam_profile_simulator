@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
-import { VerticalSystemSvgDiagram, defaultParams, interpAt } from './components'
+import { VerticalSystemSvgDiagram, defaultParams } from './components'
+import { interpAt } from './lib/camTravel'
 import { simulateDefault } from './simulate.fixture'
 
 const params = { ...defaultParams, input_pressure_psi: 15 }
@@ -32,6 +33,22 @@ test('the live drawing shows the tube and the simulated gap at the carriage posi
   expect(container.querySelectorAll('rect[rx]').length).toBeGreaterThan(0)
   // The cam is drawn shifted by -Y.
   expect(container.querySelector(`g[transform="translate(0 ${-y})"] polyline`)).toBeTruthy()
+})
+
+test('the carriage values come from the simulated arrays, clamped at both ends of the range', () => {
+  const ys = simulateDefault.Y_positions, gaps = simulateDefault.min_gaps
+  expect(interpAt(ys[0] - 1, ys, gaps)).toBe(gaps[0])
+  expect(interpAt(ys[ys.length - 1] + 1, ys, gaps)).toBe(gaps[gaps.length - 1])
+  expect(interpAt(ys[10], ys, gaps)).toBeCloseTo(gaps[10], 12)
+  expect(interpAt(1.5, [0, 1, 3], [0, 10, 30])).toBeCloseTo(15, 12)
+})
+
+test('the drawn bore is the model slot: flow area over (pi/2) x tube ID', () => {
+  const y = 1.5
+  const { container } = render(<VerticalSystemSvgDiagram data={simulateDefault} params={params} details y={y} />)
+  const area = interpAt(y, simulateDefault.Y_positions, simulateDefault.flow_area)
+  const bore = area / ((Math.PI / 2) * params.tube_id)
+  expect(container.textContent).toContain(`bore ${bore.toFixed(3)} mm`)
 })
 
 test('the Cam Explorer menu lists every control once, most important first, then the results', async () => {

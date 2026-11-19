@@ -1,6 +1,7 @@
 import { Button, Input, Modal } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { interpAt } from './lib/camTravel';
 import {
   ChevronDown, ChevronRight, Trash2,
   RefreshCw
@@ -547,7 +548,9 @@ export function VerticalSystemSvgDiagram({
     panRef.current = { id: null, last: null };
   }, []);
 
-  // Dimension lines in cam coordinates: in the live view they move with the cam.
+  // Dimension lines in cam coordinates: in the live view they move with the cam. Without a ramp the
+  // default-distance mark sits near the bottom of the view, on the straight wall.
+  const defDistY = data.ramp_join_Y ?? (live ? Math.min(minY + 0.5 + (y ?? 0), -params.deadband / 2) : minY + 0.5);
   const camDimensions = (
     <>
       <line x1={flatCamX - 0.2} y1={-params.deadband / 2} x2={flatCamX - 0.2} y2={params.deadband / 2} stroke="#ef4444" strokeWidth="0.03" />
@@ -564,12 +567,12 @@ export function VerticalSystemSvgDiagram({
         <text x={maxCamX + 0.8} y={-(-params.deadband / 2 - 0.2)} fill="#10b981" fontSize="0.22" fontWeight="bold" textAnchor="end" dominantBaseline="hanging">Height {params.height.toFixed(2)}mm</text>
       </g>
 
-      <line x1={r} y1={data.ramp_join_Y ?? minY + 0.5} x2={flatCamX} y2={data.ramp_join_Y ?? minY + 0.5} stroke="#f59e0b" strokeWidth="0.03" />
-      <line x1={r} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={r} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
-      <line x1={flatCamX} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={flatCamX} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
+      <line x1={r} y1={defDistY} x2={flatCamX} y2={defDistY} stroke="#f59e0b" strokeWidth="0.03" />
+      <line x1={r} y1={defDistY - 0.2} x2={r} y2={defDistY + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
+      <line x1={flatCamX} y1={defDistY - 0.2} x2={flatCamX} y2={defDistY + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
       <g transform="scale(1,-1)">
-        <text x={flatCamX + 0.3} y={-(data.ramp_join_Y ?? minY + 0.5)} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">Def. Dist {params.default_distance.toFixed(3)}mm</text>
-        <text x={flatCamX + 0.3} y={-(minY + 0.85)} fill="#60a5fa" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">K {params.K.toFixed(3)}</text>
+        <text x={flatCamX + 0.3} y={-defDistY} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">Def. Dist {params.default_distance.toFixed(3)}mm</text>
+        <text x={flatCamX + 0.3} y={-(live ? defDistY + 0.35 : minY + 0.85)} fill="#60a5fa" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">K {params.K.toFixed(3)}</text>
         {data.ramp_enabled && data.ramp_closed_Y != null && <text x={r + 0.3} y={-data.ramp_closed_Y} fill="#10b981" fontSize="0.22" fontWeight="bold" dominantBaseline="middle">Ramp end: 0 mm offset</text>}
       </g>
     </>
@@ -648,24 +651,9 @@ export function VerticalSystemSvgDiagram({
   );
 }
 
-/** Linear interpolation of `vals` at `y` on the increasing grid `ys`, clamped to its ends. */
-export function interpAt(y: number, ys: number[], vals: number[]): number {
-  const n = Math.min(ys.length, vals.length);
-  if (n === 0) return 0;
-  if (y <= ys[0]) return vals[0];
-  if (y >= ys[n - 1]) return vals[n - 1];
-  let lo = 0, hi = n - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (ys[mid] <= y) lo = mid; else hi = mid;
-  }
-  const span = ys[hi] - ys[lo];
-  return span > 0 ? vals[lo] + (vals[hi] - vals[lo]) * (y - ys[lo]) / span : vals[lo];
-}
-
 /**
  * The bushing, the tube and the gap at carriage position `y`, drawn from the simulation's arrays:
- * the gap is `min_gaps` and the bore is the one whose area is `flow_area`. Only the direction of
+ * the gap is `min_gaps` and the bore is the model's slot of area `flow_area`. Only the direction of
  * the pinch comes from the drawn cam (its nearest point to the screw axis).
  */
 function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; params: SimulationParams; y: number; details: boolean }) {
@@ -691,12 +679,14 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
   // The bushing sits one gap from the cam: its radial play is taken up away from the cam.
   const bx = px - nx * (gap + r), by = py - ny * (gap + r);
 
-  // Tube section: flattened to the gap; the bore has the simulated flow area (a stadium of the tube's perimeter).
+  // Tube section, schematic: the model's own slot. The bore is (pi/2)*ID wide and flow_area / width
+  // high (the backend's inner gap, capped at the full bore area); the walls fill the rest of the gap.
   const od = params.tube_od, id = params.tube_id;
-  const ho = Math.min(Math.max(gap, 0.02), od);
-  const hi = Math.min(id - Math.sqrt(Math.max(id * id - 4 * area / Math.PI, 0)), ho * 0.98);
-  const lo = Math.PI * (od - ho) / 2 + ho;
-  const li = Math.PI * (id - hi) / 2 + hi;
+  const wi = (Math.PI / 2) * id;
+  const hi = wi > 0 ? area / wi : 0;
+  const ho = Math.max(Math.min(gap, od), hi, 0.01);
+  const lo = wi + (od - id);
+  const li = wi;
   const tx = px - nx * gap / 2, ty = py - ny * gap / 2;
   const angle = Math.atan2(ny, nx) * 180 / Math.PI;
   const frac = maxFlow > 0 ? Math.min(flow / maxFlow, 1) : 0;
@@ -707,8 +697,9 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
     <g>
       <g transform={`translate(${tx} ${ty}) rotate(${angle})`}>
         <rect x={-ho / 2} y={-lo / 2} width={ho} height={lo} rx={ho / 2} fill="#d4d4d4" fillOpacity={0.16} stroke="#d4d4d4" strokeWidth={0.03} />
+        <title>Tube section (schematic): the model's slot, bore area = simulated flow area</title>
         {hi > 0.005
-          ? <rect x={-hi / 2} y={-li / 2} width={hi} height={li} rx={hi / 2} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
+          ? <rect x={-hi / 2} y={-li / 2} width={hi} height={li} rx={Math.min(hi / 2, 0.05)} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
           : <line x1={0} y1={-li / 2} x2={0} y2={li / 2} stroke="#ef4444" strokeWidth={0.04} />}
       </g>
       <circle cx={bx} cy={by} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
@@ -725,6 +716,10 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
       <g transform={`translate(${lx} ${ly}) scale(1,-1)`}>
         <text x={0} y={0} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="middle" dominantBaseline="middle"
           stroke="#171717" strokeWidth={0.06} paintOrder="stroke">Gap {gap.toFixed(3)} mm</text>
+        {details && (
+          <text x={0} y={0.3} fill="#a3a3a3" fontSize="0.16" textAnchor="middle" dominantBaseline="middle"
+            stroke="#171717" strokeWidth={0.05} paintOrder="stroke">Tube section, schematic: bore {hi.toFixed(3)} mm, {area.toFixed(3)} mm²</text>
+        )}
       </g>
     </g>
   );

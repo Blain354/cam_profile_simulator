@@ -14,9 +14,10 @@ import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
   ParameterSlider, StatRow, Accordion, ConfigModal, TooltipHintsProvider, ClosureRampToggle,
-  apiFetch, defaultParams, mergeConfigParams, interpAt,
+  apiFetch, defaultParams, mergeConfigParams,
 } from './components';
-import { CamSchematicCard, useCamTravel } from './CamSchematic';
+import { CamSchematicCard } from './CamSchematic';
+import { interpAt, useCamTravel } from './lib/camTravel';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain } from './lib/chartDomain';
