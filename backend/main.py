@@ -627,23 +627,27 @@ def delete_builder_experience(name: str):
     return {"status": "deleted"}
 
 
-# ─── Bar linkage pinch valve ─────────────────────────────────────
+# ─── Bar linkage pinch valves ────────────────────────────────────
 
 class LinkageRequest(BaseModel):
+    linkage_type: str = "elbow"
     bar1_length: float = 13.0
     bar2_length: float = 7.8
+    lever_length: float = 16.5
     anchor_distance: float = 2.33
     pivot_offset: float = 3.9
     tube_center_x: float = 8.0
     pin_diameter: float = 1.0
     preload: float = 0.1
     stroke: float = Field(3.0, gt=0, le=50)
-    mirror_mode: str = "symmetric"
     target_exponent: float = Field(1.0, gt=0, le=10)
     tube_id: float = 2.0
     tube_od: float = 3.0
     input_pressure_psi: float = 15.0
     compliance: float = 0.7
+    chamber_volume_ml: float = Field(10.0, ge=0, le=10000)
+    motor_speed: float = Field(100.0, ge=0, le=100000)
+    lead_screw_pitch: float = Field(0.5, ge=0, le=100)
 
 
 class LinkageOptimizeRequest(LinkageRequest):
@@ -651,6 +655,8 @@ class LinkageOptimizeRequest(LinkageRequest):
     bar1_max: float = 20.0
     bar2_min: float = 3.0
     bar2_max: float = 14.0
+    lever_min: float = 10.0
+    lever_max: float = 22.0
     anchor_min: float = 0.0
     anchor_max: float = 6.0
     min_pivot_height: float = 3.0
@@ -671,7 +677,7 @@ def linkage_simulate(req: LinkageRequest):
 @app.post("/api/linkage/optimize")
 def linkage_optimize(req: LinkageOptimizeRequest):
     params = _linkage_params(req)
-    names = [f.name for f in dataclasses.fields(LinkageSearch) if f.name != "grid"]
+    names = [f.name for f in dataclasses.fields(LinkageSearch)]
     best, feasible, tested = optimize_linkage(params, LinkageSearch(**{n: getattr(req, n) for n in names}))
     if best is None:
         return {"found": False, "feasible": 0, "tested": tested}

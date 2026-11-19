@@ -1,19 +1,28 @@
 """
-Two-bar linkage pinch valve: kinematics, static flow and geometry search.
+Bar-linkage pinch valves: kinematics, static flow, chamber traces and geometry search.
 
 Frame (mm): x from the lead-screw axis (base centre), y up from the fixed anchor.
-  A = (-anchor_distance, 0)          fixed pivot on the base
-  B = (+pivot_offset, h0 + Y)        pivot on the carriage, moves with the screw
-  P = elbow joining bar 1 (B-P, length L1) and bar 2 (P-A, length L2): the pinch point
+  A = fixed pivot on the base, at y = 0
+  B = (+pivot_offset, h0 + Y)   pivot on the carriage, moves with the screw
+  C = joint between bar 1 (B-C, length bar1_length) and the bar hinged at A
+      (A-C, length bar2_length)
+  P = pinch point, on the line A-C at lever_length from A
+
+Two linkage types share that geometry:
+  "elbow": A = (-anchor_distance, 0) on the tube side, and P = C (two-bar toggle).
+  "lever": A = (+anchor_distance, 0) on the far side; A-P is one long lever that
+           reaches across to the tube, and bar 1 drives it at C part-way along.
+
 The tube runs vertically at x = -tube_center_x and rests on a wall at
 x = -(tube_center_x + tube_od / 2). P squeezes it against that wall.
 
 Y = 0 is *defined* as the carriage position where the tube is just closed (plus
 the preload), so h0 is solved from the geometry rather than given.
 
-The second tube is the mirror image. "symmetric": mirrored left/right, both tubes
-open together. "opposed": mirrored through the carriage pivot at Y = 0, so the
-second tube sees the first one's law at -Y (one opens while the other is squeezed).
+The second tube has the same linkage mirrored twice, left/right and top/bottom
+(a half turn about the carriage pivot at Y = 0, its anchor on the top wall at
+y = 2 * h0). It therefore sees the first tube's law at -Y: the carriage opens one
+tube while it squeezes the other. Tube A feeds the chamber, tube B vents it.
 """
 
 from dataclasses import dataclass, field
@@ -26,30 +35,35 @@ try:  # run from backend/ (uvicorn main:app) or as the backend package (tests)
 except ImportError:
     from .simulation import P_ATM, R_AIR, T_AMB, _compute_orifice_mass_flow_rate
 
-MIRROR_SYMMETRIC = "symmetric"
-MIRROR_OPPOSED = "opposed"
+TYPE_ELBOW = "elbow"
+TYPE_LEVER = "lever"
 
 N_SAMPLES = 241
 N_SCORE = 60
+N_TIME = 601
 _EPS = 1e-9
 
 
 @dataclass
 class LinkageParams:
-    bar1_length: float = 13.0        # mm, carriage pivot -> elbow
-    bar2_length: float = 7.8         # mm, elbow -> fixed anchor
-    anchor_distance: float = 2.33    # mm, anchor offset from the base centre (tube side)
+    linkage_type: str = TYPE_ELBOW
+    bar1_length: float = 13.0        # mm, carriage pivot -> joint C
+    bar2_length: float = 7.8         # mm, anchor -> joint C
+    lever_length: float = 16.5       # mm, anchor -> pinch point (lever type only)
+    anchor_distance: float = 2.33    # mm from the base centre (elbow: tube side, lever: far side)
     pivot_offset: float = 3.9        # mm, carriage pivot offset from the screw axis (far side)
     tube_center_x: float = 8.0       # mm, tube axis distance from the screw axis
-    pin_diameter: float = 1.0        # mm, pinch pin at the elbow
+    pin_diameter: float = 1.0        # mm, pinch pin
     preload: float = 0.1             # mm, extra squeeze past closure at Y = 0
-    stroke: float = 3.0              # mm, carriage travel shown / optimised
-    mirror_mode: str = MIRROR_SYMMETRIC
+    stroke: float = 3.0              # mm, carriage travel each way
     target_exponent: float = 1.0     # target opening = (Y / stroke) ** exponent
     tube_id: float = 2.0
     tube_od: float = 3.0
     input_pressure_psi: float = 15.0
     compliance: float = 0.7          # mm/MPa
+    chamber_volume_ml: float = 10.0  # mL, 0 disables the chamber traces
+    motor_speed: float = 100.0       # RPM
+    lead_screw_pitch: float = 0.5    # mm/rev
 
 
 @dataclass
@@ -57,14 +71,17 @@ class LinkageResult:
     feasible: bool
     message: str
     Y_positions: List[float] = field(default_factory=list)
-    elbow_x: List[float] = field(default_factory=list)
-    elbow_y: List[float] = field(default_factory=list)
+    joint_x: List[Optional[float]] = field(default_factory=list)
+    joint_y: List[Optional[float]] = field(default_factory=list)
+    tip_x: List[Optional[float]] = field(default_factory=list)
+    tip_y: List[Optional[float]] = field(default_factory=list)
     gap_a: List[Optional[float]] = field(default_factory=list)
     gap_b: List[Optional[float]] = field(default_factory=list)
     flow_a: List[Optional[float]] = field(default_factory=list)
     flow_b: List[Optional[float]] = field(default_factory=list)
     flow_target: List[Optional[float]] = field(default_factory=list)
-    pivot_height_y0: float = 0.0     # h0
+    anchor_x: float = 0.0
+    pivot_height_y0: float = 0.0     # h0; the mirrored anchor sits at 2 * h0
     wall_x: float = 0.0
     closed_gap: float = 0.0          # pin-to-wall gap at which flow starts
     full_open_gap: float = 0.0       # pin-to-wall gap at which flow saturates
@@ -72,127 +89,181 @@ class LinkageResult:
     y_max: float = 0.0
     y_full_open: Optional[float] = None
     sensitivity_y0: float = 0.0      # d(gap)/dY at Y = 0
-    pinch_slide: float = 0.0         # elbow travel along the tube over the stroke
-    max_oversqueeze: float = 0.0     # worst squeeze past closure on either tube
+    pinch_slide: float = 0.0         # pinch point travel along the tube over the stroke
+    max_oversqueeze: float = 0.0     # worst squeeze past closure of the closed tube
     max_flow_l_min: float = 0.0
     rms_error: Optional[float] = None
+    # Chamber cycle 0 -> +stroke -> 0 -> -stroke -> 0 at the motor's linear speed.
+    time_ms: List[float] = field(default_factory=list)
+    y_time: List[float] = field(default_factory=list)
+    flow_in_l_min: List[float] = field(default_factory=list)    # free air, supply -> chamber (tube A)
+    flow_out_l_min: List[float] = field(default_factory=list)   # free air, chamber -> atmosphere (tube B)
+    chamber_kpa: List[float] = field(default_factory=list)      # gauge
+    volume_in_ml: float = 0.0
+    volume_out_ml: float = 0.0
 
 
-def _elbow(l1, l2, xa, xb, h):
-    """Elbow position for carriage pivot height h; NaN where the bars cannot reach."""
+def _joint(l1, l2, xa, xb, h):
+    """Joint C for carriage pivot height h; NaN where the bars cannot reach."""
     dx = xb - xa
     d = np.sqrt(dx * dx + h * h)
     along = (l2 * l2 - l1 * l1 + d * d) / (2.0 * d)
     perp_sq = l2 * l2 - along * along
     perp = np.sqrt(np.where(perp_sq >= 0.0, perp_sq, np.nan))
-    # Elbow on the tube side of the A->B line.
+    # C on the tube side of the A->B line.
     return xa + (along * dx - perp * h) / d, (along * h + perp * dx) / d
 
 
-def _closure(p: LinkageParams) -> Tuple[float, float, float, float]:
-    """wall_x, closed gap, full-open gap, pressure opening (all mm)."""
+def _closure(p: LinkageParams) -> Tuple[float, float, float]:
+    """wall_x, closed gap, full-open gap (all mm)."""
     wall_x = p.tube_center_x + p.tube_od / 2.0
     opening = p.compliance * p.input_pressure_psi * 0.00689476
     closed_gap = (p.tube_od - p.tube_id) - opening
     # Same area law as the cam model: (pi/2 * ID) * inner_gap, capped at the bore.
-    return wall_x, closed_gap, closed_gap + p.tube_id / 2.0, opening
+    return wall_x, closed_gap, closed_gap + p.tube_id / 2.0
 
 
-def _pivot_height_y0(l1, l2, xa, xb, x_elbow_closed):
-    """Carriage pivot height that puts the elbow at x_elbow_closed (elbow above the anchor, carriage above the elbow)."""
-    c = (x_elbow_closed - xa) / l2
+def _pivot_height_y0(l1, l2, reach, xa, xb, x_tip_closed):
+    """Carriage pivot height that puts the pinch point at x_tip_closed (lever above the base, carriage above C at Y = 0)."""
+    c = (x_tip_closed - xa) / reach
     s_sq = 1.0 - c * c
-    y_elbow = l2 * np.sqrt(np.where(s_sq >= 0.0, s_sq, np.nan))
-    reach_sq = l1 * l1 - (xb - x_elbow_closed) ** 2
-    return y_elbow + np.sqrt(np.where(reach_sq >= 0.0, reach_sq, np.nan))
+    s = np.sqrt(np.where(s_sq >= 0.0, s_sq, np.nan))
+    reach_sq = l1 * l1 - (xb - (xa + l2 * c)) ** 2
+    return l2 * s + np.sqrt(np.where(reach_sq >= 0.0, reach_sq, np.nan))
 
 
-def _static_flow_l_min(p: LinkageParams, gap: np.ndarray, closed_gap: float) -> np.ndarray:
+def _area_mm2(p: LinkageParams, gap: np.ndarray, closed_gap: float) -> np.ndarray:
     inner = np.clip(gap - closed_gap, 0.0, None)
-    area = np.minimum((np.pi / 2.0) * p.tube_id * inner, np.pi * (p.tube_id / 2.0) ** 2)
-    p_up = P_ATM + p.input_pressure_psi * 6894.76
-    rho_up = p_up / (R_AIR * T_AMB)
-    # Static model: downstream at atmosphere, so mass flow is linear in area.
-    per_mm2 = _compute_orifice_mass_flow_rate(1.0, p_up, P_ATM) / rho_up * 60.0 * 1000.0
-    return area * per_mm2
+    return np.minimum((np.pi / 2.0) * p.tube_id * inner, np.pi * (p.tube_id / 2.0) ** 2)
 
 
 def _nan_to_none(a: np.ndarray) -> List[Optional[float]]:
     return [None if not np.isfinite(v) else float(v) for v in a]
 
 
+def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: np.ndarray):
+    """Isothermal chamber fed by tube A and vented by tube B over one carriage cycle.
+
+    Implicit Euler on the chamber pressure (bisection): the chamber settles in
+    milliseconds while the carriage takes seconds, so an explicit step would ring.
+    """
+    speed = p.motor_speed * p.lead_screw_pitch / 60.0
+    if p.chamber_volume_ml <= 0 or speed <= 0:
+        return None
+    s = p.stroke
+    t = np.linspace(0.0, 4.0 * s / speed, N_TIME)
+    y_t = np.interp(t * speed, [0.0, s, 2.0 * s, 3.0 * s, 4.0 * s], [0.0, s, 0.0, -s, 0.0])
+    a_in = np.interp(y_t, y, area_a)
+    a_out = np.interp(y_t, y, area_b)
+    p_up = P_ATM + p.input_pressure_psi * 6894.76
+    k = p.chamber_volume_ml * 1e-6 / (R_AIR * T_AMB)   # kg per Pa
+    to_l_min = 60.0 * 1000.0 * R_AIR * T_AMB / P_ATM   # kg/s -> free-air L/min
+    dt = float(t[1] - t[0])
+    pc = P_ATM
+    q_in, q_out, p_g = np.zeros(N_TIME), np.zeros(N_TIME), np.zeros(N_TIME)
+    for i in range(N_TIME):
+        if i > 0:
+            mass = pc * k
+            lo, hi = P_ATM, max(p_up, pc)
+            for _ in range(40):
+                mid = 0.5 * (lo + hi)
+                net = _compute_orifice_mass_flow_rate(a_in[i], p_up, mid) - _compute_orifice_mass_flow_rate(a_out[i], mid, P_ATM)
+                if mid * k - mass - dt * net > 0.0:
+                    hi = mid
+                else:
+                    lo = mid
+            pc = 0.5 * (lo + hi)
+        q_in[i] = _compute_orifice_mass_flow_rate(a_in[i], p_up, pc) * to_l_min
+        q_out[i] = _compute_orifice_mass_flow_rate(a_out[i], pc, P_ATM) * to_l_min
+        p_g[i] = (pc - P_ATM) / 1000.0
+    to_ml = dt / 60.0 * 1000.0
+    return t * 1000.0, y_t, q_in, q_out, p_g, float(q_in.sum() * to_ml), float(q_out.sum() * to_ml)
+
+
+def _geometry(p: LinkageParams):
+    lever = p.linkage_type == TYPE_LEVER
+    xa = p.anchor_distance if lever else -p.anchor_distance
+    reach = p.lever_length if lever else p.bar2_length
+    return xa, p.pivot_offset, reach
+
+
 def compute_linkage(p: LinkageParams) -> LinkageResult:
-    if min(p.bar1_length, p.bar2_length, p.stroke, p.tube_id) <= 0 or p.tube_od <= p.tube_id:
+    if min(p.bar1_length, p.bar2_length, p.lever_length, p.stroke, p.tube_id) <= 0 or p.tube_od <= p.tube_id:
         return LinkageResult(False, "Lengths, stroke and tube sizes must be positive, with OD > ID.")
     l1, l2 = p.bar1_length, p.bar2_length
-    xa, xb = -p.anchor_distance, p.pivot_offset
-    wall_x, closed_gap, full_open_gap, _ = _closure(p)
+    xa, xb, reach = _geometry(p)
+    wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
 
-    h0 = float(_pivot_height_y0(l1, l2, xa, xb, x_closed))
+    with np.errstate(invalid="ignore"):
+        h0 = float(_pivot_height_y0(l1, l2, reach, xa, xb, x_closed))
     if not np.isfinite(h0):
         return LinkageResult(
             False,
-            "The elbow cannot reach the tube at Y = 0: bar 2 is too short for this anchor, or bar 1 too short for this pivot offset.",
-            wall_x=wall_x, closed_gap=closed_gap, full_open_gap=full_open_gap,
+            "The pinch point cannot reach the tube at Y = 0: the bar hinged at the anchor is too short, or bar 1 cannot reach its joint.",
+            anchor_x=xa, wall_x=wall_x, closed_gap=closed_gap, full_open_gap=full_open_gap,
         )
 
     y = np.linspace(-p.stroke, p.stroke, N_SAMPLES)
-    ex, ey = _elbow(l1, l2, xa, xb, h0 + y)
-    # Below the anchor line the elbow has gone through bar 2's dead centre: not a usable pose.
-    ok = np.isfinite(ex) & (ey >= -_EPS) & (h0 + y > ey)
-    ex, ey = np.where(ok, ex, np.nan), np.where(ok, ey, np.nan)
-    gap_a = wall_x + ex - r_pin
-    opposed = p.mirror_mode == MIRROR_OPPOSED
-    gap_b = gap_a[::-1] if opposed else gap_a
-    flow_a = np.where(ok, _static_flow_l_min(p, np.nan_to_num(gap_a, nan=0.0), closed_gap), np.nan)
-    flow_b = flow_a[::-1] if opposed else flow_a
-    q_max = float(_static_flow_l_min(p, np.array([full_open_gap]), closed_gap)[0])
+    with np.errstate(invalid="ignore"):
+        jx, jy = _joint(l1, l2, xa, xb, h0 + y)
+        # Below the base line the hinged bar has gone through dead centre: not a usable pose.
+        ok = np.isfinite(jx) & (jy >= -_EPS)
+    jx, jy = np.where(ok, jx, np.nan), np.where(ok, jy, np.nan)
+    ratio = reach / l2
+    tx, ty = xa + ratio * (jx - xa), ratio * jy
+    gap_a = wall_x + tx - r_pin
+    gap_b = gap_a[::-1]
+    area_a = np.where(ok, _area_mm2(p, np.nan_to_num(gap_a, nan=0.0), closed_gap), 0.0)
+    area_b = area_a[::-1]
+    p_up = P_ATM + p.input_pressure_psi * 6894.76
+    # Static model: downstream at atmosphere, so flow is linear in area (same convention as the cam tab).
+    per_mm2 = _compute_orifice_mass_flow_rate(1.0, p_up, P_ATM) / (p_up / (R_AIR * T_AMB)) * 60.0 * 1000.0
+    flow_a = np.where(ok, area_a * per_mm2, np.nan)
+    q_max = float(np.pi * (p.tube_id / 2.0) ** 2 * per_mm2)
 
     u = np.clip(y / p.stroke, 0.0, 1.0)
     target_gap = closed_gap + (full_open_gap - closed_gap) * u ** p.target_exponent
     flow_target = np.where(y >= 0.0, q_max * u ** p.target_exponent, np.nan)
 
     pos = y >= 0.0
-    reach = np.where(ok)[0]
-    # Contiguous reachable range around Y = 0.
     i0 = N_SAMPLES // 2
-    lo = i0
+    lo = hi = i0
     while lo > 0 and ok[lo - 1]:
         lo -= 1
-    hi = i0
     while hi < N_SAMPLES - 1 and ok[hi + 1]:
         hi += 1
     full = np.where(pos & ok & (gap_a >= full_open_gap))[0]
-    dy = y[1] - y[0]
-    sens = float((gap_a[i0 + 1] - gap_a[i0]) / dy) if ok[i0 + 1] else 0.0
-    stroke_ok = bool(np.all(ok[pos]))
+    feasible = bool(np.all(ok))
+    sens = float((gap_a[i0 + 1] - gap_a[i0]) / (y[1] - y[0])) if ok[i0] and ok[i0 + 1] else 0.0
     rms = None
-    if stroke_ok:
-        rms = float(np.sqrt(np.mean(((np.clip(gap_a[pos], None, full_open_gap) - target_gap[pos]) / (full_open_gap - closed_gap)) ** 2)))
-    squeeze = closed_gap - np.nanmin(np.concatenate([gap_a[pos], gap_b[pos]])) if stroke_ok else 0.0
+    if bool(np.all(ok[pos])):
+        rms = float(np.sqrt(np.mean(((np.minimum(gap_a[pos], full_open_gap) - target_gap[pos]) / (full_open_gap - closed_gap)) ** 2)))
 
-    if len(reach) == 0 or not ok[i0]:
+    if not ok[i0]:
         msg = "Linkage cannot be assembled at Y = 0."
-    elif not stroke_ok:
+    elif hi < N_SAMPLES - 1:
         msg = "Bars reach full extension at Y = %.2f mm, before the end of the stroke." % y[hi]
-    elif opposed and lo > 0:
-        msg = "Opposed tube: the linkage locks at Y = %.2f mm (bar 2 passes dead centre) before -stroke." % y[lo]
+    elif lo > 0:
+        msg = "The linkage locks at Y = %.2f mm (hinged bar at dead centre) before -stroke: the closed tube cannot follow." % y[lo]
     else:
         msg = "ok"
 
-    return LinkageResult(
-        feasible=stroke_ok and not (opposed and lo > 0),
+    out = LinkageResult(
+        feasible=feasible,
         message=msg,
         Y_positions=y.tolist(),
-        elbow_x=_nan_to_none(ex),
-        elbow_y=_nan_to_none(ey),
+        joint_x=_nan_to_none(jx),
+        joint_y=_nan_to_none(jy),
+        tip_x=_nan_to_none(tx),
+        tip_y=_nan_to_none(ty),
         gap_a=_nan_to_none(gap_a),
         gap_b=_nan_to_none(gap_b),
         flow_a=_nan_to_none(flow_a),
-        flow_b=_nan_to_none(flow_b),
+        flow_b=_nan_to_none(flow_a[::-1]),
         flow_target=_nan_to_none(flow_target),
+        anchor_x=xa,
         pivot_height_y0=h0,
         wall_x=wall_x,
         closed_gap=closed_gap,
@@ -201,11 +272,19 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         y_max=float(y[hi]),
         y_full_open=float(y[full[0]]) if len(full) else None,
         sensitivity_y0=sens,
-        pinch_slide=float(abs(ey[hi] - ey[i0])) if stroke_ok else 0.0,
-        max_oversqueeze=float(max(squeeze, 0.0)),
+        pinch_slide=float(abs(ty[hi] - ty[i0])) if ok[i0] else 0.0,
+        max_oversqueeze=float(max(closed_gap - np.nanmin(gap_a[~pos | (y == 0.0)]), 0.0)) if ok[i0] else 0.0,
         max_flow_l_min=q_max,
         rms_error=rms,
     )
+    if feasible:
+        cycle = _chamber_cycle(p, y, area_a, area_b)
+        if cycle is not None:
+            t_ms, y_t, q_in, q_out, p_g, v_in, v_out = cycle
+            out.time_ms, out.y_time = t_ms.tolist(), y_t.tolist()
+            out.flow_in_l_min, out.flow_out_l_min, out.chamber_kpa = q_in.tolist(), q_out.tolist(), p_g.tolist()
+            out.volume_in_ml, out.volume_out_ml = v_in, v_out
+    return out
 
 
 @dataclass
@@ -214,74 +293,81 @@ class LinkageSearch:
     bar1_max: float = 20.0
     bar2_min: float = 3.0
     bar2_max: float = 14.0
+    lever_min: float = 10.0
+    lever_max: float = 22.0
     anchor_min: float = 0.0
     anchor_max: float = 6.0
     min_pivot_height: float = 3.0     # mm, carriage pivot above the anchor at Y = 0
     max_pivot_height: float = 16.0    # mm, carriage pivot above the anchor at the top of the stroke
-    max_oversqueeze: float = 0.5      # mm, opposed mode only
-    grid: int = 36
+    max_oversqueeze: float = 0.5      # mm, closed tube over the stroke
 
 
-def _score_grid(p: LinkageParams, s: LinkageSearch, l1, l2, a) -> np.ndarray:
+def _score(p: LinkageParams, s: LinkageSearch, l1, l2, reach, a) -> np.ndarray:
     """RMS opening error for broadcastable arrays of candidates; inf where infeasible."""
-    wall_x, closed_gap, full_open_gap, _ = _closure(p)
+    wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
-    xa, xb = -a, p.pivot_offset
+    xa = a if p.linkage_type == TYPE_LEVER else -a
+    xb = p.pivot_offset
     with np.errstate(invalid="ignore", divide="ignore"):
-        h0 = _pivot_height_y0(l1, l2, xa, xb, x_closed)
+        h0 = _pivot_height_y0(l1, l2, reach, xa, xb, x_closed)
         y = np.linspace(0.0, p.stroke, N_SCORE)
-        ex, ey = _elbow(l1[..., None], l2[..., None], xa[..., None], xb, h0[..., None] + y)
-        gap = wall_x + ex - r_pin
-        u = y / p.stroke
-        target = closed_gap + (full_open_gap - closed_gap) * u ** p.target_exponent
+        ratio = (reach / l2)[..., None]
+        xa_ = xa[..., None]
+        # Tube A opening over [0, stroke]; the same linkage at -Y is what the closed tube sees.
+        jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + y)
+        cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - y)
+        gap = wall_x + xa_ + ratio * (jx - xa_) - r_pin
+        squeeze = closed_gap - (wall_x + xa_ + ratio * (cx - xa_) - r_pin)
+        target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
         err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
         rms = np.sqrt(np.mean(err * err, axis=-1))
         ok = (
             np.isfinite(rms)
+            & (reach >= l2)
             & (h0 >= s.min_pivot_height)
             & (h0 + p.stroke <= s.max_pivot_height)
-            & np.all(ey >= 0.0, axis=-1)
-            & np.all(h0[..., None] + y > ey, axis=-1)
+            & np.all(jy >= 0.0, axis=-1)
+            & np.all(np.isfinite(cx), axis=-1)
+            & np.all(cy >= 0.0, axis=-1)
+            & (np.max(np.where(np.isfinite(squeeze), squeeze, np.inf), axis=-1) <= s.max_oversqueeze)
         )
-        if p.mirror_mode == MIRROR_OPPOSED:
-            bx, by = _elbow(l1[..., None], l2[..., None], xa[..., None], xb, h0[..., None] - y)
-            squeeze = closed_gap - (wall_x + bx - r_pin)
-            ok &= np.all(np.isfinite(bx), axis=-1) & np.all(by >= 0.0, axis=-1)
-            ok &= np.nanmax(np.where(np.isfinite(squeeze), squeeze, np.inf), axis=-1) <= s.max_oversqueeze
     return np.where(ok, rms, np.inf)
 
 
-def optimize_linkage(
-    p: LinkageParams, s: LinkageSearch
-) -> Tuple[Optional[LinkageParams], int, int]:
-    """Coarse grid over (L1, L2, anchor) then three zooms around the best cell.
+def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[LinkageParams], int, int]:
+    """Coarse grid over the bar lengths and anchor distance, then three zooms around the best cell.
 
     Returns (best params or None, feasible count on the coarse grid, coarse grid size).
     """
-    n = int(min(max(s.grid, 8), 60))
+    lever = p.linkage_type == TYPE_LEVER
+    names = ["bar1_length", "bar2_length", "anchor_distance"] + (["lever_length"] if lever else [])
     bounds = [(s.bar1_min, s.bar1_max), (s.bar2_min, s.bar2_max), (s.anchor_min, s.anchor_max)]
+    if lever:
+        bounds.append((s.lever_min, s.lever_max))
     bounds = [(min(lo, hi), max(lo, hi)) for lo, hi in bounds]
-    best = None
-    best_score = np.inf
-    feasible = 0
-    lo_hi = bounds
+    n = 18 if lever else 36
+    best, best_score, feasible = None, np.inf, 0
+    window = bounds
     for level in range(4):
-        axes = [np.linspace(lo, hi, n) for lo, hi in lo_hi]
-        l1, l2, a = np.meshgrid(*axes, indexing="ij")
-        score = _score_grid(p, s, l1, l2, a)
-        if level == 0:
-            feasible = int(np.isfinite(score).sum())
-            if feasible == 0:
-                return None, 0, score.size
-        idx = np.unravel_index(int(np.argmin(score)), score.shape)
-        if score[idx] < best_score:
-            best_score = float(score[idx])
-            best = (float(l1[idx]), float(l2[idx]), float(a[idx]))
-        # Zoom: +/- one and a half cells around the best point, clamped to the user's bounds.
-        lo_hi = []
-        for (lo, hi), (blo, bhi), c in zip([(ax[0], ax[-1]) for ax in axes], bounds, best):
-            half = 1.5 * (hi - lo) / (n - 1) if n > 1 else 0.0
-            lo_hi.append((max(blo, c - half), min(bhi, c + half)))
-    out = LinkageParams(**{**p.__dict__, "bar1_length": round(best[0], 3), "bar2_length": round(best[1], 3), "anchor_distance": round(best[2], 3)})
-    return out, feasible, n ** 3
+        axes = [np.linspace(lo, hi, n) for lo, hi in window]
+        # One slice of the first axis at a time keeps the 4-D lever search within a few tens of MB.
+        for v in axes[0]:
+            rest = np.meshgrid(*axes[1:], indexing="ij")
+            l2, a = rest[0], rest[1]
+            reach = rest[2] if lever else l2
+            score = _score(p, s, np.full_like(l2, v), l2, reach, a)
+            if level == 0:
+                feasible += int(np.isfinite(score).sum())
+            idx = np.unravel_index(int(np.argmin(score)), score.shape)
+            if score[idx] < best_score:
+                best_score = float(score[idx])
+                best = [float(v)] + [float(r[idx]) for r in rest]
+        if best is None:
+            return None, 0, n ** len(axes)
+        window = []
+        for ax, (blo, bhi), c in zip(axes, bounds, best):
+            half = 1.5 * (ax[-1] - ax[0]) / (n - 1)
+            window.append((max(blo, c - half), min(bhi, c + half)))
+    values = {**p.__dict__, **{name: round(v, 3) for name, v in zip(names, best)}}
+    return LinkageParams(**values), feasible, n ** len(names)

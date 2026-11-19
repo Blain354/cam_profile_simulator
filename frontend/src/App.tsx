@@ -7,7 +7,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
 import {
-  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box, Waypoints
+  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box, Waypoints, Spline
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -63,7 +63,7 @@ function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | 
 
 export default function App() {
   const { theme, setTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'explorer' | 'builder' | 'linkage'>('explorer');
+  const [activeTab, setActiveTab] = useState<'explorer' | 'builder' | 'linkage' | 'lever'>('explorer');
   const [params, setParams] = useState<SimulationParams>(defaultParams);
   const [savedParams, setSavedParams] = useState<SimulationParams | null>(null);
   const [data, setData] = useState<SimulationResult | null>(null);
@@ -556,6 +556,10 @@ export default function App() {
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'linkage' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <Waypoints className="w-3.5 h-3.5" /> Bar Linkage
             </Button>
+            <Button variant="ghost" onClick={() => setActiveTab('lever')}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'lever' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              <Spline className="w-3.5 h-3.5" /> Lever Linkage
+            </Button>
           </div>
 
           {/* Context pill (tab-specific) */}
@@ -873,13 +877,17 @@ export default function App() {
             </div>
           </motion.div>
         </div>
-      ) : activeTab === 'linkage' ? (
+      ) : activeTab === 'linkage' || activeTab === 'lever' ? (
         <LinkageExplorer
-          initialPneumatic={{
+          key={activeTab}
+          kind={activeTab === 'lever' ? 'lever' : 'elbow'}
+          shared={{
             tube_id: params.tube_id,
             tube_od: params.tube_od,
             input_pressure_psi: params.input_pressure_psi,
             compliance: params.compliance,
+            motor_speed: params.motor_speed,
+            lead_screw_pitch: params.lead_screw_pitch,
           }}
         />
       ) : (
