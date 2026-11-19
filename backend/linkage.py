@@ -1040,11 +1040,17 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
 N_FIRST = 30000   # candidates drawn over the whole ranges
 N_ROUND = 12000   # candidates per refinement round
 N_ELITE = 24
-# One-piece pendulum: the rigid search hands this many distinct designs to the beam model.
+# One-piece pendulum: designs from the rigid search go through the beam model. The rigid ranking
+# is a poor guide for a part that bends (on the default pendulum about 1 random design in 7 beat
+# the best of the 50 best rigid ones), so the first batch is half the best rigid designs and half
+# designs drawn at random among those the first rigid draw found feasible. Rounds of draws around
+# the best designs that hold follow.
 N_SHORTLIST = 50
-# Near-duplicates share a cell. The shortlist takes the best design of each coarse cell (a quarter
+# Near-duplicates share a cell. The rigid half takes the best design of each coarse cell (a quarter
 # of every searched range) first, for spread, then fills up with the best of each fine cell (1/25).
 SHORTLIST_CELLS = (4, 25)
+N_ONE_PIECE_ROUND = 20                 # beam solves per round around the best designs that hold
+ONE_PIECE_ROUNDS = (0.15, 0.08, 0.04)  # spread of each round, as a share of each searched range
 ONE_PIECE_LIMITS = ("stress", "thrust", "eye", "rod", "no_flow")
 
 
@@ -1096,18 +1102,21 @@ def _one_piece_limit(p: LinkageParams, r: LinkageResult, travel: float) -> Optio
 def _one_piece_score(q: LinkageParams, s: LinkageSearch):
     """Beam-model score of a one-piece design, mirroring _score. q.stroke covers the travel to score.
 
-    Returns (score, travel, reason): reason is the first limit broken over that travel, else None.
+    Returns (score, travel, reason). reason is "no_flow" when the part has no travel to use: the
+    solve fails, the pin presses onto its tube, or (response) the tube does not open before the
+    closed one jams, is squeezed past max_oversqueeze or the carriage height runs out, or (target)
+    the whole stroke does not run without that jam or squeeze. Otherwise it is the first limit
+    broken over that travel (_one_piece_limit), else None.
     """
     r = compute_linkage(q)
     if not r.feasible or r.flexure is None:
         return np.inf, 0.0, "no_flow"
-    # The part gives way, so the closed tube's squeeze is read on the loaded gap.
+    # The part gives way, so the closed tube's squeeze is read on the loaded gap, as jam_y is.
     crushed = _crushed(r, s, r.gap_loaded_a)
     if s.objective != OBJECTIVE_RESPONSE:
-        broken = _one_piece_limit(q, r, q.stroke)
-        # The whole stroke must run: no jam and no crushing past the limit on the closed tube.
-        unusable = r.rms_error is None or r.jam_y is not None or crushed.size > 0
-        return (r.rms_error if r.rms_error is not None else np.inf), q.stroke, broken or ("no_flow" if unusable else None)
+        if r.rms_error is None or r.jam_y is not None or crushed.size > 0:
+            return np.inf, q.stroke, "no_flow"
+        return r.rms_error, q.stroke, _one_piece_limit(q, r, q.stroke)
     # Travel: as for the pivoted design, stopping short of crushing or jamming the closed tube
     # and within the carriage height limits of _score.
     caps = [r.pivot_height_y0 - 1e-6] + [v - 1e-6 for v in (r.jam_y, float(crushed.min()) if crushed.size else None) if v is not None]
@@ -1122,27 +1131,32 @@ def _one_piece_score(q: LinkageParams, s: LinkageSearch):
     seen = np.where((y[pos] <= travel + 1e-9) & np.isfinite(gap), gap, -np.inf)
     bore = r.full_open_gap - r.closed_gap
     flow = float(np.clip(seen.max() - r.closed_gap, 0.0, bore) / bore)
-    broken = _one_piece_limit(q, r, travel)
-    if broken or flow <= 0.0:
-        return np.inf, travel, broken or "no_flow"
+    if flow <= 0.0:
+        return np.inf, travel, "no_flow"
     with np.errstate(invalid="ignore", divide="ignore"):
         y_open = min(float(_crossing(y[pos], seen[None, :], r.closed_gap)[0]), s.max_stroke)
         y_full = float(_crossing(y[pos], seen[None, :], r.full_open_gap)[0])
-    return 100.0 * (1.0 - flow) + 2.0 * y_open + 0.2 * (y_full if np.isfinite(y_full) else travel), travel, None
+    score = 100.0 * (1.0 - flow) + 2.0 * y_open + 0.2 * (y_full if np.isfinite(y_full) else travel)
+    return score, travel, _one_piece_limit(q, r, travel)
 
 
-def _shortlist(p: LinkageParams, names, lo, hi, x, score) -> np.ndarray:
-    """Best rigid designs, one per cell of the searched ranges, best first (rounded to 1 um)."""
+def _searched(p: LinkageParams, names, lo, hi) -> List[int]:
+    """Columns the search moves: a range with min < max, and bar 1 only with a free height."""
+    return [i for i, n in enumerate(names) if hi[i] > lo[i] and not (n == "bar1_length" and p.fixed_height > 0)]
+
+
+def _shortlist(p: LinkageParams, names, lo, hi, x, score, n) -> np.ndarray:
+    """Up to n best rigid designs, one per cell of the searched ranges, best first (rounded to 1 um)."""
     good = np.isfinite(score)
     x = np.round(x[good][np.argsort(score[good], kind="stable")], 3)
-    searched = [i for i, n in enumerate(names) if hi[i] > lo[i] and not (n == "bar1_length" and p.fixed_height > 0)]
+    searched = _searched(p, names, lo, hi)
     if not searched:
         return x[:1]
     unit = (x[:, searched] - lo[searched]) / (hi - lo)[searched]
     picked = []
     for cells in SHORTLIST_CELLS:
         first = np.sort(np.unique(np.floor(unit * cells).astype(np.int64), axis=0, return_index=True)[1])
-        picked += [int(i) for i in first if i not in picked][:N_SHORTLIST - len(picked)]
+        picked += [int(i) for i in first if i not in picked][:n - len(picked)]
     return x[np.sort(picked)]
 
 
@@ -1153,13 +1167,23 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
     foot length and angle (pendulum). With a fixed height bar 1 is solved, not searched.
     A range with min = max holds that value.
 
-    The draws use rigid bars. A one-piece pendulum (compliant) bends instead, so the best
-    distinct rigid designs (N_SHORTLIST) are then run through the beam model, ranked by the
-    same objective on the loaded gap, and kept only if the part holds over the travel it uses:
-    stress, screw thrust, and with a free carriage end the rod's eye and the rod itself.
-    Returns (best params or None, feasible count in the first draw, size of the first draw,
-    report): report = {"model": "one-piece" | "rigid", "shortlist", "passed", "rejected"},
-    rejected counting each failed design once under its first broken limit.
+    The draws use rigid bars. A one-piece pendulum (compliant) bends instead, so designs from
+    the rigid search are then run through the beam model: N_SHORTLIST of them (half the best
+    distinct rigid designs, half drawn at random among the rigid-feasible ones of the first
+    draw), then ONE_PIECE_ROUNDS rounds of N_ONE_PIECE_ROUND draws around the best that hold.
+    They are ranked by the same objective on the loaded gap (also for the closed tube's squeeze,
+    as jam_y is; the result's max_oversqueeze stays the unloaded figure) and kept only if the part
+    holds over the travel it uses: stress, screw thrust, and with a free carriage end the rod's
+    eye and the rod itself. A limit whose strength is 0 is not checked.
+
+    Returns (best params or None, feasible, tested, report). feasible is how many designs of the
+    first draw the rigid model accepts, tested the size of that draw: in one-piece mode feasible
+    can be above 0 with no design returned, when the beam model rejects every one it solved.
+    report = {"model": "one-piece" | "rigid", "shortlist", "passed", "rejected"}: shortlist is
+    how many designs the beam model solved, passed how many of those hold every limit, rejected
+    counts each other one once under the first reason it fails ("no_flow" first: no travel that
+    opens the tube, see _one_piece_score; then "stress", "thrust", "eye", "rod" over that
+    travel). shortlist = passed + sum(rejected). All zero in rigid mode.
     """
     one_piece = p.compliant and p.linkage_type == TYPE_PENDULUM
     report = {"model": "one-piece" if one_piece else "rigid", "shortlist": 0, "passed": 0,
@@ -1201,40 +1225,72 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         pool.append((x, score))
         spread *= 0.5
     if one_piece:
-        return _one_piece_pick(p, s, names, lo, hi, pool, report), feasible, tested, report
+        return _one_piece_pick(p, s, names, lo, hi, pool, evaluate, report), feasible, tested, report
     best = x[int(np.argmin(score))]
     out = replace(p, **{name: round(float(v), 3) for name, v in zip(names, best)})
     if s.objective == OBJECTIVE_RESPONSE:
         # Show and run exactly the travel the design uses: full bore, or as far as the closed
         # tube allows, rounded to 0.05 mm.
         out.stroke = s.max_stroke
-        out.stroke = max(0.05, _stroke_used(compute_linkage(out), s))
+        r = compute_linkage(out)
+        out.stroke = _stroke_used(r, s) if r.y_full_open is not None else max(0.05, _stroke_used(r, s))
     if p.fixed_height > 0:
         out.bar1_length = round(compute_linkage(out).link_length, 3)
     return out, feasible, tested, report
 
 
-def _one_piece_pick(p, s, names, lo, hi, pool, report) -> Optional[LinkageParams]:
-    """Stage two for the one-piece pendulum: re-rank the rigid shortlist with the beam model."""
-    short = _shortlist(p, names, lo, hi, np.vstack([x for x, _ in pool]), np.concatenate([sc for _, sc in pool]))
-    report["shortlist"] = len(short)
+def _one_piece_pick(p, s, names, lo, hi, pool, evaluate, report) -> Optional[LinkageParams]:
+    """Stage two for the one-piece pendulum: rank designs from the rigid search with the beam model."""
+    rng = np.random.default_rng(1)   # its own stream: same answer for the same inputs
+    n_rigid = N_SHORTLIST - N_SHORTLIST // 2
+    batch = list(_shortlist(p, names, lo, hi, np.vstack([x for x, _ in pool]), np.concatenate([sc for _, sc in pool]), n_rigid))
+    first_x, first_score = pool[0]
+    spread_pool = np.round(first_x[np.isfinite(first_score)], 3)
+    tried = {tuple(v) for v in batch}
+    for i in rng.permutation(len(spread_pool)):
+        if len(batch) >= N_SHORTLIST:
+            break
+        if tuple(spread_pool[i]) not in tried:
+            tried.add(tuple(spread_pool[i]))
+            batch.append(spread_pool[i])
     # One solve per design over the longest travel it may use; the chamber cycle does not score.
     stroke = s.max_stroke if s.objective == OBJECTIVE_RESPONSE else p.stroke
     ranked = []
-    for v in short:
-        q = replace(p, **{n: float(val) for n, val in zip(names, v)}, stroke=stroke, chamber_volume_ml=0.0)
-        sc, travel, broken = _one_piece_score(q, s)
-        if broken:
-            report["rejected"][broken] += 1
-        else:
-            ranked.append((sc, travel, q))
-    ranked.sort(key=lambda t: t[0])
+
+    def solve(designs):
+        for v in designs:
+            q = replace(p, **{n: float(val) for n, val in zip(names, v)}, stroke=stroke, chamber_volume_ml=0.0)
+            sc, travel, broken = _one_piece_score(q, s)
+            report["shortlist"] += 1
+            if broken:
+                report["rejected"][broken] += 1
+            else:
+                ranked.append((sc, travel, q))
+        ranked.sort(key=lambda t: t[0])
+
+    solve(batch)
+    width = np.where(np.isin(np.arange(len(names)), _searched(p, names, lo, hi)), hi - lo, 0.0)
+    for spread in ONE_PIECE_ROUNDS:
+        if not ranked:
+            break
+        # Draws around the best few that hold, kept only where the rigid search accepts the
+        # geometry (carriage height, closed pose reachable), and not solved before.
+        elite = np.array([[getattr(q, n) for n in names] for _, _, q in ranked[:3]])
+        draws = elite[rng.integers(0, len(elite), 8 * N_ONE_PIECE_ROUND)] + rng.normal(0.0, spread, (8 * N_ONE_PIECE_ROUND, len(names))) * width
+        draws = np.round(np.clip(draws, lo, hi), 3)
+        fresh = []
+        for v in draws[np.isfinite(evaluate(draws))]:
+            if len(fresh) < N_ONE_PIECE_ROUND and tuple(v) not in tried:
+                tried.add(tuple(v))
+                fresh.append(v)
+        solve(fresh)
     report["passed"] = len(ranked)
     for _, travel, q in ranked:
         q = replace(q, stroke=travel)
         r = compute_linkage(q)
         # Keep it only on a solve of exactly the design returned, at its own stroke.
-        broken = _one_piece_limit(q, r, travel) if r.feasible else "no_flow"
+        unusable = not r.feasible or r.jam_y is not None or _crushed(r, s, r.gap_loaded_a).size > 0
+        broken = "no_flow" if unusable else _one_piece_limit(q, r, travel)
         if broken:
             report["rejected"][broken] += 1
             report["passed"] -= 1

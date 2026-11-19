@@ -20,14 +20,20 @@ PENDULUM_SEARCH = LinkageSearch(bar2_min=8.0, bar2_max=18.0, anchor_max=8.0)
 LEVER_SEARCH = LinkageSearch(anchor_min=2.0, anchor_max=8.0, bar1_min=3.0, bar1_max=12.0, bar2_max=12.0)
 
 
+_ONE_PIECE_BUDGET = {"N_SHORTLIST": 12, "N_ONE_PIECE_ROUND": 4}
+_saved = {}
+
+
 def setUpModule():
-    # Each one-piece design costs a beam solve: a short shortlist keeps the suite quick.
-    global _shortlist
-    _shortlist, linkage.N_SHORTLIST = linkage.N_SHORTLIST, 12
+    # Each one-piece design costs a beam solve: a small budget keeps the suite quick.
+    for name, value in _ONE_PIECE_BUDGET.items():
+        _saved[name] = getattr(linkage, name)
+        setattr(linkage, name, value)
 
 
 def tearDownModule():
-    linkage.N_SHORTLIST = _shortlist
+    for name, value in _saved.items():
+        setattr(linkage, name, value)
 
 
 class LinkageTests(unittest.TestCase):
@@ -371,7 +377,9 @@ class LinkageTests(unittest.TestCase):
         p = replace(PENDULUM, compliant=True, member_strength_mpa=150.0)
         best, feasible, tested, report = optimize_linkage(p, PENDULUM_SEARCH)
         self.assertEqual(report["model"], "one-piece")
-        self.assertEqual(report["shortlist"], linkage.N_SHORTLIST)
+        # The first batch, then a round of draws around the best that hold, each design once.
+        rounds = len(linkage.ONE_PIECE_ROUNDS) * linkage.N_ONE_PIECE_ROUND
+        self.assertTrue(linkage.N_SHORTLIST < report["shortlist"] <= linkage.N_SHORTLIST + rounds, report)
         self.assertEqual(report["shortlist"], report["passed"] + sum(report["rejected"].values()))
         self.assertEqual(set(report["rejected"]), {"stress", "thrust", "eye", "rod", "no_flow"})
         self.assertIsNotNone(best)
@@ -422,6 +430,13 @@ class LinkageTests(unittest.TestCase):
         self.assertIsNone(linkage._one_piece_limit(replace(best, carriage_pin_strength_mpa=0.0), r, best.stroke))
         self.assertIsNone(linkage._one_piece_limit(replace(best, carriage_pin_strength_mpa=1e-3, carriage_clamped=True), r, best.stroke))
         self.assertEqual(linkage._one_piece_limit(replace(best, member_strength_mpa=1e-3), r, best.stroke), "stress")
+        # A short rod: the eye takes the load on a small area and is checked before the rod.
+        short_rod = replace(best, carriage_pin_length=0.05)
+        self.assertEqual(linkage._one_piece_limit(short_rod, compute_linkage(short_rod), best.stroke), "eye")
+        # no_flow comes first: a stroke that jams the closed tube has no travel to check limits on.
+        jam = replace(p, stroke=4.0, member_strength_mpa=1e-3)
+        self.assertIsNotNone(compute_linkage(jam).jam_y)
+        self.assertEqual(linkage._one_piece_score(jam, replace(PENDULUM_SEARCH, objective="target"))[2], "no_flow")
 
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))
