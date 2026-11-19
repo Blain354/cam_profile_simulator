@@ -19,7 +19,7 @@ Ce projet sert a:
 
 - `backend/main.py`: API FastAPI (`/api/simulate`, gestion des configs, healthcheck).
 - `backend/simulation.py`: logique numerique de simulation.
-- `backend/linkage.py`: mecanismes a barres (onglets Bar Linkage, Lever Linkage et Pendulum Linkage, miroir double gauche-droite et haut-bas) : cinematique du point de pincement, debit statique, traces d'air entrant / sortant d'une chambre sur le cycle 0, +stroke, 0, -stroke, 0 a la vitesse lineaire chargee (vitesse moteur a vide x facteur de charge x pas de vis), bouton Oscillate qui rejoue ce cycle en temps reel et marque ce temps sur les traces, recherche des longueurs de barres et de la distance d'ancrage (`/api/linkage/simulate`, `/api/linkage/optimize`).
+- `backend/linkage.py`: mecanismes a barres (onglets Bar Linkage, Lever Linkage et Pendulum Linkage, miroir double gauche-droite et haut-bas) : cinematique du point de pincement, debit statique, traces d'air entrant / sortant d'une chambre sur le cycle 0, +stroke, 0, -stroke, 0 a la vitesse lineaire chargee (vitesse moteur a vide x facteur de charge x pas de vis), bouton Oscillate qui rejoue ce cycle en temps reel et marque ce temps sur les traces, recherche des longueurs de barres et de la distance d'ancrage, profils enregistres par type de mecanisme (`/api/linkage/profiles`) (`/api/linkage/simulate`, `/api/linkage/optimize`).
 - `frontend/`: interface utilisateur React + Recharts.
 - `simulation_came.py`: script standalone (visualisation matplotlib) pour test local rapide.
 - `backend/data/simulator.db`: base de donnees de persistance (configs + extension future solver/profile builder).

@@ -409,3 +409,73 @@ class BuilderExperienceStorage:
             except ValueError:
                 continue
         return max_value + 1
+
+
+LINKAGE_KINDS = ("elbow", "lever", "pendulum")
+
+
+class LinkageProfileStorage:
+    """Named linkage configurations (parameters + optimizer ranges), one namespace per linkage type."""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS linkage_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (kind, name)
+                )
+                """
+            )
+            conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def list_profiles(self, kind: str) -> List[Dict[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT name, updated_at FROM linkage_profiles WHERE kind = ? ORDER BY name COLLATE NOCASE",
+                (kind,),
+            ).fetchall()
+        return [{"name": row["name"], "updated_at": row["updated_at"]} for row in rows]
+
+    def get_profile(self, kind: str, name: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM linkage_profiles WHERE kind = ? AND name = ?", (kind, name)
+            ).fetchone()
+        return None if row is None else json.loads(row["payload_json"])
+
+    def save_profile(self, kind: str, name: str, payload: Dict[str, Any]) -> bool:
+        """Create or overwrite. Returns True when the profile already existed."""
+        now = _utc_now_iso()
+        body = json.dumps(payload, ensure_ascii=False)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE linkage_profiles SET payload_json = ?, updated_at = ? WHERE kind = ? AND name = ?",
+                (body, now, kind, name),
+            )
+            existed = cur.rowcount > 0
+            if not existed:
+                conn.execute(
+                    "INSERT INTO linkage_profiles (kind, name, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (kind, name, body, now, now),
+                )
+            conn.commit()
+        return existed
+
+    def delete_profile(self, kind: str, name: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM linkage_profiles WHERE kind = ? AND name = ?", (kind, name))
+            conn.commit()
+            return cur.rowcount > 0

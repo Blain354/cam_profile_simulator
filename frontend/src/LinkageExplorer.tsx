@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
-import { Pause, Play, Settings, Target } from 'lucide-react';
+import { Pause, Play, Save, Settings, Target, Trash2 } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
@@ -128,14 +128,18 @@ const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
 
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
 
-function loadStored(kind: LinkageKind, shared: LinkageShared): { params: LinkageParams; search: LinkageSearch } {
+function loadStored(kind: LinkageKind, shared: LinkageShared): { params: LinkageParams; search: LinkageSearch; profile: string | null } {
   try {
     const raw = JSON.parse(localStorage.getItem(storageKey(kind)) ?? 'null');
     if (raw && typeof raw === 'object') {
-      return { params: { ...DEFAULT_PARAMS[kind], ...raw.params, linkage_type: kind }, search: { ...DEFAULT_SEARCH[kind], ...raw.search } };
+      return {
+        params: { ...DEFAULT_PARAMS[kind], ...raw.params, linkage_type: kind },
+        search: { ...DEFAULT_SEARCH[kind], ...raw.search },
+        profile: typeof raw.profile === 'string' ? raw.profile : null,
+      };
     }
   } catch { /* storage unavailable or corrupt: fall back to defaults */ }
-  return { params: { ...DEFAULT_PARAMS[kind], ...shared }, search: DEFAULT_SEARCH[kind] };
+  return { params: { ...DEFAULT_PARAMS[kind], ...shared }, search: DEFAULT_SEARCH[kind], profile: null };
 }
 
 /** Linear interpolation on the uniform Y grid returned by the backend. */
@@ -348,6 +352,12 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const [optMessage, setOptMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [profiles, setProfiles] = useState<{ name: string }[]>([]);
+  const [activeProfile, setActiveProfile] = useState<string | null>(stored.profile);
+  const [profileName, setProfileName] = useState(stored.profile ?? '');
+  /** What the active profile holds on the server, to flag unsaved changes. Unknown after a page reload. */
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [profileMessage, setProfileMessage] = useState<{ ok: boolean; text: string } | null>(null);
   /** Time into the cycle 0, +stroke, 0, -stroke, 0 while oscillating (s). */
   const [cycleT, setCycleT] = useState<number | null>(null);
   /** Distance run in the current cycle (mm), plus the live speed and stroke for the animation loop. */
@@ -357,8 +367,73 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const setS = (key: keyof LinkageSearch, value: number) => setSearch((s) => ({ ...s, [key]: value }));
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search })); } catch { /* ignore */ }
-  }, [kind, params, search]);
+    try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile })); } catch { /* ignore */ }
+  }, [kind, params, search, activeProfile]);
+
+  const refreshProfiles = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/linkage/profiles?kind=${kind}`);
+      if (res.ok) setProfiles((await res.json()).profiles ?? []);
+    } catch { /* the list stays as it was */ }
+  }, [kind]);
+  useEffect(() => { refreshProfiles(); }, [refreshProfiles]);
+
+  const profileUrl = (name: string) => `/api/linkage/profiles/${kind}/${encodeURIComponent(name)}`;
+  const snapshot = JSON.stringify({ params, search });
+  const profileDirty = activeProfile != null && savedSnapshot != null && savedSnapshot !== snapshot;
+
+  const loadProfile = async (name: string) => {
+    setProfileMessage(null);
+    try {
+      const res = await apiFetch(profileUrl(name));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const raw = await res.json();
+      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], ...raw.params, linkage_type: kind };
+      const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search };
+      setPlaying(false);
+      setParams(p);
+      setSearch(s);
+      setActiveProfile(name);
+      setProfileName(name);
+      setSavedSnapshot(JSON.stringify({ params: p, search: s }));
+    } catch {
+      setProfileMessage({ ok: false, text: `Could not load "${name}".` });
+      refreshProfiles();
+    }
+  };
+
+  const saveProfile = async () => {
+    const name = profileName.trim();
+    if (!name) { setProfileMessage({ ok: false, text: 'Give the profile a name first.' }); return; }
+    if (name.includes('/')) { setProfileMessage({ ok: false, text: 'A profile name cannot contain a slash.' }); return; }
+    if (name !== activeProfile && profiles.some((p) => p.name === name) && !confirm(`Overwrite the saved profile "${name}"?`)) return;
+    try {
+      const res = await apiFetch(profileUrl(name), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: snapshot });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const out = await res.json();
+      setActiveProfile(out.name);
+      setProfileName(out.name);
+      setSavedSnapshot(snapshot);
+      setProfileMessage({ ok: true, text: out.status === 'updated' ? `"${out.name}" updated.` : `"${out.name}" saved.` });
+      refreshProfiles();
+    } catch {
+      setProfileMessage({ ok: false, text: 'Save failed.' });
+    }
+  };
+
+  const deleteProfile = async () => {
+    if (!activeProfile || !confirm(`Delete the saved profile "${activeProfile}"? The current values stay on screen.`)) return;
+    try {
+      const res = await apiFetch(profileUrl(activeProfile), { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+      setProfileMessage({ ok: true, text: `"${activeProfile}" deleted.` });
+      setActiveProfile(null);
+      setSavedSnapshot(null);
+      refreshProfiles();
+    } catch {
+      setProfileMessage({ ok: false, text: 'Delete failed.' });
+    }
+  };
 
   const simulate = useCallback(async (p: LinkageParams) => {
     abortRef.current?.abort();
@@ -474,6 +549,37 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
         <div className="flex items-center gap-2 mb-4 min-w-0">
           <Settings className="w-5 h-5 text-amber-500 shrink-0" />
           <h2 className="text-lg font-bold text-white tracking-tight truncate">{pendulum ? 'Pendulum linkage' : lever ? 'Lever linkage' : 'Bar linkage'}</h2>
+        </div>
+
+        {/* Saved profiles: parameters and optimizer ranges, one list per linkage type */}
+        <div className="shrink-0 mb-4 space-y-2 rounded-lg border border-neutral-700 p-2">
+          <div className="flex items-center gap-2">
+            <label htmlFor={`linkage-profile-${kind}`} className="shrink-0 text-xs font-semibold text-neutral-400">Profile</label>
+            <select id={`linkage-profile-${kind}`} value={activeProfile ?? ''} onChange={(e) => { if (e.target.value) loadProfile(e.target.value); }}
+              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100">
+              <option value="">{profiles.length ? 'Load a saved profile…' : 'No saved profile yet'}</option>
+              {activeProfile && !profiles.some((p) => p.name === activeProfile) && <option value={activeProfile}>{activeProfile}</option>}
+              {profiles.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+            </select>
+            <Button variant="ghost" type="button" onClick={deleteProfile} disabled={!activeProfile} title="Delete the loaded profile" aria-label="Delete the loaded profile"
+              className="shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:text-red-400 disabled:opacity-40">
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input type="text" value={profileName} maxLength={60} placeholder="Profile name" aria-label="Profile name"
+              onChange={(e) => setProfileName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveProfile(); }}
+              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100" />
+            <Button variant="ghost" type="button" onClick={saveProfile}
+              className={`shrink-0 flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold ${profileDirty ? 'border-amber-400 bg-amber-500 text-neutral-900' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
+              <Save className="w-3.5 h-3.5" /> {activeProfile && profileName.trim() === activeProfile ? 'Update' : 'Save'}
+            </Button>
+          </div>
+          {(profileMessage || profileDirty) && (
+            <p className={`text-xs leading-snug ${profileMessage && !profileMessage.ok ? 'text-red-400' : profileDirty ? 'text-amber-400' : 'text-emerald-400'}`} role="status">
+              {profileDirty ? `Unsaved changes to "${activeProfile}".` : profileMessage?.text}
+            </p>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-4">

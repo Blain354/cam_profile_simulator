@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from simulation import SimulationParams, compute_simulation, SolverParams, SolverResult, solve_cam_profile
-from storage import BuilderExperienceStorage, SimulationStorage, default_db_path
+from storage import LINKAGE_KINDS, BuilderExperienceStorage, LinkageProfileStorage, SimulationStorage, default_db_path
 
 import onshape_export
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
@@ -35,6 +35,7 @@ _solve_candidates_cache_order: list[str] = []
 _MAX_SOLVE_CANDIDATE_SETS = 6
 storage = SimulationStorage(default_db_path())
 builder_storage = BuilderExperienceStorage(default_db_path())
+linkage_storage = LinkageProfileStorage(default_db_path())
 
 app.add_middleware(
     CORSMiddleware,
@@ -693,3 +694,48 @@ def linkage_optimize(req: LinkageOptimizeRequest):
         "params": dataclasses.asdict(best),
         "result": dataclasses.asdict(compute_linkage(best)),
     }
+
+
+# ─── Saved linkage profiles ──────────────────────────────────────
+
+class LinkageProfileBody(BaseModel):
+    params: dict
+    search: dict = Field(default_factory=dict)
+
+
+def _profile_key(kind: str, name: str):
+    name = name.strip()
+    if kind not in LINKAGE_KINDS:
+        raise HTTPException(status_code=404, detail="Unknown linkage type")
+    if not 1 <= len(name) <= 60 or "/" in name or any(ord(ch) < 32 for ch in name):
+        raise HTTPException(status_code=400, detail="Profile name must be 1 to 60 characters, without slashes")
+    return kind, name
+
+
+@app.get("/api/linkage/profiles")
+def linkage_profiles(kind: str):
+    if kind not in LINKAGE_KINDS:
+        raise HTTPException(status_code=404, detail="Unknown linkage type")
+    return {"profiles": linkage_storage.list_profiles(kind)}
+
+
+@app.get("/api/linkage/profiles/{kind}/{name}")
+def linkage_profile_get(kind: str, name: str):
+    item = linkage_storage.get_profile(*_profile_key(kind, name))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return item
+
+
+@app.put("/api/linkage/profiles/{kind}/{name}")
+def linkage_profile_save(kind: str, name: str, body: LinkageProfileBody):
+    kind, name = _profile_key(kind, name)
+    existed = linkage_storage.save_profile(kind, name, {"params": body.params, "search": body.search})
+    return {"status": "updated" if existed else "saved", "name": name}
+
+
+@app.delete("/api/linkage/profiles/{kind}/{name}")
+def linkage_profile_delete(kind: str, name: str):
+    if not linkage_storage.delete_profile(*_profile_key(kind, name)):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"status": "deleted"}
