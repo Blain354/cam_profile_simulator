@@ -73,7 +73,7 @@ class LinkageParams:
     target_exponent: float = 1.0     # target opening = (Y / stroke) ** exponent
     tube_id: float = 2.0
     tube_od: float = 3.0
-    input_pressure_psi: float = 15.0
+    input_pressure_kpa: float = 100.0
     compliance: float = 0.7          # mm/MPa
     chamber_volume_ml: float = 10.0  # mL, 0 disables the chamber traces
     motor_speed: float = 100.0       # RPM
@@ -195,7 +195,7 @@ class LinkageResult:
     buckling_factor: Optional[float] = None        # Euler load / worst compression, None without compression
     pin_stiffness: Optional[float] = None          # N/mm at the pin, bars only, at Y = 0
     flex_y0: Optional[float] = None                # mm
-    seal_pressure_y0_psi: Optional[float] = None   # pressure the seal at Y = 0 holds once the bars have flexed
+    seal_pressure_y0_kpa: Optional[float] = None   # pressure the seal at Y = 0 holds once the bars have flexed
     sealed_after_flex: Optional[bool] = None
 
 
@@ -213,7 +213,7 @@ def _joint(l1, l2, xa, xb, h):
 def _closure(p: LinkageParams) -> Tuple[float, float, float]:
     """wall_x, closed gap, full-open gap (all mm)."""
     wall_x = p.tube_center_x + p.tube_od / 2.0
-    opening = p.compliance * p.input_pressure_psi * 0.00689476
+    opening = p.compliance * p.input_pressure_kpa * 1e-3
     closed_gap = (p.tube_od - p.tube_id) - opening
     # Same area law as the cam model: (pi/2 * ID) * inner_gap, capped at the bore.
     return wall_x, closed_gap, closed_gap + p.tube_id / 2.0
@@ -302,7 +302,7 @@ def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: 
     y_t = np.interp(t * speed, [0.0, s, 2.0 * s, 3.0 * s, 4.0 * s], [0.0, s, 0.0, -s, 0.0])
     a_in = np.interp(y_t, y, area_a)
     a_out = np.interp(y_t, y, area_b)
-    p_up = P_ATM + p.input_pressure_psi * 6894.76
+    p_up = P_ATM + p.input_pressure_kpa * 1000.0
     k = p.chamber_volume_ml * 1e-6 / (R_AIR * T_AMB)   # kg per Pa
     to_l_min = 60.0 * 1000.0 * R_AIR * T_AMB / P_ATM   # kg/s -> free-air L/min
     dt = float(t[1] - t[0])
@@ -377,7 +377,7 @@ def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarr
     e_tube = wall / p.compliance
     t, r_mid = wall / 2.0, (p.tube_id + p.tube_od) / 4.0
     k_ring = e_tube * t ** 3 / (12.0 * 0.1488 * r_mid ** 3)   # N/mm of tube per mm, ring between two plates
-    pressure = p.input_pressure_psi * 0.00689476
+    pressure = p.input_pressure_kpa * 1e-3
     w_flat = np.pi / 2.0 * p.tube_id + wall
 
     r = p.pin_diameter / 2.0
@@ -545,7 +545,7 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     out.pin_stiffness = float(1.0 / c_all[i0]) if c_all[i0] > 0 else None
     out.flex_y0 = float(flex[i0])
     held = (wall - (gap[i0] + flex[i0])) / p.compliance          # MPa
-    out.seal_pressure_y0_psi = float(max(held, 0.0) / 0.00689476)
+    out.seal_pressure_y0_kpa = float(max(held, 0.0) * 1000.0)
     out.sealed_after_flex = bool(gap[i0] + flex[i0] <= closed_gap + 1e-12)
     return loaded
 
@@ -795,7 +795,7 @@ class _Flexure:
         out.max_pinch_force = float(np.nanmax(force_out))
         out.max_wall_strain = float(np.clip(wall - np.nanmin(np.where(np.isfinite(force_out), loaded, np.nan)), 0.0, wall) / wall)
         out.flex_y0 = float(pushed[i0])
-        out.seal_pressure_y0_psi = float(max((wall - loaded[i0]) / p.compliance, 0.0) / 0.00689476)
+        out.seal_pressure_y0_kpa = float(max((wall - loaded[i0]) / p.compliance, 0.0) * 1000.0)
         out.sealed_after_flex = bool(loaded[i0] <= closed_gap + 1e-12)
         return loaded
 
@@ -897,7 +897,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
 
     area_a = np.where(ok, _area_mm2(p, np.nan_to_num(gap_air, nan=0.0), closed_gap), 0.0)
     area_b = area_a[::-1]
-    p_up = P_ATM + p.input_pressure_psi * 6894.76
+    p_up = P_ATM + p.input_pressure_kpa * 1000.0
     # Static model: downstream at atmosphere, so flow is linear in area (same convention as the cam tab).
     per_mm2 = _compute_orifice_mass_flow_rate(1.0, p_up, P_ATM) / (p_up / (R_AIR * T_AMB)) * 60.0 * 1000.0
     flow_a = np.where(ok, area_a * per_mm2, np.nan)

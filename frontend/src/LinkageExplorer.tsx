@@ -10,6 +10,7 @@ import type { SubTab } from './SubTabs';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain, sameDomainSettings } from './lib/chartDomain';
+import { formatKpa, legacyPsiToKpa } from './lib/pressure';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
 
@@ -33,7 +34,7 @@ export interface LinkageParams {
   target_exponent: number;
   tube_id: number;
   tube_od: number;
-  input_pressure_psi: number;
+  input_pressure_kpa: number;
   compliance: number;
   chamber_volume_ml: number;
   motor_speed: number;
@@ -185,11 +186,11 @@ interface LinkageResult {
   buckling_factor: number | null;
   pin_stiffness: number | null;
   flex_y0: number | null;
-  seal_pressure_y0_psi: number | null;
+  seal_pressure_y0_kpa: number | null;
   sealed_after_flex: boolean | null;
 }
 
-export type LinkageShared = Pick<LinkageParams, 'tube_id' | 'tube_od' | 'input_pressure_psi' | 'compliance' | 'motor_speed' | 'lead_screw_pitch'>;
+export type LinkageShared = Pick<LinkageParams, 'tube_id' | 'tube_od' | 'input_pressure_kpa' | 'compliance' | 'motor_speed' | 'lead_screw_pitch'>;
 
 const COMMON = {
   lever_length: 16.5,
@@ -203,7 +204,7 @@ const COMMON = {
   target_exponent: 1.0,
   tube_id: 2.0,
   tube_od: 3.0,
-  input_pressure_psi: 15.0,
+  input_pressure_kpa: 100,
   compliance: 0.7,
   chamber_volume_ml: 10.0,
   motor_speed: 100.0,
@@ -277,7 +278,8 @@ function resolveChartSettings(raw: unknown): LinkageChartSettings {
 
 function loadStored(kind: LinkageKind, shared: LinkageShared): { params: LinkageParams; search: LinkageSearch; profile: string | null; chart_settings: LinkageChartSettings } {
   try {
-    const raw = JSON.parse(localStorage.getItem(storageKey(kind)) ?? 'null');
+    // A state saved before pressures were in kPa comes back converted.
+    const raw = legacyPsiToKpa(JSON.parse(localStorage.getItem(storageKey(kind)) ?? 'null'));
     if (raw && typeof raw === 'object') {
       return {
         // A state stored before the pivot rod existed had the carriage end clamped by default: the real part pivots there.
@@ -1131,8 +1133,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
 
   const pneumaticControls = (
     <div className="space-y-5 pt-2">
-      <ParameterSlider label="Pressure (PSI)" value={params.input_pressure_psi} min={0} max={150} step={1} onChange={(v) => set('input_pressure_psi', v)}
-        secondaryValue={`${(params.input_pressure_psi * 6.89476).toFixed(1)} kPa`} />
+      <ParameterSlider label="Pressure (kPa)" value={params.input_pressure_kpa} min={0} max={1050} step={1} inputDecimals={1} onChange={(v) => set('input_pressure_kpa', v)} />
       <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1} max={12} step={0.1} onChange={(v) => set('tube_id', v)} />
       <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1} max={16} step={0.1} onChange={(v) => set('tube_od', v)} />
       <ParameterSlider label="Compliance" value={params.compliance} min={0} max={5} step={0.01} onChange={(v) => set('compliance', v)} />
@@ -1375,9 +1376,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
           )}
           {data && forces && (
             <div className="space-y-2 pb-1">
-              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Forces at {params.input_pressure_psi} PSI{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
-              <StatRow label="Seal at Y=0 holds" highlight value={data.seal_pressure_y0_psi == null ? 'N/A'
-                : <span className={data.sealed_after_flex ? undefined : 'text-red-400'}>{`${data.seal_pressure_y0_psi.toFixed(1)} PSI${data.sealed_after_flex ? '' : ', leaks'}`}</span>} />
+              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Forces at {formatKpa(params.input_pressure_kpa)} kPa{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
+              <StatRow label="Seal at Y=0 holds" highlight value={data.seal_pressure_y0_kpa == null ? 'N/A'
+                : <span className={data.sealed_after_flex ? undefined : 'text-red-400'}>{`${data.seal_pressure_y0_kpa.toFixed(1)} kPa${data.sealed_after_flex ? '' : ', leaks'}`}</span>} />
               <StatRow label="Motor margin" highlight value={data.motor_margin == null ? 'N/A'
                 : <span className={data.motor_margin < 1 ? 'text-red-400' : undefined}>{`× ${data.motor_margin.toFixed(1)} (${n2(data.motor_torque_needed_mnm, 'mN·m', 1)})`}</span>} />
               {jamY != null && <StatRow label="Pin hits the wall at" value={<span className="text-red-400">{`Y = ±${jamY.toFixed(2)} mm`}</span>} />}
@@ -1386,7 +1387,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
               {data.buckling_factor != null && (
                 <StatRow label="Buckling margin" value={<span className={data.buckling_factor < 3 ? 'text-amber-400' : undefined}>{`× ${data.buckling_factor.toFixed(1)}`}</span>} />
               )}
-              <StatRow label={`Least force to seal ${params.input_pressure_psi} PSI`} value={`${n2(data.seal_force_min, 'N')} per tube`} highlight />
+              <StatRow label={`Least force to seal ${formatKpa(params.input_pressure_kpa)} kPa`} value={`${n2(data.seal_force_min, 'N')} per tube`} highlight />
               <StatRow label="Pin force at Y=0, with preload" value={`${n2(data.seal_force, 'N')} per tube`} highlight />
               <StatRow label="Fold flat / squeeze / air" value={`${data.seal_force_flatten!.toFixed(2)} / ${data.seal_force_squeeze!.toFixed(2)} / ${data.seal_force_pressure!.toFixed(2)} N`} />
               <StatRow label="Tube wall modulus" value={n2(data.tube_modulus_mpa, 'MPa')} />

@@ -79,12 +79,12 @@ class LinkageTests(unittest.TestCase):
         self.assertAlmostEqual(r.seal_force, r.seal_force_flatten + r.seal_force_squeeze + r.seal_force_pressure, places=9)
         self.assertTrue(0.3 < r.seal_force < 10.0, r.seal_force)
         self.assertTrue(r.sealed_after_flex)
-        self.assertGreater(r.seal_pressure_y0_psi, PENDULUM.input_pressure_psi)
+        self.assertGreater(r.seal_pressure_y0_kpa, PENDULUM.input_pressure_kpa)
         # More pressure needs more force; a thinner bar flexes more and holds less pressure.
-        self.assertGreater(compute_linkage(replace(PENDULUM, input_pressure_psi=30.0)).seal_force, compute_linkage(PENDULUM).seal_force)
+        self.assertGreater(compute_linkage(replace(PENDULUM, input_pressure_kpa=206.8)).seal_force, compute_linkage(PENDULUM).seal_force)
         thin = compute_linkage(replace(PENDULUM, pad_length=1.0, member_width=0.5))
         self.assertGreater(thin.flex_y0, r.flex_y0)
-        self.assertLess(thin.seal_pressure_y0_psi, r.seal_pressure_y0_psi)
+        self.assertLess(thin.seal_pressure_y0_kpa, r.seal_pressure_y0_kpa)
         # Flex shares add up to the total; the mirror holds for the forces too.
         i0 = len(r.Y_positions) // 2
         self.assertLessEqual(r.flex_link_a[i0] + r.flex_bend_a[i0], r.flex_a[i0] + 1e-12)
@@ -137,7 +137,7 @@ class LinkageTests(unittest.TestCase):
         n = len(r.time_ms)
         self.assertGreater(n, 0)
         kpa = np.array(r.chamber_kpa)
-        supply = p.input_pressure_psi * 6.89476
+        supply = p.input_pressure_kpa
         self.assertAlmostEqual(kpa[n // 4], supply, delta=0.02 * supply)   # top of the +stroke
         self.assertAlmostEqual(kpa[3 * n // 4], 0.0, delta=0.02 * supply)  # bottom of the -stroke
         self.assertTrue(np.all(kpa >= -1e-6) and np.all(kpa <= supply + 1e-6))

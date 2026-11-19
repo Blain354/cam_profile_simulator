@@ -3,9 +3,11 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 import { VerticalSystemSvgDiagram, defaultParams } from './components'
 import { interpAt } from './lib/camTravel'
+import { PSI_TO_KPA } from './lib/pressure'
 import { simulateDefault } from './simulate.fixture'
 
-const params = { ...defaultParams, input_pressure_psi: 15 }
+// The fixture was simulated at 103.42 kPa.
+const params = { ...defaultParams, input_pressure_kpa: 15 * PSI_TO_KPA }
 
 beforeEach(() => {
   localStorage.clear()
@@ -58,7 +60,7 @@ test('the Cam Explorer menu lists every control once, most important first, then
   const text = panel.textContent ?? ''
   const order = [
     'Note', 'Geometry', 'Height (mm)', 'Curve Gain (K)', 'Deadband (mm)', 'Default Dist (mm)', 'Closure ramp', 'Thickness (mm)',
-    'Pneumatic system', 'Pressure (PSI)', 'Tube ID (mm)', 'Tube OD (mm)', 'Compliance', 'Chamber Vol (mL)',
+    'Pneumatic system', 'Pressure (kPa)', 'Tube ID (mm)', 'Tube OD (mm)', 'Compliance', 'Chamber Vol (mL)',
     'Motor and screw', 'Motor Speed', 'Results', 'Open Latency', 'Gap at Y=0', 'Max Flow (static)', 'Static flow @ Y=0.5 mm',
   ]
   let last = -1

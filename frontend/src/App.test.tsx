@@ -68,11 +68,14 @@ test('a fixed row is sent as min = max and its stored range is kept', async () =
   expect(bodies[0].bar2_max).toBe(14.43)
   expect(bodies[0].fixed).toBeUndefined()
   expect(bodies[0].bar1_min).toBe(6)
-  const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
-  expect(stored.search.fixed).toEqual(['bar2'])
-  expect(stored.search.bar2_min).toBe(8)
-  expect(stored.params.carriage_pin_strength_mpa).toBe(300)
-  expect(stored.params.bar2_length).toBe(12)
+  // The state is written to localStorage by an effect that may run after the result is on screen.
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(stored.search.fixed).toEqual(['bar2'])
+    expect(stored.search.bar2_min).toBe(8)
+    expect(stored.params.carriage_pin_strength_mpa).toBe(300)
+    expect(stored.params.bar2_length).toBe(12)
+  })
   fireEvent.click(getByRole('button', { name: 'Open in Explorer' }))
   await waitFor(() => expect(getByRole('tab', { name: 'Explorer' }).getAttribute('aria-selected')).toBe('true'))
 })
@@ -92,4 +95,19 @@ test('a rigid search does not print an empty shortlist count', async () => {
   fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
   await findByText('Found dimensions')
   expect(queryByText(/shortlisted designs passed/)).toBeNull()
+})
+
+test('a linkage state saved in psi comes back in kPa, shown with one decimal', async () => {
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: {} }))
+  localStorage.setItem('cam-sim.linkage.pendulum.v2', JSON.stringify({ params: { input_pressure_psi: 15 }, search: {} }))
+  const { getByText } = render(<App />)
+  fireEvent.click(getByText('Pneumatic system'))
+  const box = getByText('Pressure (kPa)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
+  expect(box.value).toBe('103.4')
+  expect(box.validity.valid).toBe(true)
+  await waitFor(() => {
+    const saved = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(saved.params.input_pressure_kpa).toBeCloseTo(103.42, 2)
+    expect('input_pressure_psi' in saved.params).toBe(false)
+  })
 })
