@@ -7,16 +7,19 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
 import {
-  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box, Waypoints, Spline, Anchor
+  Settings, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Box, Waypoints, Spline, Anchor
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
-  ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ChartDomainSettingsModal, ClosureRampToggle,
+  ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ClosureRampToggle,
   apiFetch, defaultParams, mergeConfigParams,
 } from './components';
 import type { ChartDomainSettings } from './components';
+import { ChartCard } from './ChartCard';
+import { chartDomain } from './lib/chartDomain';
+import type { ChartCardView } from './ChartCard';
 import ProfileBuilder from './ProfileBuilder';
 import LinkageExplorer from './LinkageExplorer';
 import {
@@ -34,8 +37,6 @@ import {
 } from './parameterTooltips';
 
 type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime';
-
-const DEFAULT_DOMAIN: ChartDomainSettings = { autoX: true, autoY: true, xMin: -1, xMax: 1, yMin: -1, yMax: 1 };
 
 function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | null {
   const n = ys.length;
@@ -69,7 +70,6 @@ export default function App() {
   const [data, setData] = useState<SimulationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [maximizedChart, setMaximizedChart] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [configs, setConfigs] = useState<SavedConfigEntry[]>([]);
   const [defaultConfig, setDefaultConfig] = useState<string | null>(null);
@@ -83,7 +83,6 @@ export default function App() {
   /** Profile Builder: show Save/Update in header when a solve can be persisted and is not yet saved. */
   const [builderSaveExperienceVisible, setBuilderSaveExperienceVisible] = useState(false);
   const [guidanceMode, setGuidanceMode] = useState(true);
-  const [chartSettingsTarget, setChartSettingsTarget] = useState<ExplorerChartKey | null>(null);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const simulateAbortRef = useRef<AbortController | null>(null);
@@ -408,64 +407,64 @@ export default function App() {
     };
   }, [data, hasDynamicModel]);
 
-  const renderGapY = () => (
+  const renderGapY = ({ maximized, settings: s }: ChartCardView) => (
     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
       <LineChart data={gapVsYData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis dataKey="y" type="number" domain={getExplorerChartSettings('gapY').autoX ? ['dataMin', 'dataMax'] : [getExplorerChartSettings('gapY').xMin, getExplorerChartSettings('gapY').xMax]} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
-        <YAxis type="number" stroke="#888" label={{ value: 'Gap (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={getExplorerChartSettings('gapY').autoY ? ['dataMin', 'dataMax'] : [getExplorerChartSettings('gapY').yMin, getExplorerChartSettings('gapY').yMax]} tickFormatter={(val) => val.toFixed(3)} />
+        <XAxis dataKey="y" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
+        <YAxis type="number" stroke="#888" label={{ value: 'Gap (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={chartDomain(s, 'y', ['dataMin', 'dataMax'])} tickFormatter={(val) => val.toFixed(3)} />
         <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} formatter={(value: any) => `${Number(value).toFixed(3)} mm`} labelFormatter={(label: any) => `Y: ${Number(label).toFixed(3)} mm`} />
         {data && (
           <>
             <ReferenceLine y={data.gap_at_Y0} stroke="#d946ef" strokeDasharray="3 3">
-              {maximizedChart === 'gapY' && <Label value={`Gap at center: ${data.gap_at_Y0.toFixed(3)} mm`} position="insideLeft" fill="#d946ef" fontSize={11} fontWeight="bold" />}
+              {maximized && <Label value={`Gap at center: ${data.gap_at_Y0.toFixed(3)} mm`} position="insideLeft" fill="#d946ef" fontSize={11} fontWeight="bold" />}
             </ReferenceLine>
             <ReferenceLine y={data.default_distance} stroke="#f59e0b" strokeDasharray="3 3">
-              {maximizedChart === 'gapY' && <Label value={`Rest gap: ${data.default_distance.toFixed(3)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} fontWeight="bold" />}
+              {maximized && <Label value={`Rest gap: ${data.default_distance.toFixed(3)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} fontWeight="bold" />}
             </ReferenceLine>
           </>
         )}
         <Line type="monotone" dataKey="gap" name="Gap" stroke="#3b82f6" strokeWidth={3} dot={false} isAnimationActive={false} />
         <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-          {maximizedChart === 'gapY' && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+          {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
         </ReferenceLine>
       </LineChart>
     </ResponsiveContainer>
   );
 
-  const renderGapTime = () => (
+  const renderGapTime = ({ maximized, settings: s }: ChartCardView) => (
     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
       <LineChart data={gapVsTimeData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis dataKey="time" type="number" domain={getExplorerChartSettings('gapTime').autoX ? ['dataMin', 'dataMax'] : [getExplorerChartSettings('gapTime').xMin, getExplorerChartSettings('gapTime').xMax]} stroke="#888" label={{ value: 'Time (ms)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
-        <YAxis type="number" stroke="#888" label={{ value: 'Gap (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={getExplorerChartSettings('gapTime').autoY ? ['dataMin', 'dataMax'] : [getExplorerChartSettings('gapTime').yMin, getExplorerChartSettings('gapTime').yMax]} tickFormatter={(val) => val.toFixed(3)} />
+        <XAxis dataKey="time" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} stroke="#888" label={{ value: 'Time (ms)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
+        <YAxis type="number" stroke="#888" label={{ value: 'Gap (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={chartDomain(s, 'y', ['dataMin', 'dataMax'])} tickFormatter={(val) => val.toFixed(3)} />
         <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} formatter={(value: any) => `${Number(value).toFixed(3)} mm`} labelFormatter={(label: any) => `Time: ${Number(label).toFixed(3)} ms`} />
         {data && (
           <>
             <ReferenceLine y={data.gap_at_Y0} stroke="#d946ef" strokeDasharray="3 3">
-              {maximizedChart === 'gapTime' && <Label value={`Gap at center: ${data.gap_at_Y0.toFixed(2)} mm`} position="insideTopLeft" fill="#d946ef" fontSize={11} />}
+              {maximized && <Label value={`Gap at center: ${data.gap_at_Y0.toFixed(2)} mm`} position="insideTopLeft" fill="#d946ef" fontSize={11} />}
             </ReferenceLine>
             <ReferenceLine y={data.default_distance} stroke="#f59e0b" strokeDasharray="3 3">
-              {maximizedChart === 'gapTime' && <Label value={`Rest gap: ${data.default_distance.toFixed(2)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} />}
+              {maximized && <Label value={`Rest gap: ${data.default_distance.toFixed(2)} mm`} position="insideBottomLeft" fill="#f59e0b" fontSize={11} />}
             </ReferenceLine>
           </>
         )}
         <Line type="monotone" dataKey="gap" name="Gap" stroke="#ef4444" strokeWidth={3} dot={false} isAnimationActive={false} />
         {data && (
           <ReferenceLine x={(-data.Y_positions[0] / (params.motor_speed * params.lead_screw_pitch / 60)) * 1000} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-            {maximizedChart === 'gapTime' && <Label value="Bushing time" position="insideTopRight" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+            {maximized && <Label value="Bushing time" position="insideTopRight" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
           </ReferenceLine>
         )}
       </LineChart>
     </ResponsiveContainer>
   );
 
-  const renderPneumatic = () => (
+  const renderPneumatic = ({ maximized, settings: s }: ChartCardView) => (
     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
       <LineChart data={pneumaticData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis dataKey="y" type="number" domain={getExplorerChartSettings('pneumatic').autoX ? ['dataMin', 'dataMax'] : [getExplorerChartSettings('pneumatic').xMin, getExplorerChartSettings('pneumatic').xMax]} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
-        <YAxis type="number" stroke="#888" label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={getExplorerChartSettings('pneumatic').autoY ? ['dataMin', 'dataMax'] : [getExplorerChartSettings('pneumatic').yMin, getExplorerChartSettings('pneumatic').yMax]} tickFormatter={(val) => val.toFixed(3)} />
+        <XAxis dataKey="y" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
+        <YAxis type="number" stroke="#888" label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={chartDomain(s, 'y', ['dataMin', 'dataMax'])} tickFormatter={(val) => val.toFixed(3)} />
         <Tooltip
           contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '12px', padding: '12px 16px' }}
           separator=""
@@ -510,21 +509,19 @@ export default function App() {
         )}
         <Line type="monotone" dataKey="gap" name="gap" stroke="#3b82f6" strokeWidth={0} strokeOpacity={0} dot={false} activeDot={false} isAnimationActive={false} legendType="none" />
         <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-          {maximizedChart === 'pneumatic' && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+          {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
         </ReferenceLine>
       </LineChart>
     </ResponsiveContainer>
   );
 
-  const getChartContent = (id: string | null) => {
-    switch (id) {
-      case 'gapY': return { title: 'Gap vs Y Position', comp: renderGapY() };
-      case 'gapTime': return { title: 'Gap vs Time', comp: renderGapTime() };
-      case 'pneumatic': return { title: 'Pneumatic Flow vs Y', comp: renderPneumatic() };
-      default: return null;
-    }
-  };
-  const maximizedInfo = getChartContent(maximizedChart);
+  const explorerCard = (key: ExplorerChartKey) => ({
+    settings: getExplorerChartSettings(key),
+    onSettingsChange: (next: ChartDomainSettings) => setExplorerChartSettings(key, next),
+    modified: isExplorerChartSettingsModified(key),
+    settingsTitle: `${key} domain settings`,
+    layout: true,
+  });
 
   return (
     <MotionConfig reducedMotion="user" transition={{ duration: 0.25, ease: 'easeOut' }}>
@@ -796,88 +793,17 @@ export default function App() {
 
           {/* Panel 3: Charts Area */}
           <motion.div layout transition={{ duration: 0.25, ease: 'easeOut' }} className={`relative min-w-0 grid grid-rows-3 gap-4 min-h-0 ${detailsView ? 'lg:col-span-5 xl:col-span-6' : 'lg:col-span-7 xl:col-span-8'}`}>
-            <AnimatePresence>
-              {maximizedChart && (
-                <>
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    onClick={() => setMaximizedChart(null)} className="absolute -inset-4 z-40 rounded-xl bg-neutral-900/40" />
-                  <motion.div layoutId={`card-${maximizedChart}`}
-                    className="absolute inset-0 z-50 bg-neutral-800 rounded-xl border border-neutral-600 flex flex-col items-stretch overflow-hidden">
-                    <div className="flex justify-between items-center p-6 pb-2 border-b border-neutral-700/50 bg-neutral-800/80">
-                      <h3 className="text-xl font-bold text-neutral-100">{maximizedInfo?.title}</h3>
-                      <Button variant="ghost" onClick={() => setMaximizedChart(null)}
-                        className="p-2 rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors">
-                        <Minimize2 className="w-6 h-6" />
-                      </Button>
-                    </div>
-                    <div className="flex-1 w-full p-6">{maximizedInfo?.comp}</div>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
-
-            <motion.div layoutId="card-pneumatic" className="row-span-2 bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col items-stretch min-h-0">
-              <div className="flex justify-between items-center mb-2 shrink-0 relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <h3 className="text-sm font-bold text-neutral-200">Pneumatic Flow vs Y</h3>
-                </div>
-                <div className="z-10 w-full flex justify-end gap-1">
-                  <Button variant="ghost" onClick={() => setChartSettingsTarget('pneumatic')}
-                    className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'pneumatic' ? 'opacity-0' : isExplorerChartSettingsModified('pneumatic') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
-                    title="Chart settings">
-                    <Cog className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" onClick={() => setMaximizedChart('pneumatic')}
-                    className={`p-1.5 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'pneumatic' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
-                    <Maximize2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-              <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'pneumatic' ? 'opacity-0' : 'opacity-100'}`}>
-                {renderPneumatic()}
-              </div>
-            </motion.div>
+            <ChartCard title="Pneumatic Flow vs Y" {...explorerCard('pneumatic')} className="row-span-2">
+              {renderPneumatic}
+            </ChartCard>
 
             <div className="row-span-1 flex flex-col lg:flex-row gap-4 min-h-0">
-              <motion.div layoutId="card-gapY" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col items-stretch flex-1 min-h-0">
-                <div className="flex justify-between items-center mb-2 shrink-0 relative">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Gap vs Y</h3>
-                  </div>
-                  <div className="z-10 w-full flex justify-end gap-1">
-                    <Button variant="ghost" onClick={() => setChartSettingsTarget('gapY')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapY' ? 'opacity-0' : isExplorerChartSettingsModified('gapY') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
-                      title="Chart settings">
-                      <Cog className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button variant="ghost" onClick={() => setMaximizedChart('gapY')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
-                      <Maximize2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-                <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'gapY' ? 'opacity-0' : 'opacity-100'}`}>{renderGapY()}</div>
-              </motion.div>
-
-              <motion.div layoutId="card-gapTime" className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col items-stretch flex-1 min-h-0">
-                <div className="flex justify-between items-center mb-2 shrink-0 relative">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Gap vs Time</h3>
-                  </div>
-                  <div className="z-10 w-full flex justify-end gap-1">
-                    <Button variant="ghost" onClick={() => setChartSettingsTarget('gapTime')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapTime' ? 'opacity-0' : isExplorerChartSettingsModified('gapTime') ? 'text-amber-400 hover:text-amber-300' : 'text-neutral-400 hover:text-white'}`}
-                      title="Chart settings">
-                      <Cog className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button variant="ghost" onClick={() => setMaximizedChart('gapTime')}
-                      className={`p-1 rounded-md hover:bg-neutral-700 transition-colors ${maximizedChart === 'gapTime' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}>
-                      <Maximize2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-                <div className={`flex-1 w-full min-h-0 ${maximizedChart === 'gapTime' ? 'opacity-0' : 'opacity-100'}`}>{renderGapTime()}</div>
-              </motion.div>
+              <ChartCard title="Gap vs Y" maximizedTitle="Gap vs Y Position" compact {...explorerCard('gapY')} className="flex-1">
+                {renderGapY}
+              </ChartCard>
+              <ChartCard title="Gap vs Time" compact {...explorerCard('gapTime')} className="flex-1">
+                {renderGapTime}
+              </ChartCard>
             </div>
           </motion.div>
         </div>
@@ -905,17 +831,6 @@ export default function App() {
           saveExperienceSignal={saveBuilderExperienceSignal}
         />
       )}
-
-      <ChartDomainSettingsModal
-        isOpen={chartSettingsTarget !== null}
-        title={chartSettingsTarget ? `${chartSettingsTarget} domain settings` : 'Domain settings'}
-        settings={chartSettingsTarget ? getExplorerChartSettings(chartSettingsTarget) : DEFAULT_DOMAIN}
-        onClose={() => setChartSettingsTarget(null)}
-        onChange={(next) => {
-          if (!chartSettingsTarget) return;
-          setExplorerChartSettings(chartSettingsTarget, next);
-        }}
-      />
 
       {/* Modals & Overlays */}
       <StlExportModal
