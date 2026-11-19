@@ -98,6 +98,43 @@ class LinkageTests(unittest.TestCase):
                 if start.feasible and start.max_oversqueeze <= s.max_oversqueeze:
                     self.assertLessEqual(r.rms_error, start.rms_error + 1e-9)
 
+    def test_fixed_height_solves_the_link(self):
+        free = compute_linkage(PENDULUM)
+        self.assertAlmostEqual(free.link_length, PENDULUM.bar1_length)
+        # Imposing the height the free solve found gives back the same link.
+        same = compute_linkage(replace(PENDULUM, bar1_length=1.0, fixed_height=2 * free.pivot_height_y0))
+        self.assertAlmostEqual(same.link_length, PENDULUM.bar1_length, places=9)
+        for height in (16.0, 22.0):
+            r = compute_linkage(replace(PENDULUM, fixed_height=height))
+            self.assertTrue(r.feasible, r.message)
+            self.assertAlmostEqual(r.pivot_height_y0, height / 2)
+            i0 = len(r.Y_positions) // 2
+            self.assertAlmostEqual(r.gap_a[i0], r.closed_gap - PENDULUM.preload, places=9)
+            for y, jx, jy in zip(r.Y_positions, r.joint_x, r.joint_y):
+                self.assertAlmostEqual(math.hypot(jx - PENDULUM.pivot_offset, jy - (height / 2 - y)), r.link_length, places=9)
+        best, feasible, _ = optimize_linkage(replace(PENDULUM, fixed_height=18.0), PENDULUM_SEARCH)
+        self.assertIsNotNone(best)
+        r = compute_linkage(best)
+        self.assertTrue(r.feasible, r.message)
+        self.assertAlmostEqual(r.pivot_height_y0, 9.0)
+        self.assertAlmostEqual(r.link_length, best.bar1_length, places=3)
+        self.assertLessEqual(r.max_oversqueeze, PENDULUM_SEARCH.max_oversqueeze + 1e-3)
+
+    def test_contact_pad_pinches_with_its_nearer_end(self):
+        point = compute_linkage(PENDULUM)
+        pad = compute_linkage(replace(PENDULUM, pad_length=1.0))
+        self.assertTrue(pad.feasible, pad.message)
+        i0 = len(pad.Y_positions) // 2
+        # Still just closed at Y = 0, with the pad centre further from the wall than a point contact would be.
+        self.assertAlmostEqual(pad.gap_a[i0], pad.closed_gap - PENDULUM.preload, places=9)
+        self.assertGreater(pad.tip_x[i0], point.tip_x[i0])
+        phi = math.radians(PENDULUM.foot_angle_deg)
+        for jx, jy, tx, gap in zip(pad.joint_x, pad.joint_y, pad.tip_x, pad.gap_a):
+            tilt = abs(math.sin(math.atan2(jy, jx - pad.anchor_x) + phi))
+            self.assertAlmostEqual(gap, pad.wall_x + tx - 0.5 * tilt - PENDULUM.pin_diameter / 2, places=9)
+        # The other linkage types ignore the pad.
+        self.assertEqual(compute_linkage(replace(LEVER, pad_length=1.0)).gap_a, compute_linkage(LEVER).gap_a)
+
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))
         self.assertFalse(r.feasible)

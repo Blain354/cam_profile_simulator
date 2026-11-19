@@ -58,6 +58,8 @@ class LinkageParams:
     lever_length: float = 16.5       # mm, anchor -> pinch point (lever type only)
     foot_length: float = 1.5         # mm, joint C -> pinch point (pendulum type only)
     foot_angle_deg: float = 100.0    # deg between the arm A-C and the foot, toward the tube (pendulum only)
+    pad_length: float = 0.0          # mm, flat contact segment centred on P, square to the foot (pendulum only)
+    fixed_height: float = 0.0        # mm, imposed anchor-to-anchor height 2 * h0; bar 1 is then solved (0 = free)
     anchor_distance: float = 2.33    # mm from the base centre (elbow: tube side, lever: far side)
     pivot_offset: float = 3.9        # mm, carriage pivot offset from the screw axis (far side)
     tube_center_x: float = 8.0       # mm, tube axis distance from the screw axis
@@ -91,6 +93,7 @@ class LinkageResult:
     flow_target: List[Optional[float]] = field(default_factory=list)
     anchor_x: float = 0.0
     anchor_on_top: bool = False      # the frame is the real mechanism upside down
+    link_length: float = 0.0         # bar 1 actually used (solved when the height is fixed)
     pivot_height_y0: float = 0.0     # h0; the mirrored anchor sits at 2 * h0
     wall_x: float = 0.0
     closed_gap: float = 0.0          # pin-to-wall gap at which flow starts
@@ -159,11 +162,36 @@ def _tip(xa, jx, jy, ratio, delta):
     return xa + ratio * (dx * c - jy * s), ratio * (dx * s + jy * c)
 
 
-def _pivot_height_y0(l1, l2, reach, delta, root, xa, xb, x_tip_closed):
-    """Carriage pivot height that puts the pinch point at x_tip_closed (body above the anchor line)."""
-    cc = (x_tip_closed - xa) / reach
+def _pad(p: LinkageParams) -> Tuple[float, float]:
+    """Half length of the contact pad and the foot angle (rad); a point contact for the other types."""
+    if p.linkage_type == TYPE_PENDULUM and p.pad_length > 0:
+        return p.pad_length / 2.0, float(np.radians(p.foot_angle_deg))
+    return 0.0, 0.0
+
+
+def _pad_reach(xa, jx, jy, half, phi):
+    """How much closer to the wall than its centre the pad's nearer end sits (the pad tilts with the arm)."""
+    if half == 0.0:
+        return 0.0
+    return half * np.abs(np.sin(np.arctan2(jy, jx - xa) + phi))
+
+
+def _closed_joint(l2, reach, delta, half, phi, xa, x_closed):
+    """Joint C when the contact sits at x_closed (body above the anchor line)."""
+    cc = (x_closed - xa) / reach
     theta = np.arccos(np.where(np.abs(cc) <= 1.0, cc, np.nan)) - delta
-    cx, cy = xa + l2 * np.cos(theta), l2 * np.sin(theta)
+    if half:
+        # Newton on the arm angle: the pad's nearer end moves with the tilt.
+        for _ in range(8):
+            s = np.sin(theta + phi)
+            f = xa + reach * np.cos(theta + delta) - half * np.abs(s) - x_closed
+            df = -reach * np.sin(theta + delta) - half * np.sign(s) * np.cos(theta + phi)
+            theta = theta - f / df
+    return xa + l2 * np.cos(theta), l2 * np.sin(theta)
+
+
+def _pivot_height_y0(l1, root, xb, cx, cy):
+    """Carriage pivot height that reaches the closed joint with bar 1."""
     reach_sq = l1 * l1 - (xb - cx) ** 2
     return cy + root * np.sqrt(np.where(reach_sq >= 0.0, reach_sq, np.nan))
 
@@ -223,13 +251,20 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
     side, root, sgn = _layout(p)
     xa, xb = side * p.anchor_distance, p.pivot_offset
     reach, delta = _body(p, l2, p.lever_length)
+    half, phi = _pad(p)
     wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
 
-    with np.errstate(invalid="ignore"):
-        h0 = float(_pivot_height_y0(l1, l2, reach, delta, root, xa, xb, x_closed))
-    if not np.isfinite(h0):
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cx0, cy0 = _closed_joint(l2, reach, delta, half, phi, xa, x_closed)
+        if p.fixed_height > 0:
+            # Height imposed: bar 1 is whatever joins the carriage pivot to the closed joint.
+            h0 = p.fixed_height / 2.0
+            l1 = float(np.hypot(xb - cx0, h0 - cy0))
+        else:
+            h0 = float(_pivot_height_y0(l1, root, xb, cx0, cy0))
+    if not (np.isfinite(h0) and np.isfinite(l1)):
         return LinkageResult(
             False,
             "The pinch point cannot reach the tube at Y = 0: the bar hinged at the anchor is too short, or bar 1 cannot reach its joint.",
@@ -243,7 +278,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         ok = np.isfinite(jx) & (jy >= -_EPS) & (h0 + sgn * y > 0.0)
     jx, jy = np.where(ok, jx, np.nan), np.where(ok, jy, np.nan)
     tx, ty = _tip(xa, jx, jy, reach / l2, delta)
-    gap_a = wall_x + tx - r_pin
+    gap_a = wall_x + tx - _pad_reach(xa, jx, jy, half, phi) - r_pin
     gap_b = gap_a[::-1]
     area_a = np.where(ok, _area_mm2(p, np.nan_to_num(gap_a, nan=0.0), closed_gap), 0.0)
     area_b = area_a[::-1]
@@ -295,6 +330,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         flow_target=_nan_to_none(flow_target),
         anchor_x=xa,
         anchor_on_top=sgn < 0.0,
+        link_length=l1,
         pivot_height_y0=h0,
         wall_x=wall_x,
         closed_gap=closed_gap,
@@ -343,29 +379,37 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.nd
     reach, delta = _body(p, l2, lever_length)
     delta_ = delta[..., None] if isinstance(delta, np.ndarray) else delta
     with np.errstate(invalid="ignore", divide="ignore"):
-        h0 = _pivot_height_y0(l1, l2, reach, delta, root, xa, xb, x_closed)
+        half, phi = _pad(p)
+        cx0, cy0 = _closed_joint(l2, reach, delta, half, phi, xa, x_closed)
+        if p.fixed_height > 0:
+            h0 = np.full_like(l2, p.fixed_height / 2.0)
+            l1 = np.hypot(xb - cx0, h0 - cy0)
+        else:
+            h0 = _pivot_height_y0(l1, root, xb, cx0, cy0)
         y = np.linspace(0.0, p.stroke, N_SCORE)
         ratio = (reach / l2)[..., None]
         xa_ = xa[..., None]
         # Tube A opening over [0, stroke]; the same linkage at -Y is what the closed tube sees.
         jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn * y)
         cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn * y)
-        gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - r_pin
-        squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - r_pin)
+        gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - _pad_reach(xa_, jx, jy, half, phi) - r_pin
+        squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - _pad_reach(xa_, cx, cy, half, phi) - r_pin)
         target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
         err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
         rms = np.sqrt(np.mean(err * err, axis=-1))
         ok = (
             np.isfinite(rms)
             & ((reach >= l2) | (p.linkage_type != TYPE_LEVER))
-            & (h0 >= s.min_pivot_height)
             & (h0 > p.stroke)
-            & (h0 + p.stroke <= s.max_pivot_height)
             & np.all(jy >= 0.0, axis=-1)
             & np.all(np.isfinite(cx), axis=-1)
             & np.all(cy >= 0.0, axis=-1)
             & (np.max(np.where(np.isfinite(squeeze), squeeze, np.inf), axis=-1) <= s.max_oversqueeze)
         )
+        if p.fixed_height > 0:
+            ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
+        else:
+            ok &= (h0 >= s.min_pivot_height) & (h0 + p.stroke <= s.max_pivot_height)
     return np.where(ok, rms, np.inf)
 
 
@@ -381,10 +425,14 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         bounds.append((s.lever_min, s.lever_max))
     bounds = [(min(lo, hi), max(lo, hi)) for lo, hi in bounds]
     n = 18 if lever else 36
-    best, best_score, feasible = None, np.inf, 0
+    best, best_score, feasible, tested = None, np.inf, 0, 0
     window = bounds
     for level in range(4):
         axes = [np.linspace(lo, hi, n) for lo, hi in window]
+        if p.fixed_height > 0:
+            axes[0] = axes[0][:1]  # bar 1 is solved from the height, not searched
+        if level == 0:
+            tested = int(np.prod([len(ax) for ax in axes]))
         # One slice of the first axis at a time keeps the 4-D lever search within a few tens of MB.
         for v in axes[0]:
             rest = np.meshgrid(*axes[1:], indexing="ij")
@@ -397,10 +445,13 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
                 best_score = float(score[idx])
                 best = [float(v)] + [float(r[idx]) for r in rest]
         if best is None:
-            return None, 0, n ** len(axes)
+            return None, 0, tested
         window = []
         for ax, (blo, bhi), c in zip(axes, bounds, best):
             half = 1.5 * (ax[-1] - ax[0]) / (n - 1)
             window.append((max(blo, c - half), min(bhi, c + half)))
     values = {**p.__dict__, **{name: round(v, 3) for name, v in zip(names, best)}}
-    return LinkageParams(**values), feasible, n ** len(names)
+    out = LinkageParams(**values)
+    if p.fixed_height > 0:
+        out.bar1_length = round(compute_linkage(out).link_length, 3)
+    return out, feasible, tested

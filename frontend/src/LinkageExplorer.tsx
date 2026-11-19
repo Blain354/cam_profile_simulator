@@ -18,6 +18,8 @@ export interface LinkageParams {
   lever_length: number;
   foot_length: number;
   foot_angle_deg: number;
+  pad_length: number;
+  fixed_height: number;
   anchor_distance: number;
   pivot_offset: number;
   tube_center_x: number;
@@ -66,6 +68,7 @@ interface LinkageResult {
   flow_target: Series;
   anchor_x: number;
   anchor_on_top: boolean;
+  link_length: number;
   pivot_height_y0: number;
   wall_x: number;
   closed_gap: number;
@@ -93,6 +96,8 @@ const COMMON = {
   lever_length: 16.5,
   foot_length: 1.5,
   foot_angle_deg: 100,
+  pad_length: 0,
+  fixed_height: 0,
   tube_center_x: 8.0,
   preload: 0.1,
   stroke: 3.0,
@@ -111,7 +116,7 @@ const COMMON = {
 const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   elbow: { ...COMMON, linkage_type: 'elbow', bar1_length: 13.0, bar2_length: 7.8, lever_length: 16.5, anchor_distance: 2.33, pivot_offset: 3.9, pin_diameter: 1.0 },
   lever: { ...COMMON, linkage_type: 'lever', bar1_length: 6.9, bar2_length: 6.9, lever_length: 16.5, anchor_distance: 5.05, pivot_offset: 3.97, pin_diameter: 0.4 },
-  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0 },
+  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0 },
 };
 
 const SEARCH_COMMON = { lever_min: 10, lever_max: 22, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5 };
@@ -207,6 +212,16 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
 
   const linkage = (pose: Pose, color: string) => {
     const [axx, ayy] = pose.anchor;
+    // Contact pad: a segment centred on the pinch point, square to the foot.
+    let pad: number[] | null = null;
+    if (pendulum && params.pad_length > 0 && pose.joint && pose.tip) {
+      const dx = pose.tip[0] - pose.joint[0], dy = pose.tip[1] - pose.joint[1];
+      const n = Math.hypot(dx, dy);
+      if (n > 1e-6) {
+        const k = params.pad_length / 2 / n;
+        pad = [pose.tip[0] - dy * k, pose.tip[1] + dx * k, pose.tip[0] + dy * k, pose.tip[1] - dx * k];
+      }
+    }
     return (
       <g>
         {/* Ground mark at the fixed anchor */}
@@ -223,7 +238,9 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
             )}
             <line x1={pose.pivotX} y1={-hB} x2={pose.joint[0]} y2={-pose.joint[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
             {(lever || pendulum) && <circle cx={pose.joint[0]} cy={-pose.joint[1]} r={0.2} fill={color} />}
-            <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill="var(--bui-surface)" stroke={color} strokeWidth={0.1} />
+            {pad
+              ? <line x1={pad[0]} y1={-pad[1]} x2={pad[2]} y2={-pad[3]} stroke={color} strokeWidth={2 * rPin} strokeLinecap="round" />
+              : <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill="var(--bui-surface)" stroke={color} strokeWidth={0.1} />}
           </>
         )}
         <circle cx={axx} cy={-ayy} r={0.22} fill={color} />
@@ -255,7 +272,7 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
           {pendulum ? (
             <>
               {label((a.anchor[0] + a.joint[0]) / 2 + 1.5, (a.anchor[1] + a.joint[1]) / 2, `L ${params.bar2_length.toFixed(2)}`, ORANGE)}
-              {label((a.pivotX + a.joint[0]) / 2, (hB + a.joint[1]) / 2 - 0.9, `r ${params.bar1_length.toFixed(2)}`, ORANGE)}
+              {label((a.pivotX + a.joint[0]) / 2, (hB + a.joint[1]) / 2 - 0.9, `r ${data.link_length.toFixed(2)}`, ORANGE)}
             </>
           ) : lever ? (
             <>
@@ -367,6 +384,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const yPose = Math.min(Math.max(y, -params.stroke), params.stroke);
+  const heightFixed = params.fixed_height > 0;
 
   // What the motor really turns under load and friction, and the carriage speed that gives.
   const loadedRpm = params.motor_speed * params.speed_factor;
@@ -463,14 +481,37 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <div className="space-y-5 pt-2">
               {pendulum ? (
                 <>
+                  <div className="space-y-1.5">
+                    <Button variant="ghost" type="button" role="switch" aria-checked={heightFixed}
+                      onClick={() => setParams((p) => (heightFixed
+                        ? { ...p, fixed_height: 0, bar1_length: data ? Math.round(data.link_length * 1000) / 1000 : p.bar1_length }
+                        : { ...p, fixed_height: data ? Math.round(data.pivot_height_y0 * 200) / 100 : 20 }))}
+                      className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${heightFixed ? 'border-amber-500/50 text-amber-300' : 'border-neutral-700 text-neutral-300'}`}
+                      title="Impose the height between the two anchors. The link length is then computed so that the tube is still just closed at Y = 0.">
+                      <span>Fix total height (2·h₀)</span>
+                      <span aria-hidden="true" className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${heightFixed ? 'bg-amber-600' : 'bg-neutral-600'}`}>
+                        <span className={`h-4 w-4 rounded-full bg-white transition-transform ${heightFixed ? 'translate-x-4' : ''}`} />
+                      </span>
+                    </Button>
+                  </div>
+                  {heightFixed && (
+                    <ParameterSlider label="Total height (mm)" value={params.fixed_height} min={4} max={40} step={0.05} onChange={(v) => set('fixed_height', v)}
+                      secondaryValue={`h₀ ${(params.fixed_height / 2).toFixed(2)}`}
+                      description="Distance between the top anchor of tube A's arm and the bottom anchor of tube B's arm. The carriage pivot sits halfway at Y = 0." />
+                  )}
                   <ParameterSlider label="Arm, L (mm)" value={params.bar2_length} min={2} max={30} step={0.05} onChange={(v) => set('bar2_length', v)}
                     description="Fixed anchor on the opposite wall to the joint where the link pulls. The arm hangs along the tube." />
-                  <ParameterSlider label="Link, r (mm)" value={params.bar1_length} min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)}
-                    description="Carriage pivot (blue) to the joint at the end of the arm." />
+                  <ParameterSlider label="Link, r (mm)" value={heightFixed && data ? Math.round(data.link_length * 1000) / 1000 : params.bar1_length}
+                    min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)} disabled={heightFixed}
+                    secondaryValue={heightFixed ? 'from height' : undefined}
+                    description="Carriage pivot (blue) to the joint at the end of the arm. Computed when the total height is fixed." />
                   <ParameterSlider label="Foot, f (mm)" value={params.foot_length} min={0} max={8} step={0.05} onChange={(v) => set('foot_length', v)}
                     description="Rigid foot from the joint to the centre of the pin that presses on the tube. Not searched by the optimizer." />
                   <ParameterSlider label="Foot angle (deg)" value={params.foot_angle_deg} min={0} max={180} step={1} onChange={(v) => set('foot_angle_deg', v)}
                     description="Angle between the arm and the foot: 90 is square to the arm, toward the tube. Not searched by the optimizer." />
+                  <ParameterSlider label="Contact pad (mm)" value={params.pad_length} min={0} max={6} step={0.05} onChange={(v) => set('pad_length', v)}
+                    secondaryValue={params.pad_length === 0 ? 'point' : undefined}
+                    description="Length of the flat segment that touches the tube, centred on the end of the foot and square to it. Its ends are rounded with the pinch pin diameter. As the arm tilts, the end nearer the wall does the pinching. 0 is a round pin." />
                 </>
               ) : lever ? (
                 <>
@@ -507,7 +548,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <RangeRow label={pendulum ? 'L range' : lever ? 'c range' : 'L2 range'} min={search.bar2_min} max={search.bar2_max} onMin={(v) => setS('bar2_min', v)} onMax={(v) => setS('bar2_max', v)} />
               <RangeRow label={lever || pendulum ? 'r range' : 'L1 range'} min={search.bar1_min} max={search.bar1_max} onMin={(v) => setS('bar1_min', v)} onMax={(v) => setS('bar1_max', v)} />
               <RangeRow label="a range" min={search.anchor_min} max={search.anchor_max} onMin={(v) => setS('anchor_min', v)} onMax={(v) => setS('anchor_max', v)} />
-              <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />
+              {!heightFixed && <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />}
               <ParameterSlider label="Max over-squeeze" value={search.max_oversqueeze} min={0.05} max={2} step={0.05} onChange={(v) => setS('max_oversqueeze', v)}
                 description="How far past closure the closed tube may be crushed while the other one opens over the stroke." />
               <Button variant="ghost" type="button" onClick={optimize} disabled={optimizing}
