@@ -137,7 +137,9 @@ class LinkageResult:
     flex_link_a: List[Optional[float]] = field(default_factory=list)  # share of flex_a from the link's stretch
     flex_bend_a: List[Optional[float]] = field(default_factory=list)  # share of flex_a from bending
     tube_modulus_mpa: Optional[float] = None       # wall modulus implied by the compliance
-    seal_force: Optional[float] = None             # N per tube at Y = 0
+    seal_force_min: Optional[float] = None         # N per tube, pin just closed against the pressure (no preload)
+    seal_force: Optional[float] = None             # N per tube at Y = 0, preload included
+    jam_y: Optional[float] = None                  # mm of travel where the pin reaches the wall through the closed tube
     seal_force_flatten: Optional[float] = None     # of which: folding the tube flat
     seal_force_squeeze: Optional[float] = None     # of which: squeezing the two walls together
     seal_force_pressure: Optional[float] = None    # of which: air pressure on the pin
@@ -392,6 +394,13 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
         flex = force * c_all / (1.0 + np.clip(stiff, 0.0, None) * c_all)
         pull = sgn * -t_unit * uy * force                # along +Y, linkage A on the carriage
     thrust = pull - pull[::-1]
+    # Past the travel where a pin has crushed its tube to the wall nothing moves any more:
+    # the figures stop there instead of reporting the capped wall law.
+    crushed = np.abs(y[ok & (gap <= 0.05 * wall)])
+    if crushed.size:
+        out.jam_y = float(crushed.min())
+        past = np.abs(y) >= out.jam_y
+        force, flex, thrust = (np.where(past, np.nan, v) for v in (force, flex, thrust))
 
     i0 = N_SAMPLES // 2
     out.force_a, out.force_b = _nan_to_none(force), _nan_to_none(force[::-1])
@@ -399,12 +408,13 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     out.flex_a, out.flex_b = _nan_to_none(flex), _nan_to_none(flex[::-1])
     out.flex_link_a, out.flex_bend_a = _nan_to_none(flex * c_link / c_all), _nan_to_none(flex * c_bend / c_all)
     out.tube_modulus_mpa = wall / p.compliance
-    if not ok[i0]:
+    if not ok[i0] or not np.isfinite(force[i0]):
         return
     out.seal_force = float(force[i0])
+    out.seal_force_min = float(sum(_pinch_force(p, np.array([closed_gap]), st0[i0:i0 + 1], ct0[i0:i0 + 1]))[0])
     out.seal_force_flatten, out.seal_force_squeeze, out.seal_force_pressure = (float(v[i0]) for v in parts)
     out.max_pinch_force = float(np.nanmax(force))
-    out.max_wall_strain = float(np.clip(wall - np.nanmin(gap), 0.0, wall) / wall)
+    out.max_wall_strain = float(np.clip(wall - np.nanmin(np.where(np.isfinite(force), gap, np.nan)), 0.0, wall) / wall)
     out.thrust_y0 = float(abs(thrust[i0]))
     out.thrust_needed = float(np.nanmax(np.abs(thrust))) if np.any(np.isfinite(thrust)) else out.thrust_y0
 

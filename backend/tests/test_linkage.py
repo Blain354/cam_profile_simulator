@@ -72,6 +72,18 @@ class LinkageTests(unittest.TestCase):
         self.assertLessEqual(r.flex_link_a[i0] + r.flex_bend_a[i0], r.flex_a[i0] + 1e-12)
         self.assertEqual(r.force_b, r.force_a[::-1])
 
+    def test_figures_stop_where_the_pin_reaches_the_wall(self):
+        r = compute_linkage(replace(PENDULUM, stroke=3.0))
+        self.assertIsNotNone(r.jam_y)
+        y = np.array(r.Y_positions)
+        self.assertTrue(all(f is None for f, yy in zip(r.thrust, y) if abs(yy) >= r.jam_y))
+        self.assertLess(r.max_wall_strain, 0.96)
+        short = compute_linkage(replace(PENDULUM, stroke=0.3))
+        self.assertIsNone(short.jam_y)
+        # Just closed against the pressure takes less than closed with the preload on top.
+        self.assertLess(short.seal_force_min, short.seal_force)
+        self.assertAlmostEqual(compute_linkage(replace(PENDULUM, stroke=0.3, preload=0.0)).seal_force, short.seal_force_min, places=6)
+
     def test_forces_absent_rather_than_infinite(self):
         for change in ({"compliance": 0.0}, {"pin_diameter": 0.0}, {"member_width": 0.0}):
             r = compute_linkage(replace(LinkageParams(), **change))
