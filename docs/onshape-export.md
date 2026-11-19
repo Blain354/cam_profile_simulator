@@ -204,13 +204,16 @@ with the same name is never the table, nor a duplicate of it.
    variable shows what the table holds and what the simulator would write (2 API calls).
 2. The button writes the ticked rows (`POST /api/linkage/onshape/apply`, same `table_name` and
    `names`). It reads **Create the table and write N variables** when the table does not exist,
-   **Overwrite N variables in <name>** when it does. The table is looked up again first:
-   - missing: it is created, then the ticked variables are written (3 calls: list, create, write);
-   - present: it is read, the ticked rows are merged into what it holds, and the whole list is
-     posted back (3 calls: list, read, write). Variables added by hand in that table are kept,
-     as name, type, expression and description. A variable it already holds with the same value
-     is left alone.
-   With nothing ticked nothing is created or written (1 call). The reply says whether the table
+   **Overwrite N variables in <name>** when it does. The table is looked up again first.
+   A ticked row that already has the same value is left alone. A write happens only when a
+   ticked row differs or is not in the table yet:
+   - missing table: it is created, then those rows are written (3 calls: list, create, write);
+   - existing table: it is read, those rows are merged into what it holds, and the whole list
+     is posted back (3 calls: list, read, write). Variables added by hand stay, as name, type,
+     expression and description.
+   If nothing ticked actually changes, nothing is created or written. A missing table costs
+   the listing only (1 call); an existing table is listed and read (2 calls), then left as it is.
+   The reply says whether the table
    was created and gives its element id and `https://cad.onshape.com/documents/{did}/w/{wid}/e/{eid}`,
    shown as **Open the table in Onshape**.
    A variable written by the simulator gets the type of its unit: `LENGTH` for mm, `ANGLE` for
@@ -220,7 +223,8 @@ with the same name is never the table, nor a duplicate of it.
 What can go wrong:
 
 - **Created, then the write fails.** The reply has `table_created: true`, the element id and
-  `write_error`, and every ticked row is `error`. The window says the table now exists and that
+  `write_error`, and every row that was about to be written is `error` (a ticked row that
+  already matched stays `same`). The window says the table now exists and that
   the write did not go through (after a refusal nothing was written; after a timeout it may
   have landed, and the next look-up shows it). Writing again finds that table by name: no second table is made.
 - **Two clicks at once.** The button is disabled while a request runs, and the backend holds a
@@ -258,8 +262,10 @@ Request and reply:
   "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null }
 ```
 
-Row status: preview gives `update`, `same` or `new`; apply turns them into `written`, `created`,
-`skipped` (not ticked) or `error` (with `detail`). `table_name` empty or absent means the default.
+Row status: preview gives `update`, `same` or `new`. Apply sets a row that was not ticked to
+`skipped`. A ticked row that already matches stays `same` and is not changed; one that differs
+becomes `written`, one the table did not hold becomes `created`, and a failed write becomes
+`error` (with `detail`). `table_name` empty or absent means the default.
 
 Onshape REST v10 endpoints used (from the official OpenAPI description that backs the API
 explorer, `https://cad.onshape.com/api/openapi`, explorer at https://cad.onshape.com/glassworks/explorer/):
