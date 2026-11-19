@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { Pause, Play, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
+import type { SubTab } from './SubTabs';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain, sameDomainSettings } from './lib/chartDomain';
@@ -51,7 +52,15 @@ export interface LinkageParams {
   carriage_pin_diameter: number;
   carriage_pin_length: number;
   member_strength_mpa: number;
+  carriage_pin_strength_mpa: number;
 }
+
+/** A dimension the optimizer searches; its range is `${key}_min` to `${key}_max` in the search. */
+type SearchVar = 'bar1' | 'bar2' | 'lever' | 'anchor' | 'foot' | 'foot_angle';
+const SEARCH_VARS: SearchVar[] = ['bar1', 'bar2', 'lever', 'anchor', 'foot', 'foot_angle'];
+const VAR_PARAM: Record<SearchVar, keyof LinkageParams> = {
+  bar1: 'bar1_length', bar2: 'bar2_length', lever: 'lever_length', anchor: 'anchor_distance', foot: 'foot_length', foot_angle: 'foot_angle_deg',
+};
 
 interface LinkageSearch {
   bar1_min: number;
@@ -71,6 +80,16 @@ interface LinkageSearch {
   max_oversqueeze: number;
   objective: 'response' | 'target';
   max_stroke: number;
+  /** Dimensions kept at their current value: sent as min = max, their stored range left untouched. */
+  fixed: SearchVar[];
+}
+
+/** Why the one-piece search turned candidates down; absent from older backends. */
+interface SearchReport {
+  model?: 'one-piece' | 'rigid';
+  shortlist?: number;
+  passed?: number;
+  rejected?: Partial<Record<'stress' | 'thrust' | 'eye' | 'rod' | 'no_flow', number>>;
 }
 
 type Series = (number | null)[];
@@ -206,6 +225,7 @@ const COMMON = {
   carriage_pin_length: 8,
   // Assumed: about printed PETG at yield.
   member_strength_mpa: 40,
+  carriage_pin_strength_mpa: 300,
 };
 
 // All sets were measured on the concept sketches (about 30 px/mm).
@@ -215,7 +235,7 @@ const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, compliant: true },
 };
 
-const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3 };
+const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, fixed: [] as SearchVar[] };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6, max_stroke: 5 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
@@ -230,6 +250,9 @@ const BUILTIN_MATERIALS: Material[] = [
 ];
 
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
+
+/** The stored list of fixed dimensions, or none when it is missing or not a list. */
+const cleanFixed = (raw: unknown): SearchVar[] => (Array.isArray(raw) ? SEARCH_VARS.filter((v) => raw.includes(v)) : []);
 
 type LinkageChartKey = 'flow' | 'gap' | 'force' | 'stress' | 'flex' | 'chamber';
 type LinkageChartSettings = Record<LinkageChartKey, ChartDomainSettings>;
@@ -260,7 +283,7 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
         // A state stored before the pivot rod existed had the carriage end clamped by default: the real part pivots there.
         params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind },
         // Ranges stored before the foot was searched kept the anchor on the tube side only: open them up once.
-        search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}) },
+        search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}), fixed: cleanFixed(raw.search?.fixed) },
         profile: typeof raw.profile === 'string' ? raw.profile : null,
         chart_settings: resolveChartSettings(raw.chart_settings),
       };
@@ -734,7 +757,7 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
 
 // ─── Tab ─────────────────────────────────────────────────────────
 
-export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; shared: LinkageShared }) {
+export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: { kind: LinkageKind; shared: LinkageShared; mode: SubTab; onOpenExplorer: () => void }) {
   const lever = kind === 'lever';
   const pendulum = kind === 'pendulum';
   const [stored] = useState(() => loadStored(kind, shared));
@@ -749,6 +772,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const [details, setDetails] = useState(true);
   const [optimizing, setOptimizing] = useState(false);
   const [optMessage, setOptMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  /** The last search's answer, with what was fixed and searched when it was sent. */
+  const [optOut, setOptOut] = useState<{ found: boolean; report?: SearchReport; params?: LinkageParams; result?: LinkageResult; vars: SearchVar[]; fixed: SearchVar[] } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [playing, setPlaying] = useState(false);
   const [profiles, setProfiles] = useState<{ name: string }[]>([]);
@@ -767,7 +792,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const motion = useRef({ d: 0, speed: 0, stroke: 1 });
 
   const set = <K extends keyof LinkageParams>(key: K, value: LinkageParams[K]) => setParams((p) => ({ ...p, [key]: value }));
-  const setS = (key: Exclude<keyof LinkageSearch, 'objective'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
+  const setS = (key: Exclude<keyof LinkageSearch, 'objective' | 'fixed'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
 
   useEffect(() => {
     try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile, chart_settings: chartSettings })); } catch { /* ignore */ }
@@ -830,7 +855,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       const raw = await res.json();
       // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
       const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind };
-      const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search };
+      const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search, fixed: cleanFixed(raw.search?.fixed) };
       const c = resolveChartSettings(raw.chart_settings);
       setPlaying(false);
       setParams(p);
@@ -945,34 +970,45 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
     setPlaying(!playing);
   };
 
+  /** The dimensions this linkage type's optimizer searches, most influential first (as in backend optimize_linkage). */
+  const searchVars: SearchVar[] = pendulum ? ['bar2', 'bar1', 'anchor', 'foot', 'foot_angle'] : lever ? ['lever', 'bar2', 'bar1', 'anchor'] : ['bar1', 'bar2', 'anchor'];
+  // With the total height fixed the link length is computed and its range only filters: pinning it would reject almost everything.
+  const canFix = (v: SearchVar) => !(v === 'bar1' && heightFixed);
+  const fixedVars = searchVars.filter((v) => canFix(v) && search.fixed.includes(v));
+  const onePiece = pendulum && params.compliant;
+
   const optimize = async () => {
     setOptimizing(true);
     setOptMessage(null);
+    setOptOut(null);
+    const ranges: Partial<LinkageSearch> = { ...search };
+    delete ranges.fixed;
+    const pinned: Record<string, number> = {};
+    for (const v of fixedVars) {
+      const value = params[VAR_PARAM[v]] as number;
+      pinned[`${v}_min`] = value;
+      pinned[`${v}_max`] = value;
+    }
+    const sentVars = searchVars, sentFixed = fixedVars;
     try {
       const res = await apiFetch('/api/linkage/optimize', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...params, ...search }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...params, ...ranges, ...pinned }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const out = await res.json();
+      const report: SearchReport | undefined = out.search_report && typeof out.search_report === 'object' ? out.search_report : undefined;
       if (!out.found) {
-        setOptMessage({ ok: false, text: `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze (it must be above the preload).` });
+        setOptOut({ found: false, report, vars: sentVars, fixed: sentFixed });
+        setOptMessage({ ok: false, text: report
+          ? 'No design passed the limits. The design on screen was kept.'
+          : `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze (it must be above the preload).` });
         return;
       }
-      const p: LinkageParams = out.params;
+      // An older backend returns params without the newer fields: keep those from the screen.
+      const p: LinkageParams = { ...params, ...out.params, linkage_type: kind };
       setParams(p);
-      const found = pendulum
-        ? `L ${p.bar2_length.toFixed(2)}, r ${p.bar1_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}, foot ${p.foot_length.toFixed(2)} at ${p.foot_angle_deg.toFixed(0)}°`
-        : lever
-        ? `L ${p.lever_length.toFixed(2)}, c ${p.bar2_length.toFixed(2)}, r ${p.bar1_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}`
-        : `L1 ${p.bar1_length.toFixed(2)}, L2 ${p.bar2_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}`;
-      setOptMessage({
-        ok: true,
-        text: fast
-          ? `Applied ${found}: ${out.result.y_full_open != null
-            ? `full flow in ${out.result.y_full_open.toFixed(2)} mm of travel (${out.result.response_time_ms != null ? `${out.result.response_time_ms.toFixed(0)} ms` : 'motor stopped'})`
-            : `${(100 * Math.max(0, ...out.result.flow_a.map((v: number | null) => v ?? 0)) / out.result.max_flow_l_min).toFixed(0)} % of full flow, the most these limits allow`}, dead band ${out.result.y_open != null ? (2 * out.result.y_open).toFixed(2) : 'N/A'} mm, ${out.result.max_oversqueeze.toFixed(2)} mm over-squeeze. Stroke set to ${p.stroke.toFixed(2)} mm (${out.feasible} of ${out.tested} first draws feasible).`
-          : `Applied ${found}: ${(out.result.rms_error * 100).toFixed(1)} % RMS from target, ${out.result.max_oversqueeze.toFixed(2)} mm over-squeeze (${out.feasible} of ${out.tested} first draws feasible).`,
-      });
+      setOptOut({ found: true, report, params: p, result: out.result, vars: sentVars, fixed: sentFixed });
+      setOptMessage({ ok: true, text: `Applied (${out.feasible} of ${out.tested} first draws feasible).` });
     } catch {
       setOptMessage({ ok: false, text: 'Optimizer request failed.' });
     } finally {
@@ -1007,6 +1043,503 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
     modified: activeProfile == null ? !sameDomainSettings(chartSettings[key], DEFAULT_CHART_SETTINGS[key])
       : savedChartSettings != null && !sameDomainSettings(chartSettings[key], savedChartSettings[key]),
   });
+
+  const varLabel: Record<SearchVar, string> = pendulum
+    ? { bar2: 'Arm, L', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle', lever: 'Lever, L' }
+    : lever
+    ? { lever: 'Lever, L', bar2: 'Attach point, c', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle' }
+    : { bar1: 'Bar 1, L1', bar2: 'Bar 2, L2', anchor: 'Anchor, a', lever: 'Lever, L', foot: 'Foot, f', foot_angle: 'Foot angle' };
+  const varUnit = (v: SearchVar) => (v === 'foot_angle' ? '°' : 'mm');
+  const toggleFixed = (v: SearchVar, on: boolean) => setSearch((s) => ({ ...s, fixed: on ? [...s.fixed.filter((f) => f !== v), v] : s.fixed.filter((f) => f !== v) }));
+
+  // ─── Control groups shared by both menus: one state, two places ───
+
+  const heightControls = pendulum && (
+    <>
+      <Switch label="Fix total height (2·h₀)" on={heightFixed}
+        onChange={() => setParams((p) => (heightFixed
+          ? { ...p, fixed_height: 0, bar1_length: data ? Math.round(data.link_length * 1000) / 1000 : p.bar1_length }
+          : { ...p, fixed_height: data ? Math.round(data.pivot_height_y0 * 200) / 100 : 20 }))}
+        title="Impose the height between the two anchors. The link length is then computed so that the tube is still just closed at Y = 0." />
+      {heightFixed && (
+        <ParameterSlider label="Total height (mm)" value={params.fixed_height} min={4} max={40} step={0.05} onChange={(v) => set('fixed_height', v)}
+          secondaryValue={`h₀ ${(params.fixed_height / 2).toFixed(2)}`}
+          description="Distance between the top anchor of tube A's arm and the bottom anchor of tube B's arm. The carriage pivot sits halfway at Y = 0." />
+      )}
+    </>
+  );
+
+  const padSlider = pendulum && (
+    <ParameterSlider label="Contact pad (mm)" value={params.pad_length} min={0} max={6} step={0.05} onChange={(v) => set('pad_length', v)}
+      secondaryValue={params.pad_length === 0 ? 'point' : undefined}
+      description="Length of the flat segment that touches the tube, centred on the end of the foot and square to it. Its ends are rounded with the pinch pin diameter. As the arm tilts, the end nearer the wall does the pinching. 0 is a round pin." />
+  );
+
+  const pneumaticControls = (
+    <div className="space-y-5 pt-2">
+      <ParameterSlider label="Pressure (PSI)" value={params.input_pressure_psi} min={0} max={150} step={1} onChange={(v) => set('input_pressure_psi', v)}
+        secondaryValue={`${(params.input_pressure_psi * 6.89476).toFixed(1)} kPa`} />
+      <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1} max={12} step={0.1} onChange={(v) => set('tube_id', v)} />
+      <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1} max={16} step={0.1} onChange={(v) => set('tube_od', v)} />
+      <ParameterSlider label="Compliance" value={params.compliance} min={0} max={5} step={0.01} onChange={(v) => set('compliance', v)} />
+      <ParameterSlider label="Chamber vol (mL)" value={params.chamber_volume_ml} min={0} max={200} step={0.5} onChange={(v) => set('chamber_volume_ml', v)}
+        secondaryValue={params.chamber_volume_ml === 0 ? 'no traces' : undefined}
+        description="Chamber fed by tube A and vented by tube B, for the in / out traces." />
+    </div>
+  );
+
+  const layoutControls = (
+    <>
+      <ParameterSlider label="Stroke (mm)" value={params.stroke} min={0.5} max={10} step={0.1} onChange={(v) => set('stroke', v)}
+        description="Carriage travel each way from closed (Y = 0) to the target full opening." />
+      <ParameterSlider label="Pivot offset (mm)" value={params.pivot_offset} min={0} max={10} step={0.05} onChange={(v) => set('pivot_offset', v)}
+        description="Carriage pivot distance from the screw axis, on the side opposite its tube." />
+      <ParameterSlider label="Tube centre (mm)" value={params.tube_center_x} min={3} max={20} step={0.05} onChange={(v) => set('tube_center_x', v)}
+        secondaryValue={data ? `wall ${data.wall_x.toFixed(2)}` : undefined}
+        description="Tube axis distance from the screw axis. The tube rests on a wall half an OD further out." />
+      <ParameterSlider label="Pinch pin Ø (mm)" value={params.pin_diameter} min={0} max={4} step={0.1} onChange={(v) => set('pin_diameter', v)}
+        description="Diameter of the pin that presses on the tube." />
+      <ParameterSlider label="Preload (mm)" value={params.preload} min={0} max={0.5} step={0.01} onChange={(v) => set('preload', v)}
+        description="Extra squeeze past the just-closed gap at Y = 0, as a sealing margin. It is also the dead band around Y = 0." />
+    </>
+  );
+
+  // ─── Explorer menu ───
+
+  const geometrySliders: Record<SearchVar, ReactElement | null> = {
+    bar2: pendulum
+      ? <ParameterSlider key="bar2" label="Arm, L (mm)" value={params.bar2_length} min={2} max={30} step={0.05} onChange={(v) => set('bar2_length', v)}
+          description="Fixed anchor on the opposite wall to the joint where the link pulls. The arm hangs along the tube." />
+      : lever
+      ? <ParameterSlider key="bar2" label="Attach point, c (mm)" value={params.bar2_length} min={1} max={25} step={0.05} onChange={(v) => set('bar2_length', v)}
+          description="Distance along the lever from the anchor to the joint where the link pulls. L / c is the lever's amplification." />
+      : <ParameterSlider key="bar2" label="Bar 2, L2 (mm)" value={params.bar2_length} min={1} max={20} step={0.05} onChange={(v) => set('bar2_length', v)}
+          description="Elbow to the fixed anchor on the base." />,
+    bar1: pendulum
+      ? <ParameterSlider key="bar1" label="Link, r (mm)" value={heightFixed && data ? Math.round(data.link_length * 1000) / 1000 : params.bar1_length}
+          min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)} disabled={heightFixed}
+          secondaryValue={heightFixed ? 'from height' : undefined}
+          description="Carriage pivot (blue) to the joint at the end of the arm. Computed when the total height is fixed." />
+      : lever
+      ? <ParameterSlider key="bar1" label="Link, r (mm)" value={params.bar1_length} min={1} max={25} step={0.05} onChange={(v) => set('bar1_length', v)}
+          description="Carriage pivot (blue) to the joint on the lever." />
+      : <ParameterSlider key="bar1" label="Bar 1, L1 (mm)" value={params.bar1_length} min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)}
+          description="Carriage pivot (blue) to the elbow that pinches the tube." />,
+    lever: <ParameterSlider key="lever" label="Lever, L (mm)" value={params.lever_length} min={4} max={30} step={0.05} onChange={(v) => set('lever_length', v)}
+      description="Fixed anchor to the tip that pinches the tube. The lever reaches across the screw." />,
+    anchor: <ParameterSlider key="anchor" label="Anchor dist, a (mm)" value={params.anchor_distance} min={-5} max={10} step={0.01} onChange={(v) => set('anchor_distance', v)}
+      description={pendulum
+        ? 'Fixed anchor offset from the centre of the base, toward its tube, on the wall opposite the carriage side it starts from.'
+        : lever
+        ? 'Fixed anchor offset from the centre of the base, on the side opposite its tube.'
+        : 'Fixed anchor offset from the centre of the base, toward the tube. Negative puts it on the far side of the screw.'} />,
+    foot: <ParameterSlider key="foot" label="Foot, f (mm)" value={params.foot_length} min={0} max={8} step={0.05} onChange={(v) => set('foot_length', v)}
+      description="Rigid foot from the joint to the centre of the pin that presses on the tube." />,
+    foot_angle: <ParameterSlider key="foot_angle" label="Foot angle (deg)" value={params.foot_angle_deg} min={0} max={180} step={1} onChange={(v) => set('foot_angle_deg', v)}
+      description="Angle between the arm and the foot: 90 is square to the arm, toward the tube." />,
+  };
+
+  const explorerMenu = (
+    <>
+      <Accordion title="Geometry">
+        <div className="space-y-5 pt-2">
+          {searchVars.map((v) => geometrySliders[v])}
+          {padSlider}
+          {pendulum && (
+            <>
+              <div className="space-y-1.5">{heightControls}</div>
+              <div className="space-y-1.5">
+                <Switch label="One piece, built into the shell" on={params.compliant} onChange={(v) => set('compliant', v)}
+                  title="Arm, foot and link are a single part fixed to the outer shell at the anchor. Nothing pivots: the carriage bends the part. Off: three rigid bars on pivots." />
+                {params.compliant && (
+                  <>
+                    <Switch label="Carriage end clamped (no pivot rod)" on={params.carriage_clamped} onChange={(v) => set('carriage_clamped', v)}
+                      title="Off: the link turns on the steel rod in the carriage (blue dot), the only real pivot. On: the link is clamped in the carriage and cannot turn there." />
+                    {!params.carriage_clamped && (
+                      <>
+                        <ParameterSlider label="Pivot rod diameter" value={params.carriage_pin_diameter} min={0.5} max={4} step={0.1} onChange={(v) => set('carriage_pin_diameter', v)}
+                          description="Steel rod the link turns on at the carriage." />
+                        <ParameterSlider label="Pivot rod length" value={params.carriage_pin_length} min={2} max={20} step={0.5} onChange={(v) => set('carriage_pin_length', v)}
+                          description="Half of it sits in the carriage, half in the link's eye." />
+                      </>
+                    )}
+                    <p className="text-[10px] leading-snug text-neutral-400">
+                      The part is made in its Y = 0 shape and only bends. Its section, modulus and strength are under Material and section. Small-deflection beam model: trust it up to about 10° of rotation.
+                    </p>
+                  </>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Switch label="Curved link, tangent to the foot" on={params.link_curved} onChange={(v) => set('link_curved', v)}
+                  title="The link becomes an arc of a circle from the carriage pivot to the joint, arriving along the foot at Y = 0. On pivots the opening law is the same and the arc bends under the pull. In one piece the arc is a softer spring than a straight link: less thrust and less stress for the same travel." />
+                {params.link_curved && data && data.link_arc_radius != null && (
+                  <p className="text-[10px] leading-snug text-neutral-400">
+                    {`Arc radius ${data.link_arc_radius.toFixed(2)} mm, ${data.link_arc_sag.toFixed(2)} mm off the straight line, meeting the joint at ${data.link_arc_half_angle_deg.toFixed(0)}° from it.`}
+                  </p>
+                )}
+                {params.link_curved && data && data.link_arc_radius == null && (
+                  <p className="text-[10px] leading-snug text-neutral-400">The foot is already in line with the link, or has no length: the link stays straight.</p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </Accordion>
+
+      <Accordion title="Layout" defaultOpen={false}>
+        <div className="space-y-5 pt-2">
+          <p className="text-[10px] leading-snug text-neutral-400">
+            The second linkage is this one mirrored left to right and top to bottom, so the carriage opens one tube while it squeezes the other.
+          </p>
+          {layoutControls}
+        </div>
+      </Accordion>
+
+      <Accordion title="Pneumatic system" defaultOpen={false}>
+        {pneumaticControls}
+      </Accordion>
+
+      <Accordion title="Motor and screw" defaultOpen={false}>
+        <div className="space-y-5 pt-2">
+          <p className="text-[10px] leading-snug text-neutral-400">
+            Assumed defaults: set them to the real motor and screw.
+          </p>
+          <ParameterSlider label="Motor torque (mN·m)" value={params.motor_torque_mnm} min={1} max={300} step={1} onChange={(v) => set('motor_torque_mnm', v)}
+            secondaryValue={`${(params.motor_torque_mnm / 98.0665).toFixed(2)} kg·cm`}
+            description="Torque the gearmotor gives at its output shaft at the firmware's current limit (150 mA on the 100 RPM profile), not its stall torque." />
+          <ParameterSlider label="Motor speed (RPM)" value={params.motor_speed} min={10} max={1000} step={10} onChange={(v) => set('motor_speed', v)}
+            secondaryValue="no load"
+            description="Rated no-load speed of the motor. With the load factor it sets how fast the carriage runs the cycle 0, +stroke, 0, -stroke, 0." />
+          <ParameterSlider label="Load factor (%)" value={Math.round(params.speed_factor * 100)} min={10} max={100} step={1} onChange={(v) => set('speed_factor', v / 100)}
+            secondaryValue={`${loadedRpm.toFixed(0)} RPM, ${speed.toFixed(2)} mm/s`}
+            description="Share of the no-load speed the motor keeps under load and friction: 85 % makes a 100 RPM motor run at 85 RPM. Used by the Oscillate button and by the chamber traces." />
+          <ParameterSlider label="Screw Ø (mm)" value={params.screw_diameter} min={1} max={12} step={0.1} onChange={(v) => set('screw_diameter', v)}
+            secondaryValue={`pitch ${params.lead_screw_pitch}`}
+            description="Major diameter of the lead screw: 3 for M3." />
+          <ParameterSlider label="Thread friction" value={params.screw_friction} min={0.05} max={0.6} step={0.01} onChange={(v) => set('screw_friction', v)}
+            description="Friction coefficient between the screw and the nut. It sets how much of the motor torque becomes thrust, and whether the screw holds its position with the motor off." />
+        </div>
+      </Accordion>
+
+      <Accordion title="Material and section" defaultOpen={false}>
+        <div className="space-y-5 pt-2">
+          <div className="space-y-1.5 rounded-lg border border-neutral-700 p-2">
+            <div className="flex items-center gap-2">
+              <label htmlFor={`linkage-material-${kind}`} className="shrink-0 text-xs font-semibold text-neutral-400">Material</label>
+              <select id={`linkage-material-${kind}`} value={material?.name ?? ''} onChange={(e) => pickMaterial(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100">
+                {!material && <option value="">Custom values</option>}
+                {materials.map((m) => <option key={m.name} value={m.name}>{`${m.name} (${(m.modulus_mpa / 1000).toFixed(1)} GPa, ${m.strength_mpa} MPa)`}</option>)}
+              </select>
+              <Button variant="ghost" type="button" onClick={deleteMaterial} disabled={!material || material.builtin}
+                title={material?.builtin ? 'A built-in material cannot be deleted' : 'Delete this material'} aria-label="Delete this material"
+                className="shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:text-red-400 disabled:opacity-40">
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
+            {!material && (
+              <div className="flex items-center gap-2">
+                <Input type="text" value={materialName} maxLength={60} placeholder="Name these values" aria-label="Material name"
+                  onChange={(e) => setMaterialName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveMaterial(); }}
+                  className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100" />
+                <Button variant="ghost" type="button" onClick={saveMaterial}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-neutral-700 px-2 py-1 text-xs text-neutral-200">
+                  <Save className="w-3.5 h-3.5" /> Save material
+                </Button>
+              </div>
+            )}
+            {materialMessage && <p className="text-[10px] leading-snug text-red-400" role="alert">{materialMessage}</p>}
+            <p className="text-[10px] leading-snug text-neutral-400">
+              A material is the modulus and the strength below. PETG and PLA are indicative values for printed parts. To add your own, set the two sliders, name them and save.
+            </p>
+          </div>
+          <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={100} onChange={(v) => set('member_modulus_mpa', v)}
+            secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(1)} GPa`}
+            description="Young's modulus of the bars: about 2 500 for printed PETG, 3 500 for PLA, 70 000 for aluminium." />
+          <ParameterSlider label="Material strength (MPa)" value={params.member_strength_mpa} min={5} max={1000} step={1} onChange={(v) => set('member_strength_mpa', v)}
+            description="Stress the material may see; the one-piece pendulum is checked against it. Assumed 40 for printed PETG at yield; use less for a part that must flex many times, about 30 to 60 for PLA, 20 to 30 for TPU-like or nylon parts in fatigue." />
+          <ParameterSlider label="Bar width (mm)" value={params.member_width} min={0.5} max={10} step={0.1} onChange={(v) => set('member_width', v)}
+            description="Bar section in the plane of the mechanism. Bending stiffness goes with its cube." />
+          <ParameterSlider label="Bar thickness (mm)" value={params.member_thickness} min={0.5} max={15} step={0.1} onChange={(v) => set('member_thickness', v)}
+            description="Bar section out of the plane of the mechanism." />
+          {onePiece && !params.carriage_clamped && (
+            <ParameterSlider label="Pivot rod strength (MPa)" value={params.carriage_pin_strength_mpa} min={50} max={2000} step={10} onChange={(v) => set('carriage_pin_strength_mpa', v)}
+              description="Bending stress the steel pivot rod may see. Assumed 300." />
+          )}
+          <div className="space-y-1.5">
+            <Switch label="Tube pushes the pin back" on={params.contact_deformation} onChange={(v) => set('contact_deformation', v)}
+              title="On: at each position the crushed tube and the flexing bars are balanced, and the flow, the dead band and the response use the gap that results. Off: rigid bars, the gap is the bar geometry alone." />
+            <p className="text-[10px] leading-snug text-neutral-400">
+              {params.contact_deformation
+                ? 'Flow, dead band and response use the gap left once the crushed tube and the flexing bars balance. The search still uses rigid bars.'
+                : 'Rigid bars: the gap is the bar geometry alone.'}
+            </p>
+          </div>
+        </div>
+      </Accordion>
+
+      <Accordion title="Results">
+        <div className="space-y-4 pt-2">
+          {data && data.forces_message && (
+            <p className="rounded-lg border border-neutral-700 p-2 text-xs text-neutral-400" role="status">{data.forces_message}</p>
+          )}
+          {data && data.flexure && data.max_stress_mpa != null && (
+            <div className="space-y-2 pb-1">
+              <h3 className="text-xs font-semibold text-neutral-400 mb-2">One-piece part{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
+              <StatRow label={`Worst stress (${data.max_stress_where}${data.max_stress_spot === 'shell' ? ', at the shell' : data.max_stress_spot === 'joint' ? ', at the joint' : data.max_stress_spot === 'carriage' ? ', at the carriage' : ''})`} highlight value={
+                <span className={data.stress_margin != null && data.stress_margin < 1 ? 'text-red-400' : data.stress_margin != null && data.stress_margin < 2 ? 'text-amber-400' : undefined}>
+                  {`${data.max_stress_mpa.toFixed(0)} MPa${data.stress_margin != null ? `, × ${data.stress_margin.toFixed(2)} of ${params.member_strength_mpa} MPa` : ''}`}
+                </span>} />
+              {data.stress_limit_y != null && <StatRow label="Past the strength from" value={<span className="text-red-400">{`Y = ±${data.stress_limit_y.toFixed(2)} mm`}</span>} />}
+              {data.carriage_bearing_mpa != null && (
+                <>
+                  <StatRow label="Pressure in the link's eye" value={
+                    <span className={params.member_strength_mpa > 0 && data.carriage_bearing_mpa > params.member_strength_mpa ? 'text-red-400' : undefined}>
+                      {`${data.carriage_bearing_mpa.toFixed(1)} MPa`}
+                    </span>} />
+                  {data.carriage_pin_bending_mpa != null && <StatRow label="Rod bending at the carriage face" value={
+                    <span className={data.carriage_pin_bending_mpa > params.carriage_pin_strength_mpa ? 'text-red-400' : undefined}>
+                      {`${data.carriage_pin_bending_mpa.toFixed(0)} MPa`}
+                    </span>} />}
+                </>
+              )}
+              <StatRow label="Largest rotation" value={data.max_rotation_deg == null ? 'N/A'
+                : <span className={data.max_rotation_deg > 10 ? 'text-amber-400' : undefined}>{`${data.max_rotation_deg.toFixed(1)}°`}</span>} />
+              <StatRow label="Thrust to bend both parts, no tube" value={n2(data.spring_rate, 'N/mm', 1)} />
+              <StatRow label="Pin moves, per mm of carriage" value={`${data.sensitivity_y0.toFixed(3)} mm`} />
+              {data.carriage_bearing_mpa != null && <StatRow label="Worst load on the pivot rod" value={n2(data.carriage_load, 'N', 1)} />}
+              {data.stress_margin != null && data.stress_margin < 1 && (
+                <p className="text-[10px] leading-snug text-red-400" role="alert">
+                  The part is stressed past its strength within this stroke. Make it thinner in the plane (bar width), longer, softer (modulus), or shorten the stroke.
+                </p>
+              )}
+              <p className="text-[10px] leading-snug text-neutral-400">
+                One section for arm, foot and link. Fillets at the joints are not modelled: a generous radius there lowers the real peak, a sharp corner raises it.
+                {data.carriage_bearing_mpa != null && ' The rod sits half in the carriage, half in the eye of the link: the eye pressure is the load over rod diameter × half the rod length, and the rod bends where it leaves the carriage, with the load at the middle of the eye. The eye itself is not drawn, the pressure in the carriage bore is not checked, and friction on the rod is ignored.'}
+              </p>
+            </div>
+          )}
+          {data && forces && (
+            <div className="space-y-2 pb-1">
+              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Forces at {params.input_pressure_psi} PSI{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
+              <StatRow label="Seal at Y=0 holds" highlight value={data.seal_pressure_y0_psi == null ? 'N/A'
+                : <span className={data.sealed_after_flex ? undefined : 'text-red-400'}>{`${data.seal_pressure_y0_psi.toFixed(1)} PSI${data.sealed_after_flex ? '' : ', leaks'}`}</span>} />
+              <StatRow label="Motor margin" highlight value={data.motor_margin == null ? 'N/A'
+                : <span className={data.motor_margin < 1 ? 'text-red-400' : undefined}>{`× ${data.motor_margin.toFixed(1)} (${n2(data.motor_torque_needed_mnm, 'mN·m', 1)})`}</span>} />
+              {jamY != null && <StatRow label="Pin hits the wall at" value={<span className="text-red-400">{`Y = ±${jamY.toFixed(2)} mm`}</span>} />}
+              {data.stall_y != null && <StatRow label="Motor stalls from" value={<span className="text-red-400">{`Y = ±${data.stall_y.toFixed(2)} mm`}</span>} />}
+              <StatRow label="Screw holds with motor off" value={data.screw_self_locking == null ? 'N/A' : data.screw_self_locking ? 'yes' : 'no'} />
+              {data.buckling_factor != null && (
+                <StatRow label="Buckling margin" value={<span className={data.buckling_factor < 3 ? 'text-amber-400' : undefined}>{`× ${data.buckling_factor.toFixed(1)}`}</span>} />
+              )}
+              <StatRow label={`Least force to seal ${params.input_pressure_psi} PSI`} value={`${n2(data.seal_force_min, 'N')} per tube`} highlight />
+              <StatRow label="Pin force at Y=0, with preload" value={`${n2(data.seal_force, 'N')} per tube`} highlight />
+              <StatRow label="Fold flat / squeeze / air" value={`${data.seal_force_flatten!.toFixed(2)} / ${data.seal_force_squeeze!.toFixed(2)} / ${data.seal_force_pressure!.toFixed(2)} N`} />
+              <StatRow label="Tube wall modulus" value={n2(data.tube_modulus_mpa, 'MPa')} />
+              <StatRow label="Worst pin force" value={n2(data.max_pinch_force, 'N', 1)} />
+              <StatRow label="Worst wall squeeze" value={<span className={data.max_wall_strain! > 0.25 ? 'text-amber-400' : undefined}>{(data.max_wall_strain! * 100).toFixed(0)} %</span>} />
+              <StatRow label="Screw thrust at Y=0" value={n2(data.thrust_y0, 'N')} />
+              <StatRow label="Worst screw thrust" value={n2(data.thrust_needed, 'N', 1)} />
+              <StatRow label="Motor thrust available" value={n2(data.thrust_available, 'N', 1)} />
+              <StatRow label="Pin pushed back at Y=0" value={n2(data.flex_y0, 'mm', 4)} />
+              <StatRow label="Bar stiffness at the pin" value={n2(data.pin_stiffness, 'N/mm', 0)} />
+              {!data.flexure && <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />}
+              <StatRow label="Worst side load on carriage" value={n2(data.max_side_load, 'N', 1)} />
+              {data.link_bending_stress_mpa != null && (
+                <StatRow label="Curved link bending" value={`${data.link_bending_stress_mpa.toFixed(1)} MPa, ${data.link_arc_sag.toFixed(2)} mm off line`} />
+              )}
+              <StatRow label="Worst bending / axial stress" value={data.max_bending_stress_mpa == null || data.max_axial_stress_mpa == null ? 'N/A' : `${data.max_bending_stress_mpa.toFixed(1)} / ${data.max_axial_stress_mpa.toFixed(1)} MPa`} />
+              {jamY != null ? (
+                <p className="text-[10px] leading-snug text-red-400" role="alert">
+                  {`The pin reaches the wall through the closed tube at Y = ±${jamY.toFixed(2)} mm${data.y_full_open != null && data.y_full_open > jamY ? `, before the other tube is fully open (${data.y_full_open.toFixed(2)} mm)` : ''}: the mechanism jams there whatever the motor. Forces, margin and flex are given up to that travel only.`}
+                </p>
+              ) : data.max_wall_strain! > 0.25 && (
+                <p className="text-[10px] leading-snug text-amber-400">
+                  The closed tube is squeezed past 25 % of its walls within this stroke: worst-case figures there are an order of magnitude.
+                </p>
+              )}
+            </div>
+          )}
+          {data && (
+            <div className="space-y-2 pb-1">
+              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Derived</h3>
+              <StatRow label="Full flow at" value={data.y_full_open != null ? `Y = ${data.y_full_open.toFixed(2)} mm` : 'not reached'} />
+              <StatRow label="Time to full flow" value={data.response_time_ms != null ? `${data.response_time_ms.toFixed(0)} ms` : 'N/A'} highlight />
+              <StatRow label="Dead band (both ways)" value={data.y_open != null ? `${(2 * data.y_open).toFixed(3)} mm` : 'N/A'} />
+              <StatRow label="Closed-tube over-squeeze" value={`${data.max_oversqueeze.toFixed(3)} mm`} />
+              <StatRow label="Deviation from target" value={data.rms_error != null ? `${(data.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />
+              <StatRow label="Pivot height at Y=0" value={`${data.pivot_height_y0.toFixed(3)} mm`} highlight />
+              <StatRow label="Anchor to anchor height" value={`${(2 * data.pivot_height_y0).toFixed(2)} mm`} />
+              <StatRow label="Gain at Y=0" value={`${data.sensitivity_y0.toFixed(3)} mm/mm`} />
+              <StatRow label="Pinch slide on tube" value={`${data.pinch_slide.toFixed(2)} mm`} />
+              <StatRow label="Max flow (static)" value={`${data.max_flow_l_min.toFixed(2)} L/min`} />
+              {data.time_ms.length > 0 && (
+                <StatRow label="Air in / out per cycle" value={`${data.volume_in_ml.toFixed(1)} / ${data.volume_out_ml.toFixed(1)} mL`} />
+              )}
+            </div>
+          )}
+        </div>
+      </Accordion>
+    </>
+  );
+
+  // ─── Finder menu ───
+
+  const res = optOut?.result;
+  const report = optOut?.report;
+  const rejected = report?.rejected;
+  const rejectedText = rejected
+    ? ([['stress', 'part stress'], ['thrust', 'screw thrust'], ['eye', 'eye pressure'], ['rod', 'rod bending'], ['no_flow', 'no flow']] as const)
+      .filter(([k]) => typeof rejected[k] === 'number' && rejected[k]! > 0)
+      .map(([k, name]) => `${name} ${rejected[k]}`).join(', ')
+    : '';
+
+  const finderMenu = (
+    <>
+      <Accordion title="Goal">
+        <div className="space-y-3 pt-2">
+          <div className="flex gap-1 rounded-lg border border-neutral-700 p-1">
+            {(['response', 'target'] as const).map((goal) => (
+              <Button key={goal} variant="ghost" type="button" aria-pressed={search.objective === goal}
+                onClick={() => setSearch((s) => ({ ...s, objective: goal }))}
+                className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${search.objective === goal ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
+                {goal === 'response' ? 'Most flow, least dead band' : 'Follow target'}
+              </Button>
+            ))}
+          </div>
+          <p className="text-[10px] leading-snug text-neutral-400">
+            {fast
+              ? 'Most flow first, then the narrowest dead band, then the shortest travel, without squeezing the closed tube past the limit. The stroke is then set to the travel used.'
+              : 'Opening as close as possible to the target curve over the stroke.'}
+          </p>
+          {fast && (
+            <ParameterSlider label="Max travel (mm)" value={search.max_stroke} min={0.5} max={10} step={0.1} onChange={(v) => setS('max_stroke', v)}
+              description="Longest carriage travel each way the search may use to reach full flow." />
+          )}
+          {!fast && <ParameterSlider label="Target exponent" value={params.target_exponent} min={0.3} max={3} step={0.05} onChange={(v) => set('target_exponent', v)}
+            secondaryValue={params.target_exponent === 1 ? 'linear' : undefined}
+            description="Target opening = (Y / stroke)^exponent, closed at Y = 0 and full bore at the end of the stroke. 1 is strictly proportional; above 1 is finer near closure." />}
+        </div>
+      </Accordion>
+
+      <Accordion title="Imposed: pneumatic" defaultOpen={false}>
+        {pneumaticControls}
+      </Accordion>
+
+      <Accordion title="Imposed: layout" defaultOpen={false}>
+        <div className="space-y-5 pt-2">
+          {heightControls && <div className="space-y-1.5">{heightControls}</div>}
+          {layoutControls}
+          {padSlider}
+        </div>
+      </Accordion>
+
+      <Accordion title="Geometry to search">
+        <div className="space-y-3 pt-2">
+          {searchVars.map((v) => {
+            const fixable = canFix(v);
+            const fixed = fixable && search.fixed.includes(v);
+            const current = v === 'bar1' && heightFixed && data ? data.link_length : params[VAR_PARAM[v]] as number;
+            return (
+              <div key={v} className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-neutral-300">{varLabel[v]}</span>
+                  {fixable ? (
+                    <label className="flex items-center gap-1.5 text-xs text-neutral-400">
+                      <input type="checkbox" checked={fixed} onChange={(e) => toggleFixed(v, e.target.checked)} className="accent-amber-500" />
+                      Fixed
+                    </label>
+                  ) : <span className="text-xs text-neutral-500">from height</span>}
+                </div>
+                {fixed
+                  ? <p className="text-xs text-neutral-400">{`Kept at ${current.toFixed(v === 'foot_angle' ? 0 : 2)} ${varUnit(v)}`}</p>
+                  : <RangeRow label="Search" min={search[`${v}_min` as const]} max={search[`${v}_max` as const]} onMin={(x) => setS(`${v}_min` as const, x)} onMax={(x) => setS(`${v}_max` as const, x)} />}
+              </div>
+            );
+          })}
+          <p className="text-[10px] leading-snug text-neutral-400">A fixed dimension keeps its value on screen; the others are searched between their two ends.</p>
+        </div>
+      </Accordion>
+
+      <Accordion title="Limits">
+        <div className="space-y-3 pt-2">
+          <ParameterSlider label="Max over-squeeze" value={search.max_oversqueeze} min={0.05} max={2} step={0.05} onChange={(v) => setS('max_oversqueeze', v)}
+            description="How far past closure the closed tube may be crushed while the other one opens over the stroke." />
+          {!heightFixed && <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />}
+          {onePiece && (
+            <div className="space-y-2 rounded-lg border border-neutral-700 p-2">
+              <StatRow label="Part stress under" value={`${params.member_strength_mpa} MPa`} />
+              <StatRow label="Screw thrust under" value={data?.thrust_available != null ? `${data.thrust_available.toFixed(1)} N` : 'motor thrust'} />
+              {!params.carriage_clamped && (
+                <>
+                  <StatRow label="Eye pressure under" value={`${params.member_strength_mpa} MPa`} />
+                  <StatRow label="Rod bending under" value={`${params.carriage_pin_strength_mpa} MPa`} />
+                </>
+              )}
+              <p className="text-[10px] leading-snug text-neutral-400">
+                These apply to the one-piece part only. Strengths and the motor are set in Explorer.
+              </p>
+            </div>
+          )}
+        </div>
+      </Accordion>
+
+      <div className="space-y-3">
+        <Button variant="ghost" type="button" onClick={optimize} disabled={optimizing}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-2 text-sm font-bold text-amber-300 hover:bg-amber-500/30 disabled:opacity-50">
+          <Target className="w-4 h-4" /> {optimizing ? 'Searching…' : 'Find dimensions'}
+        </Button>
+        {optimizing && (
+          <p className="text-xs text-neutral-400" role="status">
+            {onePiece ? 'Checking the one-piece part can take about ten seconds.' : 'Searching…'}
+          </p>
+        )}
+        {optMessage && (
+          <p className={`text-xs leading-snug ${optMessage.ok ? 'text-emerald-400' : 'text-red-400'}`} role="status">{optMessage.text}</p>
+        )}
+        {report && typeof report.passed === 'number' && typeof report.shortlist === 'number' && (
+          <p className="text-xs text-neutral-300">{`${report.passed} of ${report.shortlist} shortlisted designs passed the limits.`}</p>
+        )}
+        {optOut?.found && onePiece && !report && (
+          <p className="text-[10px] leading-snug text-amber-400">
+            This search worked on the pivoted version of this linkage. Check what it found against the one-piece figures.
+          </p>
+        )}
+        {optOut && !optOut.found && rejectedText && (
+          <p className="text-xs text-neutral-400">{`Rejected for: ${rejectedText}.`}</p>
+        )}
+        {optOut?.found && optOut.params && res && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-neutral-400">Found dimensions</h3>
+            {optOut.vars.map((v) => (
+              <StatRow key={v} label={`${varLabel[v]}${optOut.fixed.includes(v) ? ' (fixed)' : ''}`}
+                value={`${(optOut.params![VAR_PARAM[v]] as number).toFixed(v === 'foot_angle' ? 0 : 2)} ${varUnit(v)}`} />
+            ))}
+            <h3 className="text-xs font-semibold text-neutral-400 pt-1">Outputs</h3>
+            <StatRow label="Flow" highlight value={res.y_full_open != null
+              ? `full at ${res.y_full_open.toFixed(2)} mm${res.response_time_ms != null ? `, ${res.response_time_ms.toFixed(0)} ms` : ''}`
+              : res.max_flow_l_min > 0 ? `${(100 * Math.max(0, ...res.flow_a.map((f) => f ?? 0)) / res.max_flow_l_min).toFixed(0)} % of full` : 'N/A'} />
+            <StatRow label="Dead band (both ways)" value={res.y_open != null ? `${(2 * res.y_open).toFixed(2)} mm` : 'N/A'} />
+            <StatRow label="Travel used" value={`${optOut.params.stroke.toFixed(2)} mm`} />
+            {!fast && <StatRow label="Deviation from target" value={res.rms_error != null ? `${(res.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />}
+            <StatRow label="Over-squeeze" value={`${res.max_oversqueeze.toFixed(2)} mm`} />
+            {res.flexure && (
+              <>
+                <StatRow label="Worst stress" value={n2(res.max_stress_mpa, 'MPa', 0)} />
+                <StatRow label="Worst screw thrust" value={n2(res.thrust_needed, 'N', 1)} />
+                {res.carriage_bearing_mpa != null && <StatRow label="Eye pressure" value={n2(res.carriage_bearing_mpa, 'MPa', 1)} />}
+                {res.carriage_pin_bending_mpa != null && <StatRow label="Rod bending" value={n2(res.carriage_pin_bending_mpa, 'MPa', 0)} />}
+              </>
+            )}
+            <Button variant="ghost" type="button" onClick={onOpenExplorer}
+              className="w-full rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300">
+              Open in Explorer
+            </Button>
+          </div>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
@@ -1055,352 +1588,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-          <Accordion title="Bars (design variables)">
-            <div className="space-y-5 pt-2">
-              {pendulum ? (
-                <>
-                  <div className="space-y-1.5">
-                    <Button variant="ghost" type="button" role="switch" aria-checked={heightFixed}
-                      onClick={() => setParams((p) => (heightFixed
-                        ? { ...p, fixed_height: 0, bar1_length: data ? Math.round(data.link_length * 1000) / 1000 : p.bar1_length }
-                        : { ...p, fixed_height: data ? Math.round(data.pivot_height_y0 * 200) / 100 : 20 }))}
-                      className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${heightFixed ? 'border-amber-500/50 text-amber-300' : 'border-neutral-700 text-neutral-300'}`}
-                      title="Impose the height between the two anchors. The link length is then computed so that the tube is still just closed at Y = 0.">
-                      <span>Fix total height (2·h₀)</span>
-                      <span aria-hidden="true" className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${heightFixed ? 'bg-amber-600' : 'bg-neutral-600'}`}>
-                        <span className={`h-4 w-4 rounded-full bg-white transition-transform ${heightFixed ? 'translate-x-4' : ''}`} />
-                      </span>
-                    </Button>
-                  </div>
-                  {heightFixed && (
-                    <ParameterSlider label="Total height (mm)" value={params.fixed_height} min={4} max={40} step={0.05} onChange={(v) => set('fixed_height', v)}
-                      secondaryValue={`h₀ ${(params.fixed_height / 2).toFixed(2)}`}
-                      description="Distance between the top anchor of tube A's arm and the bottom anchor of tube B's arm. The carriage pivot sits halfway at Y = 0." />
-                  )}
-                  <ParameterSlider label="Arm, L (mm)" value={params.bar2_length} min={2} max={30} step={0.05} onChange={(v) => set('bar2_length', v)}
-                    description="Fixed anchor on the opposite wall to the joint where the link pulls. The arm hangs along the tube." />
-                  <ParameterSlider label="Link, r (mm)" value={heightFixed && data ? Math.round(data.link_length * 1000) / 1000 : params.bar1_length}
-                    min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)} disabled={heightFixed}
-                    secondaryValue={heightFixed ? 'from height' : undefined}
-                    description="Carriage pivot (blue) to the joint at the end of the arm. Computed when the total height is fixed." />
-                  <div className="space-y-1.5">
-                    <Switch label="One piece, built into the shell" on={params.compliant} onChange={(v) => set('compliant', v)}
-                      title="Arm, foot and link are a single part fixed to the outer shell at the anchor. Nothing pivots: the carriage bends the part. Off: three rigid bars on pivots." />
-                    {params.compliant && (
-                      <>
-                        <Switch label="Carriage end clamped (no pivot rod)" on={params.carriage_clamped} onChange={(v) => set('carriage_clamped', v)}
-                          title="Off: the link turns on the steel rod in the carriage (blue dot), the only real pivot. On: the link is clamped in the carriage and cannot turn there." />
-                        {!params.carriage_clamped && (
-                          <>
-                            <ParameterSlider label="Pivot rod diameter" value={params.carriage_pin_diameter} min={0.5} max={4} step={0.1} onChange={(v) => set('carriage_pin_diameter', v)}
-                              description="Steel rod the link turns on at the carriage." />
-                            <ParameterSlider label="Pivot rod length" value={params.carriage_pin_length} min={2} max={20} step={0.5} onChange={(v) => set('carriage_pin_length', v)}
-                              description="Half of it sits in the carriage, half in the link's eye." />
-                          </>
-                        )}
-                        <p className="text-[10px] leading-snug text-neutral-400">
-                          The part is made in its Y = 0 shape and only bends. Its section, modulus and strength are under Forces and structure. Small-deflection beam model: trust it up to about 10° of rotation.
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  <div className="space-y-1.5">
-                    <Switch label="Curved link, tangent to the foot" on={params.link_curved} onChange={(v) => set('link_curved', v)}
-                      title="The link becomes an arc of a circle from the carriage pivot to the joint, arriving along the foot at Y = 0. On pivots the opening law is the same and the arc bends under the pull. In one piece the arc is a softer spring than a straight link: less thrust and less stress for the same travel." />
-                    {params.link_curved && data && data.link_arc_radius != null && (
-                      <p className="text-[10px] leading-snug text-neutral-400">
-                        {`Arc radius ${data.link_arc_radius.toFixed(2)} mm, ${data.link_arc_sag.toFixed(2)} mm off the straight line, meeting the joint at ${data.link_arc_half_angle_deg.toFixed(0)}° from it.`}
-                      </p>
-                    )}
-                    {params.link_curved && data && data.link_arc_radius == null && (
-                      <p className="text-[10px] leading-snug text-neutral-400">The foot is already in line with the link, or has no length: the link stays straight.</p>
-                    )}
-                  </div>
-                  <ParameterSlider label="Foot, f (mm)" value={params.foot_length} min={0} max={8} step={0.05} onChange={(v) => set('foot_length', v)}
-                    description="Rigid foot from the joint to the centre of the pin that presses on the tube." />
-                  <ParameterSlider label="Foot angle (deg)" value={params.foot_angle_deg} min={0} max={180} step={1} onChange={(v) => set('foot_angle_deg', v)}
-                    description="Angle between the arm and the foot: 90 is square to the arm, toward the tube." />
-                  <ParameterSlider label="Contact pad (mm)" value={params.pad_length} min={0} max={6} step={0.05} onChange={(v) => set('pad_length', v)}
-                    secondaryValue={params.pad_length === 0 ? 'point' : undefined}
-                    description="Length of the flat segment that touches the tube, centred on the end of the foot and square to it. Its ends are rounded with the pinch pin diameter. As the arm tilts, the end nearer the wall does the pinching. 0 is a round pin." />
-                </>
-              ) : lever ? (
-                <>
-                  <ParameterSlider label="Lever, L (mm)" value={params.lever_length} min={4} max={30} step={0.05} onChange={(v) => set('lever_length', v)}
-                    description="Fixed anchor to the tip that pinches the tube. The lever reaches across the screw." />
-                  <ParameterSlider label="Attach point, c (mm)" value={params.bar2_length} min={1} max={25} step={0.05} onChange={(v) => set('bar2_length', v)}
-                    description="Distance along the lever from the anchor to the joint where the link pulls. L / c is the lever's amplification." />
-                  <ParameterSlider label="Link, r (mm)" value={params.bar1_length} min={1} max={25} step={0.05} onChange={(v) => set('bar1_length', v)}
-                    description="Carriage pivot (blue) to the joint on the lever." />
-                </>
-              ) : (
-                <>
-                  <ParameterSlider label="Bar 1, L1 (mm)" value={params.bar1_length} min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)}
-                    description="Carriage pivot (blue) to the elbow that pinches the tube." />
-                  <ParameterSlider label="Bar 2, L2 (mm)" value={params.bar2_length} min={1} max={20} step={0.05} onChange={(v) => set('bar2_length', v)}
-                    description="Elbow to the fixed anchor on the base." />
-                </>
-              )}
-              <ParameterSlider label="Anchor dist, a (mm)" value={params.anchor_distance} min={-5} max={10} step={0.01} onChange={(v) => set('anchor_distance', v)}
-                description={pendulum
-                  ? 'Fixed anchor offset from the centre of the base, toward its tube, on the wall opposite the carriage side it starts from.'
-                  : lever
-                  ? 'Fixed anchor offset from the centre of the base, on the side opposite its tube.'
-                  : 'Fixed anchor offset from the centre of the base, toward the tube. Negative puts it on the far side of the screw.'} />
-            </div>
-          </Accordion>
-
-          <Accordion title="Optimizer" defaultOpen={false}>
-            <div className="space-y-3 pt-2">
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium text-neutral-300">Goal</span>
-                <div className="flex gap-1 rounded-lg border border-neutral-700 p-1">
-                  {(['response', 'target'] as const).map((goal) => (
-                    <Button key={goal} variant="ghost" type="button" aria-pressed={search.objective === goal}
-                      onClick={() => setSearch((s) => ({ ...s, objective: goal }))}
-                      className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${search.objective === goal ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
-                      {goal === 'response' ? 'Most flow, least dead band' : 'Follow target'}
-                    </Button>
-                  ))}
-                </div>
-                <p className="text-[10px] leading-snug text-neutral-400">
-                  {fast
-                    ? 'Most flow first, then the narrowest dead band, then the shortest travel, without squeezing the closed tube past the limit. The stroke is then set to the travel used.'
-                    : 'Opening as close as possible to the target curve over the stroke.'}
-                </p>
-              </div>
-              {pendulum && params.compliant && (
-                <p className="text-[10px] leading-snug text-amber-400">
-                  The search still works on the pivoted version of this linkage. Check what it finds against the one-piece figures.
-                </p>
-              )}
-              {fast && (
-                <ParameterSlider label="Max travel (mm)" value={search.max_stroke} min={0.5} max={10} step={0.1} onChange={(v) => setS('max_stroke', v)}
-                  description="Longest carriage travel each way the search may use to reach full flow." />
-              )}
-              {!fast && <ParameterSlider label="Target exponent" value={params.target_exponent} min={0.3} max={3} step={0.05} onChange={(v) => set('target_exponent', v)}
-                secondaryValue={params.target_exponent === 1 ? 'linear' : undefined}
-                description="Target opening = (Y / stroke)^exponent, closed at Y = 0 and full bore at the end of the stroke. 1 is strictly proportional; above 1 is finer near closure." />}
-              {lever && <RangeRow label="L range" min={search.lever_min} max={search.lever_max} onMin={(v) => setS('lever_min', v)} onMax={(v) => setS('lever_max', v)} />}
-              <RangeRow label={pendulum ? 'L range' : lever ? 'c range' : 'L2 range'} min={search.bar2_min} max={search.bar2_max} onMin={(v) => setS('bar2_min', v)} onMax={(v) => setS('bar2_max', v)} />
-              <RangeRow label={lever || pendulum ? 'r range' : 'L1 range'} min={search.bar1_min} max={search.bar1_max} onMin={(v) => setS('bar1_min', v)} onMax={(v) => setS('bar1_max', v)} />
-              <RangeRow label="a range" min={search.anchor_min} max={search.anchor_max} onMin={(v) => setS('anchor_min', v)} onMax={(v) => setS('anchor_max', v)} />
-              {pendulum && <RangeRow label="Foot range" min={search.foot_min} max={search.foot_max} onMin={(v) => setS('foot_min', v)} onMax={(v) => setS('foot_max', v)} />}
-              {pendulum && <RangeRow label="Foot angle" min={search.foot_angle_min} max={search.foot_angle_max} onMin={(v) => setS('foot_angle_min', v)} onMax={(v) => setS('foot_angle_max', v)} />}
-              {pendulum && <p className="text-[10px] leading-snug text-neutral-400">Set a range's two ends to the same value to keep that dimension as it is.</p>}
-              {!heightFixed && <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />}
-              <ParameterSlider label="Max over-squeeze" value={search.max_oversqueeze} min={0.05} max={2} step={0.05} onChange={(v) => setS('max_oversqueeze', v)}
-                description="How far past closure the closed tube may be crushed while the other one opens over the stroke." />
-              <Button variant="ghost" type="button" onClick={optimize} disabled={optimizing}
-                className="w-full flex items-center justify-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-2 text-sm font-bold text-amber-300 hover:bg-amber-500/30 disabled:opacity-50">
-                <Target className="w-4 h-4" /> {optimizing ? 'Searching…' : 'Find optimal bars'}
-              </Button>
-              {optMessage && (
-                <p className={`text-xs leading-snug ${optMessage.ok ? 'text-emerald-400' : 'text-red-400'}`} role="status">{optMessage.text}</p>
-              )}
-            </div>
-          </Accordion>
-
-          <Accordion title="Fixed layout" defaultOpen={false}>
-            <div className="space-y-5 pt-2">
-              <p className="text-[10px] leading-snug text-neutral-400">
-                The second linkage is this one mirrored left to right and top to bottom, so the carriage opens one tube while it squeezes the other.
-              </p>
-              <ParameterSlider label="Stroke (mm)" value={params.stroke} min={0.5} max={10} step={0.1} onChange={(v) => set('stroke', v)}
-                description="Carriage travel each way from closed (Y = 0) to the target full opening." />
-              <ParameterSlider label="Pivot offset (mm)" value={params.pivot_offset} min={0} max={10} step={0.05} onChange={(v) => set('pivot_offset', v)}
-                description="Carriage pivot distance from the screw axis, on the side opposite its tube." />
-              <ParameterSlider label="Tube centre (mm)" value={params.tube_center_x} min={3} max={20} step={0.05} onChange={(v) => set('tube_center_x', v)}
-                secondaryValue={data ? `wall ${data.wall_x.toFixed(2)}` : undefined}
-                description="Tube axis distance from the screw axis. The tube rests on a wall half an OD further out." />
-              <ParameterSlider label="Pinch pin Ø (mm)" value={params.pin_diameter} min={0} max={4} step={0.1} onChange={(v) => set('pin_diameter', v)}
-                description="Diameter of the pin that presses on the tube." />
-              <ParameterSlider label="Preload (mm)" value={params.preload} min={0} max={0.5} step={0.01} onChange={(v) => set('preload', v)}
-                description="Extra squeeze past the just-closed gap at Y = 0, as a sealing margin. It is also the dead band around Y = 0." />
-            </div>
-          </Accordion>
-
-          <Accordion title="Pneumatic system" defaultOpen={false}>
-            <div className="space-y-5 pt-2">
-              <ParameterSlider label="Chamber vol (mL)" value={params.chamber_volume_ml} min={0} max={200} step={0.5} onChange={(v) => set('chamber_volume_ml', v)}
-                secondaryValue={params.chamber_volume_ml === 0 ? 'no traces' : undefined}
-                description="Chamber fed by tube A and vented by tube B, for the in / out traces." />
-              <ParameterSlider label="Motor speed (RPM)" value={params.motor_speed} min={10} max={1000} step={10} onChange={(v) => set('motor_speed', v)}
-                secondaryValue="no load"
-                description="Rated no-load speed of the motor. With the load factor it sets how fast the carriage runs the cycle 0, +stroke, 0, -stroke, 0." />
-              <ParameterSlider label="Load factor (%)" value={Math.round(params.speed_factor * 100)} min={10} max={100} step={1} onChange={(v) => set('speed_factor', v / 100)}
-                secondaryValue={`${loadedRpm.toFixed(0)} RPM, ${speed.toFixed(2)} mm/s`}
-                description="Share of the no-load speed the motor keeps under load and friction: 85 % makes a 100 RPM motor run at 85 RPM. Used by the Oscillate button and by the chamber traces." />
-              <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1} max={12} step={0.1} onChange={(v) => set('tube_id', v)} />
-              <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1} max={16} step={0.1} onChange={(v) => set('tube_od', v)} />
-              <ParameterSlider label="Pressure (PSI)" value={params.input_pressure_psi} min={0} max={150} step={1} onChange={(v) => set('input_pressure_psi', v)}
-                secondaryValue={`${(params.input_pressure_psi * 6.89476).toFixed(1)} kPa`} />
-              <ParameterSlider label="Compliance" value={params.compliance} min={0} max={5} step={0.01} onChange={(v) => set('compliance', v)} />
-            </div>
-          </Accordion>
-
-          <Accordion title="Forces and structure" defaultOpen={false}>
-            <div className="space-y-5 pt-2">
-              <p className="text-[10px] leading-snug text-neutral-400">
-                Forces are for the pressure set under Pneumatic system, taken as the maximum the seal must hold. The defaults here are assumed: set them to the real motor and bars.
-              </p>
-              <div className="space-y-1.5">
-                <Switch label="Tube pushes the pin back" on={params.contact_deformation} onChange={(v) => set('contact_deformation', v)}
-                  title="On: at each position the crushed tube and the flexing bars are balanced, and the flow, the dead band and the response use the gap that results. Off: rigid bars, the gap is the bar geometry alone." />
-                <p className="text-[10px] leading-snug text-neutral-400">
-                  {params.contact_deformation
-                    ? 'Flow, dead band and response use the gap left once the crushed tube and the flexing bars balance. The optimizer still searches on rigid bars.'
-                    : 'Rigid bars: the gap is the bar geometry alone.'}
-                </p>
-              </div>
-              <ParameterSlider label="Motor torque (mN·m)" value={params.motor_torque_mnm} min={1} max={300} step={1} onChange={(v) => set('motor_torque_mnm', v)}
-                secondaryValue={`${(params.motor_torque_mnm / 98.0665).toFixed(2)} kg·cm`}
-                description="Torque the gearmotor gives at its output shaft at the firmware's current limit (150 mA on the 100 RPM profile), not its stall torque." />
-              <ParameterSlider label="Screw Ø (mm)" value={params.screw_diameter} min={1} max={12} step={0.1} onChange={(v) => set('screw_diameter', v)}
-                secondaryValue={`pitch ${params.lead_screw_pitch}`}
-                description="Major diameter of the lead screw: 3 for M3." />
-              <ParameterSlider label="Thread friction" value={params.screw_friction} min={0.05} max={0.6} step={0.01} onChange={(v) => set('screw_friction', v)}
-                description="Friction coefficient between the screw and the nut. It sets how much of the motor torque becomes thrust, and whether the screw holds its position with the motor off." />
-              <div className="space-y-1.5 rounded-lg border border-neutral-700 p-2">
-                <div className="flex items-center gap-2">
-                  <label htmlFor={`linkage-material-${kind}`} className="shrink-0 text-xs font-semibold text-neutral-400">Material</label>
-                  <select id={`linkage-material-${kind}`} value={material?.name ?? ''} onChange={(e) => pickMaterial(e.target.value)}
-                    className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100">
-                    {!material && <option value="">Custom values</option>}
-                    {materials.map((m) => <option key={m.name} value={m.name}>{`${m.name} (${(m.modulus_mpa / 1000).toFixed(1)} GPa, ${m.strength_mpa} MPa)`}</option>)}
-                  </select>
-                  <Button variant="ghost" type="button" onClick={deleteMaterial} disabled={!material || material.builtin}
-                    title={material?.builtin ? 'A built-in material cannot be deleted' : 'Delete this material'} aria-label="Delete this material"
-                    className="shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:text-red-400 disabled:opacity-40">
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-                {!material && (
-                  <div className="flex items-center gap-2">
-                    <Input type="text" value={materialName} maxLength={60} placeholder="Name these values" aria-label="Material name"
-                      onChange={(e) => setMaterialName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveMaterial(); }}
-                      className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100" />
-                    <Button variant="ghost" type="button" onClick={saveMaterial}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-neutral-700 px-2 py-1 text-xs text-neutral-200">
-                      <Save className="w-3.5 h-3.5" /> Save material
-                    </Button>
-                  </div>
-                )}
-                {materialMessage && <p className="text-[10px] leading-snug text-red-400" role="alert">{materialMessage}</p>}
-                <p className="text-[10px] leading-snug text-neutral-400">
-                  A material is the modulus and the strength below. PETG and PLA are indicative values for printed parts. To add your own, set the two sliders, name them and save.
-                </p>
-              </div>
-              <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={100} onChange={(v) => set('member_modulus_mpa', v)}
-                secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(1)} GPa`}
-                description="Young's modulus of the bars: about 2 500 for printed PETG, 3 500 for PLA, 70 000 for aluminium." />
-              {(
-                <ParameterSlider label="Material strength (MPa)" value={params.member_strength_mpa} min={5} max={1000} step={1} onChange={(v) => set('member_strength_mpa', v)}
-                  description="Stress the material may see; the one-piece pendulum is checked against it. Assumed 40 for printed PETG at yield; use less for a part that must flex many times, about 30 to 60 for PLA, 20 to 30 for TPU-like or nylon parts in fatigue." />
-              )}
-              <ParameterSlider label="Bar width (mm)" value={params.member_width} min={0.5} max={10} step={0.1} onChange={(v) => set('member_width', v)}
-                description="Bar section in the plane of the mechanism. Bending stiffness goes with its cube." />
-              <ParameterSlider label="Bar thickness (mm)" value={params.member_thickness} min={0.5} max={15} step={0.1} onChange={(v) => set('member_thickness', v)}
-                description="Bar section out of the plane of the mechanism." />
-            </div>
-          </Accordion>
-
-          {data && data.forces_message && (
-            <p className="rounded-lg border border-neutral-700 p-2 text-xs text-neutral-400" role="status">{data.forces_message}</p>
-          )}
-          {data && data.flexure && data.max_stress_mpa != null && (
-            <div className="space-y-2 pb-1">
-              <h3 className="text-xs font-semibold text-neutral-400 mb-2">One-piece part{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
-              <StatRow label={`Worst stress (${data.max_stress_where}${data.max_stress_spot === 'shell' ? ', at the shell' : data.max_stress_spot === 'joint' ? ', at the joint' : data.max_stress_spot === 'carriage' ? ', at the carriage' : ''})`} highlight value={
-                <span className={data.stress_margin != null && data.stress_margin < 1 ? 'text-red-400' : data.stress_margin != null && data.stress_margin < 2 ? 'text-amber-400' : undefined}>
-                  {`${data.max_stress_mpa.toFixed(0)} MPa${data.stress_margin != null ? `, × ${data.stress_margin.toFixed(2)} of ${params.member_strength_mpa} MPa` : ''}`}
-                </span>} />
-              {data.stress_limit_y != null && <StatRow label="Past the strength from" value={<span className="text-red-400">{`Y = ±${data.stress_limit_y.toFixed(2)} mm`}</span>} />}
-              <StatRow label="Thrust to bend both parts, no tube" value={n2(data.spring_rate, 'N/mm', 1)} />
-              <StatRow label="Pin moves, per mm of carriage" value={`${data.sensitivity_y0.toFixed(3)} mm`} />
-              <StatRow label="Largest rotation" value={data.max_rotation_deg == null ? 'N/A'
-                : <span className={data.max_rotation_deg > 10 ? 'text-amber-400' : undefined}>{`${data.max_rotation_deg.toFixed(1)}°`}</span>} />
-              {data.carriage_bearing_mpa != null && (
-                <>
-                  <StatRow label="Worst load on the pivot rod" value={n2(data.carriage_load, 'N', 1)} />
-                  <StatRow label="Pressure in the link's eye" value={
-                    <span className={params.member_strength_mpa > 0 && data.carriage_bearing_mpa > params.member_strength_mpa ? 'text-red-400' : undefined}>
-                      {`${data.carriage_bearing_mpa.toFixed(1)} MPa`}
-                    </span>} />
-                  {data.carriage_pin_bending_mpa != null && <StatRow label="Rod bending at the carriage face" value={`${data.carriage_pin_bending_mpa.toFixed(0)} MPa`} />}
-                </>
-              )}
-              {data.stress_margin != null && data.stress_margin < 1 && (
-                <p className="text-[10px] leading-snug text-red-400" role="alert">
-                  The part is stressed past its strength within this stroke. Make it thinner in the plane (bar width), longer, softer (modulus), or shorten the stroke.
-                </p>
-              )}
-              <p className="text-[10px] leading-snug text-neutral-400">
-                One section for arm, foot and link. Fillets at the joints are not modelled: a generous radius there lowers the real peak, a sharp corner raises it.
-                {data.carriage_bearing_mpa != null && ' The rod sits half in the carriage, half in the eye of the link: the eye pressure is the load over rod diameter × half the rod length, and the rod bends where it leaves the carriage, with the load at the middle of the eye. The eye itself is not drawn, the pressure in the carriage bore is not checked, and friction on the rod is ignored.'}
-              </p>
-            </div>
-          )}
-          {data && forces && (
-            <div className="space-y-2 pb-1">
-              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Forces at {params.input_pressure_psi} PSI{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
-              <StatRow label={`Least force to seal ${params.input_pressure_psi} PSI`} value={`${n2(data.seal_force_min, 'N')} per tube`} highlight />
-              <StatRow label="Pin force at Y=0, with preload" value={`${n2(data.seal_force, 'N')} per tube`} highlight />
-              <StatRow label="Fold flat / squeeze / air" value={`${data.seal_force_flatten!.toFixed(2)} / ${data.seal_force_squeeze!.toFixed(2)} / ${data.seal_force_pressure!.toFixed(2)} N`} />
-              <StatRow label="Tube wall modulus" value={n2(data.tube_modulus_mpa, 'MPa')} />
-              <StatRow label="Worst pin force" value={n2(data.max_pinch_force, 'N', 1)} />
-              <StatRow label="Worst wall squeeze" value={<span className={data.max_wall_strain! > 0.25 ? 'text-amber-400' : undefined}>{(data.max_wall_strain! * 100).toFixed(0)} %</span>} />
-              <StatRow label="Screw thrust at Y=0" value={n2(data.thrust_y0, 'N')} />
-              <StatRow label="Worst screw thrust" value={n2(data.thrust_needed, 'N', 1)} />
-              <StatRow label="Motor thrust available" value={n2(data.thrust_available, 'N', 1)} />
-              <StatRow label="Motor margin" highlight value={data.motor_margin == null ? 'N/A'
-                : <span className={data.motor_margin < 1 ? 'text-red-400' : undefined}>{`× ${data.motor_margin.toFixed(1)} (${n2(data.motor_torque_needed_mnm, 'mN·m', 1)})`}</span>} />
-              {jamY != null && <StatRow label="Pin hits the wall at" value={<span className="text-red-400">{`Y = ±${jamY.toFixed(2)} mm`}</span>} />}
-              {data.stall_y != null && <StatRow label="Motor stalls from" value={<span className="text-red-400">{`Y = ±${data.stall_y.toFixed(2)} mm`}</span>} />}
-              <StatRow label="Screw holds with motor off" value={data.screw_self_locking == null ? 'N/A' : data.screw_self_locking ? 'yes' : 'no'} />
-              <StatRow label="Pin pushed back at Y=0" value={n2(data.flex_y0, 'mm', 4)} />
-              <StatRow label="Seal at Y=0 holds" highlight value={data.seal_pressure_y0_psi == null ? 'N/A'
-                : <span className={data.sealed_after_flex ? undefined : 'text-red-400'}>{`${data.seal_pressure_y0_psi.toFixed(1)} PSI${data.sealed_after_flex ? '' : ', leaks'}`}</span>} />
-              <StatRow label="Bar stiffness at the pin" value={n2(data.pin_stiffness, 'N/mm', 0)} />
-              {!data.flexure && <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />}
-              <StatRow label="Worst side load on carriage" value={n2(data.max_side_load, 'N', 1)} />
-              {data.link_bending_stress_mpa != null && (
-                <StatRow label="Curved link bending" value={`${data.link_bending_stress_mpa.toFixed(1)} MPa, ${data.link_arc_sag.toFixed(2)} mm off line`} />
-              )}
-              <StatRow label="Worst bending / axial stress" value={data.max_bending_stress_mpa == null || data.max_axial_stress_mpa == null ? 'N/A' : `${data.max_bending_stress_mpa.toFixed(1)} / ${data.max_axial_stress_mpa.toFixed(1)} MPa`} />
-              {data.buckling_factor != null && (
-                <StatRow label="Buckling margin" value={<span className={data.buckling_factor < 3 ? 'text-amber-400' : undefined}>{`× ${data.buckling_factor.toFixed(1)}`}</span>} />
-              )}
-              {jamY != null ? (
-                <p className="text-[10px] leading-snug text-red-400" role="alert">
-                  {`The pin reaches the wall through the closed tube at Y = ±${jamY.toFixed(2)} mm${data.y_full_open != null && data.y_full_open > jamY ? `, before the other tube is fully open (${data.y_full_open.toFixed(2)} mm)` : ''}: the mechanism jams there whatever the motor. Forces, margin and flex are given up to that travel only.`}
-                </p>
-              ) : data.max_wall_strain! > 0.25 && (
-                <p className="text-[10px] leading-snug text-amber-400">
-                  The closed tube is squeezed past 25 % of its walls within this stroke: worst-case figures there are an order of magnitude.
-                </p>
-              )}
-            </div>
-          )}
-
-          {data && (
-            <div className="space-y-2 pb-1">
-              <h3 className="text-xs font-semibold text-neutral-400 mb-2">Derived</h3>
-              <StatRow label="Pivot height at Y=0" value={`${data.pivot_height_y0.toFixed(3)} mm`} highlight />
-              <StatRow label="Anchor to anchor height" value={`${(2 * data.pivot_height_y0).toFixed(2)} mm`} />
-              <StatRow label="Gain at Y=0" value={`${data.sensitivity_y0.toFixed(3)} mm/mm`} />
-              <StatRow label="Full flow at" value={data.y_full_open != null ? `Y = ${data.y_full_open.toFixed(2)} mm` : 'not reached'} />
-              <StatRow label="Time to full flow" value={data.response_time_ms != null ? `${data.response_time_ms.toFixed(0)} ms` : 'N/A'} highlight />
-              <StatRow label="Dead band (both ways)" value={data.y_open != null ? `${(2 * data.y_open).toFixed(3)} mm` : 'N/A'} />
-              <StatRow label="Deviation from target" value={data.rms_error != null ? `${(data.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />
-              <StatRow label="Closed-tube over-squeeze" value={`${data.max_oversqueeze.toFixed(3)} mm`} />
-              <StatRow label="Pinch slide on tube" value={`${data.pinch_slide.toFixed(2)} mm`} />
-              <StatRow label="Max flow (static)" value={`${data.max_flow_l_min.toFixed(2)} L/min`} />
-              {data.time_ms.length > 0 && (
-                <StatRow label="Air in / out per cycle" value={`${data.volume_in_ml.toFixed(1)} / ${data.volume_out_ml.toFixed(1)} mL`} />
-              )}
-            </div>
-          )}
+          {mode === 'finder' ? finderMenu : explorerMenu}
         </div>
       </div>
 
