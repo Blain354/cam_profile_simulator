@@ -438,6 +438,18 @@ class LinkageTests(unittest.TestCase):
         self.assertIsNotNone(compute_linkage(jam).jam_y)
         self.assertEqual(linkage._one_piece_score(jam, replace(PENDULUM_SEARCH, objective="target"))[2], "no_flow")
 
+    @mock.patch.multiple(linkage, N_FIRST=6000, N_ROUND=3000)
+    def test_one_piece_search_looks_past_the_rigid_ranking(self):
+        # The screen's default one-piece part at 40 MPa: the best rigid designs all break or open
+        # little (about 38 % of full bore at most); random designs and refinement find a better part.
+        p = replace(PENDULUM, tube_center_x=8.0, foot_length=1.5, pad_length=1.0, link_curved=True, compliant=True)
+        s = replace(PENDULUM_SEARCH, bar1_min=6.0, bar1_max=16.0, anchor_min=-5.0)
+        best, _, _, report = optimize_linkage(p, s)
+        self.assertIsNotNone(best, report)
+        r = compute_linkage(best)
+        self.assertGreater(max(v or 0.0 for v in r.flow_a) / r.max_flow_l_min, 0.5)
+        self.assertLessEqual(r.max_stress_mpa, p.member_strength_mpa)
+
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))
         self.assertFalse(r.feasible)
