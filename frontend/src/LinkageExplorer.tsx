@@ -43,6 +43,9 @@ export interface LinkageParams {
   member_thickness: number;
   contact_deformation: boolean;
   link_curved: boolean;
+  compliant: boolean;
+  carriage_clamped: boolean;
+  member_strength_mpa: number;
 }
 
 interface LinkageSearch {
@@ -66,6 +69,8 @@ interface LinkageSearch {
 }
 
 type Series = (number | null)[];
+/** One line of the one-piece part: its points at rest, and how each moves per mm of travel and per N on the pin. */
+interface FlexLine { x: number[]; y: number[]; x_per_mm: number[]; y_per_mm: number[]; x_per_n: number[]; y_per_n: number[] }
 
 interface LinkageResult {
   feasible: boolean;
@@ -85,6 +90,15 @@ interface LinkageResult {
   link_arc_sag: number;
   link_arc_side: number;
   link_bending_stress_mpa: number | null;
+  flexure: (Record<'arm' | 'foot' | 'link', FlexLine> & { travel_sign: number }) | null;
+  stress_a: Series;
+  stress_b: Series;
+  max_stress_mpa: number | null;
+  max_stress_where: 'arm' | 'foot' | 'link' | null;
+  stress_margin: number | null;
+  stress_limit_y: number | null;
+  spring_rate: number | null;
+  max_rotation_deg: number | null;
   flow_a: Series;
   flow_b: Series;
   flow_target: Series;
@@ -176,13 +190,17 @@ const COMMON = {
   member_thickness: 3.0,
   contact_deformation: true,
   link_curved: false,
+  compliant: false,
+  carriage_clamped: true,
+  // Assumed: about printed PETG at yield.
+  member_strength_mpa: 40,
 };
 
 // All sets were measured on the concept sketches (about 30 px/mm).
 const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   elbow: { ...COMMON, linkage_type: 'elbow', bar1_length: 13.0, bar2_length: 7.8, lever_length: 16.5, anchor_distance: 2.33, pivot_offset: 3.9, pin_diameter: 1.0 },
   lever: { ...COMMON, linkage_type: 'lever', bar1_length: 6.9, bar2_length: 6.9, lever_length: 16.5, anchor_distance: 5.05, pivot_offset: 3.97, pin_diameter: 0.4 },
-  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true },
+  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, compliant: true },
 };
 
 const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3 };
@@ -228,7 +246,7 @@ const BLUE = '#3b82f6';
 const SCREW_R = 1.5;
 
 type Pt = [number, number];
-interface Pose { anchor: Pt; pivotX: number; joint: Pt | null; tip: Pt | null }
+interface Pose { anchor: Pt; pivotX: number; joint: Pt | null; tip: Pt | null; lines?: Pt[][] }
 
 /** The contact pad's two ends: a segment centred on the pinch point, square to the foot. A round pin is both ends at the tip. */
 function padEnds(pose: Pose, padLength: number): [Pt, Pt] | null {
@@ -329,6 +347,20 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   const poseA: Pose = { anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) };
   const poseB: Pose = { anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) };
 
+  // One-piece part: its bent centre lines, from the rest shape and the two bending shapes.
+  const flexLines = (yy: number, place: (pt: Pt) => Pt): Pt[][] | undefined => {
+    const fx = data.flexure;
+    if (!fx) return undefined;
+    const travel = fx.travel_sign * yy, force = interpAt(yy, data.Y_positions, data.force_a) ?? 0;
+    return (['arm', 'foot', 'link'] as const).map((name) => {
+      const l = fx[name];
+      return l.x.map((x0, i): Pt => place([x0 + l.x_per_mm[i] * travel + l.x_per_n[i] * force, l.y[i] + l.y_per_mm[i] * travel + l.y_per_n[i] * force]));
+    });
+  };
+  const upright = (pt: Pt): Pt => [pt[0], onTop ? top - pt[1] : pt[1]];
+  poseA.lines = flexLines(y, upright);
+  poseB.lines = flexLines(-y, (pt) => { const q = upright(pt); return [-q[0], top - q[1]]; });
+
   const gapA = interpAt(y, data.Y_positions, data.gap_loaded_a);
   const gapB = interpAt(y, data.Y_positions, data.gap_loaded_b);
   // Bars drawn at their real width, kept readable on very thin or very wide sections.
@@ -387,7 +419,26 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
       <g>
         {/* Ground mark at the fixed anchor */}
         <line x1={axx - 0.6} y1={-ayy} x2={axx + 0.6} y2={-ayy} stroke="var(--bui-text)" strokeWidth={0.14} />
-        {pose.joint && pose.tip && (
+        {pose.lines && pose.tip && (
+          <>
+            {/* One piece: no pivots, the centre lines bend */}
+            {pose.lines.map((line, i) => {
+              const pts = line.map(([px, py]) => `${px.toFixed(3)},${(-py).toFixed(3)}`).join(' ');
+              return (
+                <g key={i}>
+                  <polyline points={pts} fill="none" stroke={color} strokeOpacity={0.3} strokeWidth={barW} strokeLinecap="round" strokeLinejoin="round" />
+                  <polyline points={pts} fill="none" stroke={color} strokeWidth={0.14} strokeLinecap="round" strokeLinejoin="round" />
+                </g>
+              );
+            })}
+            {ends
+              ? <line x1={ends[0][0]} y1={-ends[0][1]} x2={ends[1][0]} y2={-ends[1][1]} stroke={color} strokeWidth={2 * rPin} strokeLinecap="round" />
+              : <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill={color} />}
+            {/* Built into the shell at the anchor */}
+            <rect x={axx - barW / 2 - 0.25} y={-ayy - 0.45} width={barW + 0.5} height={0.9} fill={color} />
+          </>
+        )}
+        {!pose.lines && pose.joint && pose.tip && (
           <>
             {/* Real section of the bars, then their centre lines */}
             <polyline points={body} fill="none" stroke={color} strokeOpacity={0.25} strokeWidth={barW} strokeLinecap="round" strokeLinejoin="round" />
@@ -400,8 +451,10 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
               : <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill={color} />}
           </>
         )}
-        <circle cx={axx} cy={-ayy} r={0.3} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />
-        <circle cx={pose.pivotX} cy={-hB} r={0.42} fill={BLUE} />
+        {!pose.lines && <circle cx={axx} cy={-ayy} r={0.3} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />}
+        {pose.lines && params.carriage_clamped
+          ? <rect x={pose.pivotX - 0.45} y={-hB - 0.45} width={0.9} height={0.9} fill={BLUE} />
+          : <circle cx={pose.pivotX} cy={-hB} r={0.42} fill={BLUE} />}
       </g>
     );
   };
@@ -696,8 +749,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       const res = await apiFetch(profileUrl(name));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = await res.json();
-      // A profile saved before the curved link existed was a straight one: keep its figures as they were.
-      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, ...raw.params, linkage_type: kind };
+      // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
+      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...raw.params, linkage_type: kind };
       const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search };
       setPlaying(false);
       setParams(p);
@@ -845,6 +898,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const chartData = useMemo(() => (data?.Y_positions ?? []).map((yy, i) => ({
     y: yy, flowA: data!.flow_a[i], flowB: data!.flow_b[i], target: data!.flow_target[i], gapA: data!.gap_loaded_a[i], gapB: data!.gap_loaded_b[i], rigidA: data!.gap_a[i],
     forceA: data!.force_a[i] ?? null, forceB: data!.force_b[i] ?? null, thrust: data!.thrust[i] ?? null,
+    stressA: data!.stress_a[i] ?? null, stressB: data!.stress_b[i] ?? null,
     flexA: data!.flex_a[i] ?? null, flexB: data!.flex_b[i] ?? null, flexLink: data!.flex_link_a[i] ?? null, flexBend: data!.flex_bend_a[i] ?? null,
   })), [data]);
   const forces = data != null && data.seal_force != null;
@@ -938,8 +992,21 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                     secondaryValue={heightFixed ? 'from height' : undefined}
                     description="Carriage pivot (blue) to the joint at the end of the arm. Computed when the total height is fixed." />
                   <div className="space-y-1.5">
+                    <Switch label="One piece, built into the shell" on={params.compliant} onChange={(v) => set('compliant', v)}
+                      title="Arm, foot and link are a single part fixed to the outer shell at the anchor. Nothing pivots: the carriage bends the part. Off: three rigid bars on pivots." />
+                    {params.compliant && (
+                      <>
+                        <Switch label="Carriage end held in angle" on={params.carriage_clamped} onChange={(v) => set('carriage_clamped', v)}
+                          title="On: the link is clamped in the carriage. Off: it pivots there (blue dot), which lets the link turn and takes much less thrust." />
+                        <p className="text-[10px] leading-snug text-neutral-400">
+                          The part is made in its Y = 0 shape and only bends. Its section, modulus and strength are under Forces and structure. Small-deflection beam model: trust it up to about 10° of rotation.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
                     <Switch label="Curved link, tangent to the foot" on={params.link_curved} onChange={(v) => set('link_curved', v)}
-                      title="The link becomes an arc of a circle from the carriage pivot to the joint, arriving along the foot at Y = 0. The pivots do not move, so the opening law is the same; the arc bends under the pull, which is counted in the flex and the stresses." />
+                      title="The link becomes an arc of a circle from the carriage pivot to the joint, arriving along the foot at Y = 0. On pivots the opening law is the same and the arc bends under the pull. In one piece the arc is a softer spring than a straight link: less thrust and less stress for the same travel." />
                     {params.link_curved && data && data.link_arc_radius != null && (
                       <p className="text-[10px] leading-snug text-neutral-400">
                         {`Arc radius ${data.link_arc_radius.toFixed(2)} mm, ${data.link_arc_sag.toFixed(2)} mm off the straight line, meeting the joint at ${data.link_arc_half_angle_deg.toFixed(0)}° from it.`}
@@ -1002,6 +1069,11 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                     : 'Opening as close as possible to the target curve over the stroke.'}
                 </p>
               </div>
+              {pendulum && params.compliant && (
+                <p className="text-[10px] leading-snug text-amber-400">
+                  The search still works on the pivoted version of this linkage. Check what it finds against the one-piece figures.
+                </p>
+              )}
               {fast && (
                 <ParameterSlider label="Max travel (mm)" value={search.max_stroke} min={0.5} max={10} step={0.1} onChange={(v) => setS('max_stroke', v)}
                   description="Longest carriage travel each way the search may use to reach full flow." />
@@ -1092,6 +1164,10 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={100} onChange={(v) => set('member_modulus_mpa', v)}
                 secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(1)} GPa`}
                 description="Young's modulus of the bars: about 2 500 for printed PETG, 3 500 for PLA, 70 000 for aluminium." />
+              {pendulum && params.compliant && (
+                <ParameterSlider label="Material strength (MPa)" value={params.member_strength_mpa} min={5} max={1000} step={1} onChange={(v) => set('member_strength_mpa', v)}
+                  description="Stress the one-piece part may see. Assumed 40 for printed PETG at yield; use less for a part that must flex many times, about 30 to 60 for PLA, 20 to 30 for TPU-like or nylon parts in fatigue." />
+              )}
               <ParameterSlider label="Bar width (mm)" value={params.member_width} min={0.5} max={10} step={0.1} onChange={(v) => set('member_width', v)}
                 description="Bar section in the plane of the mechanism. Bending stiffness goes with its cube." />
               <ParameterSlider label="Bar thickness (mm)" value={params.member_thickness} min={0.5} max={15} step={0.1} onChange={(v) => set('member_thickness', v)}
@@ -1101,6 +1177,25 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
           {data && data.forces_message && (
             <p className="rounded-lg border border-neutral-700 p-2 text-xs text-neutral-400" role="status">{data.forces_message}</p>
+          )}
+          {data && data.flexure && data.max_stress_mpa != null && (
+            <div className="space-y-2 pb-1">
+              <h3 className="text-xs font-semibold text-neutral-400 mb-2">One-piece part{jamY != null ? `, up to Y = ±${jamY.toFixed(2)} mm` : ''}</h3>
+              <StatRow label={`Worst stress (${data.max_stress_where})`} highlight value={
+                <span className={data.stress_margin != null && data.stress_margin < 1 ? 'text-red-400' : data.stress_margin != null && data.stress_margin < 2 ? 'text-amber-400' : undefined}>
+                  {`${data.max_stress_mpa.toFixed(0)} MPa${data.stress_margin != null ? `, × ${data.stress_margin.toFixed(2)} of ${params.member_strength_mpa} MPa` : ''}`}
+                </span>} />
+              {data.stress_limit_y != null && <StatRow label="Past the strength from" value={<span className="text-red-400">{`Y = ±${data.stress_limit_y.toFixed(2)} mm`}</span>} />}
+              <StatRow label="Thrust to bend both parts, no tube" value={n2(data.spring_rate, 'N/mm', 1)} />
+              <StatRow label="Pin moves, per mm of carriage" value={`${data.sensitivity_y0.toFixed(3)} mm`} />
+              <StatRow label="Largest rotation" value={data.max_rotation_deg == null ? 'N/A'
+                : <span className={data.max_rotation_deg > 10 ? 'text-amber-400' : undefined}>{`${data.max_rotation_deg.toFixed(1)}°`}</span>} />
+              {data.stress_margin != null && data.stress_margin < 1 && (
+                <p className="text-[10px] leading-snug text-red-400" role="alert">
+                  The part is stressed past its strength within this stroke. Make it thinner in the plane (bar width), longer, softer (modulus), or shorten the stroke.
+                </p>
+              )}
+            </div>
           )}
           {data && forces && (
             <div className="space-y-2 pb-1">
@@ -1123,12 +1218,12 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <StatRow label="Seal at Y=0 holds" highlight value={data.seal_pressure_y0_psi == null ? 'N/A'
                 : <span className={data.sealed_after_flex ? undefined : 'text-red-400'}>{`${data.seal_pressure_y0_psi.toFixed(1)} PSI${data.sealed_after_flex ? '' : ', leaks'}`}</span>} />
               <StatRow label="Bar stiffness at the pin" value={n2(data.pin_stiffness, 'N/mm', 0)} />
-              <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />
+              {!data.flexure && <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />}
               <StatRow label="Worst side load on carriage" value={n2(data.max_side_load, 'N', 1)} />
               {data.link_bending_stress_mpa != null && (
                 <StatRow label="Curved link bending" value={`${data.link_bending_stress_mpa.toFixed(1)} MPa, ${data.link_arc_sag.toFixed(2)} mm off line`} />
               )}
-              <StatRow label="Worst bending / axial stress" value={`${data.max_bending_stress_mpa!.toFixed(1)} / ${data.max_axial_stress_mpa!.toFixed(1)} MPa`} />
+              <StatRow label="Worst bending / axial stress" value={data.max_bending_stress_mpa == null || data.max_axial_stress_mpa == null ? 'N/A' : `${data.max_bending_stress_mpa.toFixed(1)} / ${data.max_axial_stress_mpa.toFixed(1)} MPa`} />
               {data.buckling_factor != null && (
                 <StatRow label="Buckling margin" value={<span className={data.buckling_factor < 3 ? 'text-amber-400' : undefined}>{`× ${data.buckling_factor.toFixed(1)}`}</span>} />
               )}
@@ -1248,6 +1343,22 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <Line type="linear" dataKey="forceB" name="Pin on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
               <Line type="linear" dataKey="thrust" name="Screw thrust needed" stroke="#a78bfa" strokeWidth={2} dot={false} isAnimationActive={false} />
               {data!.thrust_available != null && <ReferenceLine y={data!.thrust_available} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'motor limit', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />}
+              <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
+            </LineChart>
+          </ChartCard>
+        )}
+        {data?.flexure && data.max_stress_mpa != null && (
+          <ChartCard title="Worst stress in the one-piece part vs carriage Y">
+            <LineChart data={chartData} margin={margin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              {xAxisY}
+              <YAxis type="number" stroke="#888" tickFormatter={(v) => Number(v).toFixed(0)}
+                label={{ value: 'Stress (MPa)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(1)} MPa`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
+              <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+              <ReferenceLine y={params.member_strength_mpa} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'strength', fill: '#ef4444', fontSize: 11, position: 'insideTopRight' }} />
+              <Line type="linear" dataKey="stressA" name="Part on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+              <Line type="linear" dataKey="stressB" name="Part on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
               <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
             </LineChart>
           </ChartCard>

@@ -269,6 +269,75 @@ class LinkageTests(unittest.TestCase):
         # The other types have no foot to be tangent to.
         self.assertEqual(compute_linkage(replace(LEVER, link_curved=True)).link_arc_half_angle_deg, 0.0)
 
+    def test_frame_solver_matches_a_cantilever(self):
+        from backend.linkage import _frame_solve
+        e, w, t, length = 2500.0, 2.0, 3.0, 10.0
+        ei = e * t * w ** 3 / 12.0
+        xy = np.array([[i * length / 10, 0.0] for i in range(11)])
+        u, reactions, ends = _frame_solve(xy, [(i, i + 1) for i in range(10)], e * w * t, ei, {0: 0.0, 1: 0.0, 2: 0.0}, {31: 1.0})
+        self.assertAlmostEqual(u[10, 1], length ** 3 / (3.0 * ei), places=9)      # tip deflection P L^3 / 3 E I
+        self.assertAlmostEqual(u[10, 2], length ** 2 / (2.0 * ei), places=9)      # tip slope
+        self.assertAlmostEqual(abs(ends[0, 1]), length, places=6)                 # root moment P L
+        np.testing.assert_allclose(reactions[0], [0.0, -1.0, -length], atol=1e-6)
+
+    def test_one_piece_flexure_bends_instead_of_pivoting(self):
+        p = replace(PENDULUM, pad_length=1.0, stroke=0.6, compliant=True, link_curved=True)
+        r = compute_linkage(p)
+        self.assertTrue(r.feasible, r.message)
+        import json
+        json.dumps(r.__dict__, allow_nan=False)
+        i0 = len(r.Y_positions) // 2
+        y = np.array(r.Y_positions)
+        # Made in its Y = 0 shape: with no tube it sits just closed plus the preload there.
+        self.assertAlmostEqual(r.gap_a[i0], r.closed_gap - p.preload, places=9)
+        # With no tube the pin moves in proportion to the carriage (small deflections).
+        np.testing.assert_allclose(np.diff(r.gap_a), r.sensitivity_y0 * (y[1] - y[0]), rtol=2e-2)
+        self.assertGreater(r.sensitivity_y0, 0.0)
+        self.assertGreater(r.flow_a[-1], 0.0)
+        self.assertEqual(r.flow_a[i0], 0.0)
+        self.assertEqual(r.gap_loaded_b, r.gap_loaded_a[::-1])
+        # Balance at the pin, and the drawing's pose is the loaded one.
+        self.assertAlmostEqual(r.flex_a[i0], r.force_a[i0] / r.pin_stiffness, places=7)
+        self.assertAlmostEqual(r.gap_loaded_a[i0] - r.gap_a[i0], r.flex_a[i0], places=12)
+        # The part's shapes: three lines that share the joint, the arm starting at the anchor, built in.
+        f = r.flexure
+        self.assertEqual((f["arm"]["x"][0], f["arm"]["y"][0]), (r.anchor_x, 0.0))
+        self.assertEqual((f["arm"]["x_per_mm"][0], f["arm"]["y_per_mm"][0], f["arm"]["x_per_n"][0]), (0.0, 0.0, 0.0))
+        for line in ("foot", "link"):
+            self.assertEqual((f[line]["x"][0], f[line]["y"][0]), (f["arm"]["x"][-1], f["arm"]["y"][-1]))
+        # The carriage end follows the carriage exactly, whatever the pin force.
+        self.assertAlmostEqual(f["link"]["y_per_mm"][-1], 1.0, places=9)
+        self.assertAlmostEqual(f["link"]["x_per_mm"][-1], 0.0, places=9)
+        self.assertAlmostEqual(f["link"]["y_per_n"][-1], 0.0, places=9)
+        self.assertAlmostEqual(f["foot"]["x"][-1] + f["foot"]["x_per_mm"][-1] * f["travel_sign"] * y[-1] + f["foot"]["x_per_n"][-1] * r.force_a[-1], r.tip_x[-1], places=9)
+        # Bending the part takes thrust even with the tubes out, and stresses it.
+        self.assertGreater(r.spring_rate, 0.0)
+        self.assertGreater(r.max_stress_mpa, 0.0)
+        self.assertAlmostEqual(r.stress_margin, p.member_strength_mpa / r.max_stress_mpa, places=9)
+        self.assertEqual(r.stress_b, r.stress_a[::-1])
+        self.assertIn(r.max_stress_where, ("arm", "foot", "link"))
+        # A thinner section bends more easily: less thrust and less stress for the same travel.
+        thin = compute_linkage(replace(p, member_width=1.0))
+        self.assertLess(thin.spring_rate, r.spring_rate / 4.0)
+        self.assertLess(thin.max_stress_mpa, r.max_stress_mpa)
+        self.assertLess(thin.pin_stiffness, r.pin_stiffness)
+        # Letting the carriage end pivot frees the link: softer still.
+        pivot = compute_linkage(replace(p, carriage_clamped=False))
+        self.assertLess(pivot.spring_rate, r.spring_rate)
+        # Past the strength the travel where it happens is reported.
+        weak = compute_linkage(replace(p, member_strength_mpa=r.max_stress_mpa / 2.0))
+        self.assertIsNotNone(weak.stress_limit_y)
+        self.assertLess(weak.stress_limit_y, p.stroke)
+        self.assertIsNone(compute_linkage(replace(p, member_strength_mpa=r.max_stress_mpa * 2.0)).stress_limit_y)
+        # Only the pendulum can be one piece; the others keep their pivots.
+        self.assertIsNone(compute_linkage(replace(LEVER, compliant=True)).flexure)
+        self.assertIsNone(compute_linkage(PENDULUM).flexure)
+        # No tube stiffness to push with: the part's own figures are still there.
+        bare = compute_linkage(replace(p, compliance=0.0))
+        self.assertIsNone(bare.seal_force)
+        self.assertGreater(bare.max_stress_mpa, 0.0)
+        self.assertTrue(bare.forces_message)
+
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))
         self.assertFalse(r.feasible)

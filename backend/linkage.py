@@ -88,6 +88,11 @@ class LinkageParams:
     member_thickness: float = 3.0    # mm, bar section out of the plane
     contact_deformation: bool = True  # the tube pushes the pin back until bars and tube balance; False = rigid bars
     link_curved: bool = False        # link drawn as an arc that meets the joint along the foot (pendulum only)
+    # One-piece flexure (pendulum only): arm, foot and link are a single part built into the
+    # outer shell at the anchor. Nothing pivots; the part bends. See _Flexure.
+    compliant: bool = False
+    carriage_clamped: bool = True    # the link's carriage end is held in angle too (False: it pivots there)
+    member_strength_mpa: float = 40.0   # MPa, stress the material may see (assumed: about printed PETG at yield)
 
 
 @dataclass
@@ -110,6 +115,17 @@ class LinkageResult:
     link_arc_sag: float = 0.0              # mm, arc's farthest point from the chord
     link_arc_side: float = 0.0             # +1 / -1: side of the chord C->B the arc bulges to, in this frame
     link_bending_stress_mpa: Optional[float] = None   # worst bending in the curved link
+    # One-piece flexure. `flexure` holds the part's centre line at rest and its two bending
+    # shapes, so a pose is rest + per_mm * (frame travel) + per_n * (pin force).
+    flexure: Optional[dict] = None
+    stress_a: List[Optional[float]] = field(default_factory=list)   # MPa, worst stress in the part on tube A
+    stress_b: List[Optional[float]] = field(default_factory=list)
+    max_stress_mpa: Optional[float] = None
+    max_stress_where: Optional[str] = None         # "arm" | "foot" | "link"
+    stress_margin: Optional[float] = None          # strength / worst stress
+    stress_limit_y: Optional[float] = None         # mm of travel where the stress passes the strength
+    spring_rate: Optional[float] = None            # N of screw thrust per mm of travel, bending the two parts, no tube
+    max_rotation_deg: Optional[float] = None       # largest rotation along the part over the stroke
     flow_a: List[Optional[float]] = field(default_factory=list)
     flow_b: List[Optional[float]] = field(default_factory=list)
     flow_target: List[Optional[float]] = field(default_factory=list)
@@ -384,6 +400,22 @@ def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarr
     return parts
 
 
+def _screw(p: LinkageParams, out: LinkageResult, y, thrust) -> None:
+    """Thrust the motor can give through the screw, against out.thrust_needed."""
+    d_m = p.screw_diameter - 0.6495 * p.lead_screw_pitch
+    if d_m > 0:
+        helix = np.arctan(p.lead_screw_pitch / (np.pi * d_m))
+        friction = np.arctan(p.screw_friction / np.cos(np.radians(30.0)))   # 60 degree metric flank
+        per_n = d_m / 2.0 * np.tan(helix + friction)     # N.mm of torque per N of thrust, pushing
+        out.screw_self_locking = bool(friction > helix)
+        if per_n > 0:
+            out.thrust_available = float(p.motor_torque_mnm / per_n)
+            out.motor_torque_needed_mnm = float(out.thrust_needed * per_n)
+            out.motor_margin = out.thrust_available / out.thrust_needed if out.thrust_needed > 1e-9 else None
+            over = np.abs(y[np.nan_to_num(np.abs(thrust)) > out.thrust_available])
+            out.stall_y = float(over.min()) if over.size else None
+
+
 def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap, closed_gap, half, phi):
     """Pin forces, screw thrust and bar flex over the stroke; fills the force fields of `out`.
 
@@ -486,18 +518,7 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     out.thrust_y0 = float(abs(thrust[i0]))
     out.thrust_needed = float(np.nanmax(np.abs(thrust))) if np.any(np.isfinite(thrust)) else out.thrust_y0
 
-    d_m = p.screw_diameter - 0.6495 * p.lead_screw_pitch
-    if d_m > 0:
-        helix = np.arctan(p.lead_screw_pitch / (np.pi * d_m))
-        friction = np.arctan(p.screw_friction / np.cos(np.radians(30.0)))   # 60 degree metric flank
-        per_n = d_m / 2.0 * np.tan(helix + friction)     # N.mm of torque per N of thrust, pushing
-        out.screw_self_locking = bool(friction > helix)
-        if per_n > 0:
-            out.thrust_available = float(p.motor_torque_mnm / per_n)
-            out.motor_torque_needed_mnm = float(out.thrust_needed * per_n)
-            out.motor_margin = out.thrust_available / out.thrust_needed if out.thrust_needed > 1e-9 else None
-            over = np.abs(y[np.nan_to_num(np.abs(thrust)) > out.thrust_available])
-            out.stall_y = float(over.min()) if over.size else None
+    _screw(p, out, y, thrust)
 
     tension = t_unit * force
     out.max_link_force = float(tension[np.nanargmax(np.abs(tension))])
@@ -518,6 +539,235 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     out.seal_pressure_y0_psi = float(max(held, 0.0) / 0.00689476)
     out.sealed_after_flex = bool(gap[i0] + flex[i0] <= closed_gap + 1e-12)
     return loaded
+
+
+N_ARM, N_FOOT_EL, N_LINK = 16, 6, 28
+
+
+def _frame_solve(xy, elems, ea, ei, held, loads):
+    """Linear plane frame of Euler-Bernoulli beams, 3 freedoms per node (x, y, rotation).
+
+    xy: node coordinates [n, 2]; elems: node pairs; held: {freedom index: imposed value};
+    loads: {freedom index: force or moment}. Returns the displacements [n, 3], the forces the
+    supports apply [n, 3], and for each element its (axial force, end moments) in its own axes.
+    """
+    n = len(xy)
+    k = np.zeros((3 * n, 3 * n))
+    local = []
+    for a, b in elems:
+        dx, dy = xy[b] - xy[a]
+        length = float(np.hypot(dx, dy))
+        c, s_ = dx / length, dy / length
+        e1, e2, e3, e4 = ea / length, 12.0 * ei / length ** 3, 6.0 * ei / length ** 2, ei / length
+        kl = np.array([
+            [e1, 0, 0, -e1, 0, 0],
+            [0, e2, e3, 0, -e2, e3],
+            [0, e3, 4 * e4, 0, -e3, 2 * e4],
+            [-e1, 0, 0, e1, 0, 0],
+            [0, -e2, -e3, 0, e2, -e3],
+            [0, e3, 2 * e4, 0, -e3, 4 * e4],
+        ])
+        t = np.zeros((6, 6))
+        t[0, :2], t[1, :2], t[2, 2] = (c, s_), (-s_, c), 1.0
+        t[3, 3:5], t[4, 3:5], t[5, 5] = (c, s_), (-s_, c), 1.0
+        idx = np.r_[3 * a:3 * a + 3, 3 * b:3 * b + 3]
+        k[np.ix_(idx, idx)] += t.T @ kl @ t
+        local.append((idx, kl @ t))
+    u = np.zeros(3 * n)
+    fixed = np.array(sorted(held), dtype=int)
+    free = np.setdiff1d(np.arange(3 * n), fixed)
+    u[fixed] = [held[i] for i in fixed]
+    rhs = np.zeros(3 * n)
+    for i, v in loads.items():
+        rhs[i] += v
+    u[free] = np.linalg.solve(k[np.ix_(free, free)], rhs[free] - k[np.ix_(free, fixed)] @ u[fixed])
+    reactions = k @ u - rhs
+    ends = np.array([klt @ u[idx] for idx, klt in local])       # [m, 6]: N1, V1, M1, N2, V2, M2
+    return u.reshape(n, 3), reactions.reshape(n, 3), np.stack([ends[:, 3], ends[:, 2], ends[:, 5]], axis=1)
+
+
+class _Flexure:
+    """Pendulum built as one piece: arm, foot and link are a single beam structure.
+
+    The arm is built into the outer shell at the anchor A (no pivot). The foot carries on from
+    the arm at the foot angle, and the link runs from the joint C to the carriage B, where it is
+    clamped or pivots. The part is made in its Y = 0 shape; the carriage then bends it.
+
+    Small-deflection beam theory, so everything is a sum of two shapes: what 1 mm of carriage
+    travel does with no tube, and what 1 N on the pin does with the carriage held. That is good
+    for rotations of a few degrees; max_rotation_deg says how far a design goes.
+    Fillets and stress concentration at the joints are not modelled.
+    """
+
+    def __init__(self, p, xa, xb, h0, sgn, l1, cx0, cy0, ratio, delta, half, phi, wall_x):
+        self.p, self.sgn, self.half, self.wall_x = p, sgn, half, wall_x
+        self.error = None
+        w, t, e = p.member_width, p.member_thickness, p.member_modulus_mpa
+        if min(w, t, e) <= 0:
+            self.error = "The one-piece part needs a bar section and a modulus above zero."
+            return
+        tx0, ty0 = (float(v) for v in _tip(xa, cx0, cy0, ratio, delta))
+        a_pt, c_pt, p_pt, b_pt = (np.array(v, dtype=float) for v in ((xa, 0.0), (cx0, cy0), (tx0, ty0), (xb, h0)))
+        alpha, side = _link_arc(p, l1, cx0, cy0, xb, h0, tx0, ty0)
+        self.alpha, self.side = alpha, side
+        arm = [a_pt + (c_pt - a_pt) * i / N_ARM for i in range(N_ARM + 1)]
+        has_foot = p.foot_length > 1e-6
+        foot = [c_pt + (p_pt - c_pt) * i / N_FOOT_EL for i in range(1, N_FOOT_EL + 1)] if has_foot else []
+        d = (b_pt - c_pt) / l1
+        normal = np.array([-d[1], d[0]])
+        link = []
+        for i in range(1, N_LINK + 1):
+            if alpha > 0.0:
+                radius = l1 / (2.0 * np.sin(alpha))
+                th = -alpha + 2.0 * alpha * i / N_LINK
+                link.append(c_pt + d * (l1 / 2.0 + radius * np.sin(th)) + normal * side * radius * (np.cos(th) - np.cos(alpha)))
+            else:
+                link.append(c_pt + d * l1 * i / N_LINK)
+        xy = np.array(arm + foot + link)
+        i_c = N_ARM
+        i_p = i_c + len(foot)
+        i_b = len(xy) - 1
+        elems = [(i, i + 1) for i in range(N_ARM)]
+        elems += [(i_c if i == 0 else i_c + i, i_c + i + 1) for i in range(len(foot))]
+        elems += [(i_c if i == 0 else i_p + i, i_p + i + 1) for i in range(N_LINK)]
+        self.parts = ["arm"] * N_ARM + ["foot"] * len(foot) + ["link"] * N_LINK
+        self.xy, self.i_c, self.i_p, self.i_b = xy, i_c, i_p, i_b
+        self.lines = {"arm": list(range(N_ARM + 1)), "foot": [i_c] + list(range(i_c + 1, i_p + 1)),
+                      "link": [i_c] + list(range(i_p + 1, i_b + 1))}
+
+        ea, ei = e * w * t, e * t * w ** 3 / 12.0
+        self.area, self.section = w * t, t * w ** 2 / 6.0
+        held = {0: 0.0, 1: 0.0, 2: 0.0, 3 * i_b: 0.0}
+        if p.carriage_clamped:
+            held[3 * i_b + 2] = 0.0
+        try:
+            # 1 mm of frame travel of the carriage end, no tube; then 1 N on the pin, carriage held.
+            self.u_mm, self.r_mm, self.s_mm = _frame_solve(xy, elems, ea, ei, {**held, 3 * i_b + 1: 1.0}, {})
+            self.u_n, self.r_n, self.s_n = _frame_solve(xy, elems, ea, ei, {**held, 3 * i_b + 1: 0.0}, {3 * i_p: 1.0})
+        except np.linalg.LinAlgError:
+            self.error = "The one-piece part cannot be solved with these dimensions."
+            return
+        self.tilt0 = float(np.arctan2(cy0, cx0 - xa) + phi)
+        self.gain = float(self.u_mm[i_p, 0] * sgn)      # mm of pin per mm of carriage travel Y, no tube
+        self.compliance = float(self.u_n[i_p, 0])       # mm of pin per N on the pin
+        self.r_pin = p.pin_diameter / 2.0
+
+    def _reach(self, travel):
+        """Pad's nearer end ahead of its centre; the foot turns with the part."""
+        if self.half == 0.0:
+            return 0.0
+        return self.half * np.abs(np.sin(self.tilt0 + self.u_mm[self.i_p, 2] * travel))
+
+    def free_pose(self, y):
+        """Joint, pinch point and pin-to-wall gap with no tube pushing back."""
+        travel = self.sgn * y
+        (jx, jy), (tx, ty) = (self.xy[i][:, None] + self.u_mm[i, :2][:, None] * travel for i in (self.i_c, self.i_p))
+        return jx, jy, tx, ty, self.wall_x + tx - self._reach(travel) - self.r_pin
+
+    def forces(self, out: LinkageResult, y, gap, closed_gap):
+        """Pin force, screw thrust and stress in the part over the stroke. Returns the loaded gap."""
+        p, sgn, i_p, i_b = self.p, self.sgn, self.i_p, self.i_b
+        out.flexure = {
+            name: {"x": self.xy[idx, 0].tolist(), "y": self.xy[idx, 1].tolist(),
+                   "x_per_mm": self.u_mm[idx, 0].tolist(), "y_per_mm": self.u_mm[idx, 1].tolist(),
+                   "x_per_n": self.u_n[idx, 0].tolist(), "y_per_n": self.u_n[idx, 1].tolist()}
+            for name, idx in self.lines.items()
+        }
+        out.flexure["travel_sign"] = sgn
+        out.link_arc_half_angle_deg, out.link_arc_side = float(np.degrees(self.alpha)), self.side
+        if self.alpha > 0.0:
+            out.link_arc_radius = float(p.bar1_length if p.fixed_height <= 0 else out.link_length) / (2.0 * np.sin(self.alpha))
+            out.link_arc_sag = float(out.link_arc_radius * (1.0 - np.cos(self.alpha)))
+        travel = sgn * y
+        # Screw thrust to bend the two parts with no tube in place: the same spring on both sides.
+        out.spring_rate = float(2.0 * abs(self.r_mm[i_b, 1]))
+        if p.compliance <= 0 or (p.pin_diameter <= 0 and self.half == 0.0):
+            out.forces_message = "No pin force: it needs a tube compliance above 0 and a pin diameter or a pad."
+            force = np.zeros_like(y)
+            pushed = np.zeros_like(y)
+            parts = None
+        else:
+            tilt = self.tilt0 + self.u_mm[i_p, 2] * travel
+            st, ct = np.abs(np.sin(tilt)), np.abs(np.cos(tilt))
+            parts = _pinch_force(p, gap, st, ct)
+            pushed = np.zeros_like(y)
+            if p.contact_deformation:
+                # Same balance as the pivoted linkages: the tube pushes the pin back until the
+                # part's spring at the pin and the tube agree.
+                c = max(self.compliance, 0.0)
+                lo, hi = np.zeros_like(y), c * sum(parts)
+                for _ in range(8):
+                    hi = np.where(hi < c * sum(_pinch_force(p, gap + hi, st, ct)), 2.0 * hi + 1e-6, hi)
+                for _ in range(40):
+                    mid = 0.5 * (lo + hi)
+                    short = mid < c * sum(_pinch_force(p, gap + mid, st, ct))
+                    lo, hi = np.where(short, mid, lo), np.where(short, hi, mid)
+                pushed = 0.5 * (lo + hi)
+                parts = _pinch_force(p, gap + pushed, st, ct)
+            force = sum(parts)
+        loaded = gap + pushed
+
+        # Pose under load, for the drawing.
+        for name, i in (("joint", self.i_c), ("tip", i_p)):
+            pos = self.xy[i][:, None] + self.u_mm[i, :2][:, None] * travel + self.u_n[i, :2][:, None] * force
+            setattr(out, name + "_x", pos[0].tolist())
+            setattr(out, name + "_y", pos[1].tolist())
+
+        # Force the carriage must give along +Y for this part; the other part is this one at -Y, reversed.
+        pull = sgn * (self.r_mm[i_b, 1] * travel + self.r_n[i_b, 1] * force)
+        thrust = pull - pull[::-1]
+        side_load = np.abs(self.r_mm[i_b, 0] * travel + self.r_n[i_b, 0] * force)
+        # Stress along the part: bending at the worse end of each element, plus the axial share.
+        axial = np.abs(self.s_mm[:, 0][:, None] * travel + self.s_n[:, 0][:, None] * force)
+        bending = np.maximum(np.abs(self.s_mm[:, 1][:, None] * travel + self.s_n[:, 1][:, None] * force),
+                             np.abs(self.s_mm[:, 2][:, None] * travel + self.s_n[:, 2][:, None] * force))
+        stress_all = bending / self.section + axial / self.area
+        stress = stress_all.max(axis=0)
+        rotation = np.abs(self.u_mm[:, 2][:, None] * travel + self.u_n[:, 2][:, None] * force).max(axis=0)
+
+        wall = p.tube_od - p.tube_id
+        force_out, flex_out, thrust_out, stress_out = force.astype(float), pushed.astype(float), thrust.astype(float), stress.astype(float)
+        if parts is not None:
+            crushed = np.abs(y[gap <= 0.05 * wall])
+            if crushed.size:
+                out.jam_y = float(crushed.min())
+                past = np.abs(y) >= out.jam_y
+                force_out, flex_out, thrust_out, stress_out = (np.where(past, np.nan, v) for v in (force_out, flex_out, thrust_out, stress_out))
+        i0 = N_SAMPLES // 2
+        valid = np.isfinite(stress_out)
+        out.thrust = _nan_to_none(np.abs(thrust_out))
+        out.stress_a, out.stress_b = _nan_to_none(stress_out), _nan_to_none(stress_out[::-1])
+        worst = int(np.nanargmax(np.where(valid, stress, -1.0)))
+        out.max_stress_mpa = float(stress[worst])
+        out.max_stress_where = self.parts[int(np.argmax(stress_all[:, worst]))]
+        out.max_bending_stress_mpa = float((bending / self.section)[:, valid].max())
+        out.max_axial_stress_mpa = float((axial / self.area)[:, valid].max())
+        if alpha_link := [i for i, part in enumerate(self.parts) if part == "link"]:
+            out.link_bending_stress_mpa = float((bending[alpha_link] / self.section)[:, valid].max())
+        if p.member_strength_mpa > 0 and out.max_stress_mpa > 1e-9:
+            out.stress_margin = float(p.member_strength_mpa / out.max_stress_mpa)
+            over = np.abs(y[stress > p.member_strength_mpa])
+            out.stress_limit_y = float(over.min()) if over.size else None
+        out.max_rotation_deg = float(np.degrees(rotation[valid].max()))
+        out.max_side_load = float(side_load[valid].max())
+        out.thrust_y0 = float(abs(thrust[i0]))
+        out.thrust_needed = float(np.nanmax(np.abs(thrust_out)))
+        _screw(p, out, y, thrust_out)
+        out.pin_stiffness = float(1.0 / self.compliance) if self.compliance > 0 else None
+        if parts is None:
+            return None
+        out.force_a, out.force_b = _nan_to_none(force_out), _nan_to_none(force_out[::-1])
+        out.flex_a, out.flex_b = _nan_to_none(flex_out), _nan_to_none(flex_out[::-1])
+        out.tube_modulus_mpa = wall / p.compliance
+        out.seal_force = float(force[i0])
+        out.seal_force_min = float(sum(_pinch_force(p, np.array([closed_gap]), st[i0:i0 + 1], ct[i0:i0 + 1]))[0])
+        out.seal_force_flatten, out.seal_force_squeeze, out.seal_force_pressure = (float(v[i0]) for v in parts)
+        out.max_pinch_force = float(np.nanmax(force_out))
+        out.max_wall_strain = float(np.clip(wall - np.nanmin(np.where(np.isfinite(force_out), loaded, np.nan)), 0.0, wall) / wall)
+        out.flex_y0 = float(pushed[i0])
+        out.seal_pressure_y0_psi = float(max((wall - loaded[i0]) / p.compliance, 0.0) / 0.00689476)
+        out.sealed_after_flex = bool(loaded[i0] <= closed_gap + 1e-12)
+        return loaded
 
 
 def compute_linkage(p: LinkageParams) -> LinkageResult:
@@ -555,6 +805,16 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
     jx, jy = np.where(ok, jx, np.nan), np.where(ok, jy, np.nan)
     tx, ty = _tip(xa, jx, jy, reach / l2, delta)
     gap_a = wall_x + tx - _pad_reach(xa, jx, jy, half, phi) - r_pin
+    flexure = None
+    if p.compliant and p.linkage_type == TYPE_PENDULUM:
+        # One piece that bends: the rest shape is the Y = 0 pose above, and the poses come from
+        # the beam model instead of the pivots.
+        flexure = _Flexure(p, xa, xb, h0, sgn, l1, float(cx0), float(cy0), reach / l2, delta, half, phi, wall_x)
+        if flexure.error:
+            return LinkageResult(False, flexure.error, anchor_x=xa, anchor_on_top=sgn < 0.0, link_length=l1, pivot_height_y0=h0,
+                                 wall_x=wall_x, closed_gap=closed_gap, full_open_gap=full_open_gap)
+        ok = np.ones(N_SAMPLES, dtype=bool)
+        jx, jy, tx, ty, gap_a = flexure.free_pose(y)
     i0 = N_SAMPLES // 2
     lo = hi = i0
     while lo > 0 and ok[lo - 1]:
@@ -570,6 +830,8 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         msg = "The linkage locks at Y = %.2f mm (hinged bar at dead centre) before -stroke: the closed tube cannot follow." % y[lo]
     else:
         msg = "ok"
+    if flexure is not None and flexure.gain <= 0.0:
+        feasible, msg = False, "Moving the carriage this way presses the part onto its tube instead of lifting it: the tube never opens."
     pos = y >= 0.0
     out = LinkageResult(
         feasible=feasible,
@@ -594,7 +856,10 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         pinch_slide=float(abs(ty[hi] - ty[i0])) if ok[i0] else 0.0,
         max_oversqueeze=float(max(closed_gap - np.nanmin(gap_a[~pos | (y == 0.0)]), 0.0)) if ok[i0] else 0.0,
     )
-    loaded = _forces(p, out, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap_a, closed_gap, half, phi)
+    if flexure is not None:
+        loaded = flexure.forces(out, y, gap_a, closed_gap)
+    else:
+        loaded = _forces(p, out, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap_a, closed_gap, half, phi)
     # What the air sees: the gap once the tube has pushed the pin back, when that is solved.
     out.contact_solved = bool(p.contact_deformation and loaded is not None)
     gap_air = np.where(ok, loaded, np.nan) if out.contact_solved else gap_a

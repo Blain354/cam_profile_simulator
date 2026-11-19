@@ -663,6 +663,9 @@ class LinkageRequest(BaseModel):
     member_thickness: float = Field(3.0, ge=0, le=100)
     contact_deformation: bool = True
     link_curved: bool = False
+    compliant: bool = False
+    carriage_clamped: bool = True
+    member_strength_mpa: float = Field(40.0, ge=0, le=1e5)
 
 
 class LinkageOptimizeRequest(LinkageRequest):
