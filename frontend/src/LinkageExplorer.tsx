@@ -1,10 +1,12 @@
 import { Button, Input, Modal } from '@blain-projects/ui';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactElement } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { ReactElement, Ref } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 import { Pause, Play, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
+import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
+import type { ProfileHandle, ProfileState } from './lib/profiles';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
 import type { SubTab } from './SubTabs';
 import type { ChartDomainSettings } from './components';
@@ -252,6 +254,19 @@ const BUILTIN_MATERIALS: Material[] = [
 
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
 
+/** The dimensions each linkage type searches, in the order the panels show them. */
+const SEARCH_VARS_OF: Record<LinkageKind, SearchVar[]> = {
+  pendulum: ['bar2', 'bar1', 'anchor', 'foot', 'foot_angle'],
+  lever: ['lever', 'bar2', 'bar1', 'anchor'],
+  elbow: ['bar1', 'bar2', 'anchor'],
+};
+const VAR_LABEL: Record<LinkageKind, Record<SearchVar, string>> = {
+  pendulum: { bar2: 'Arm, L', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle', lever: 'Lever, L' },
+  lever: { lever: 'Lever, L', bar2: 'Attach point, c', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle' },
+  elbow: { bar1: 'Bar 1, L1', bar2: 'Bar 2, L2', anchor: 'Anchor, a', lever: 'Lever, L', foot: 'Foot, f', foot_angle: 'Foot angle' },
+};
+const varUnit = (v: SearchVar) => (v === 'foot_angle' ? '°' : 'mm');
+
 /** The stored list of fixed dimensions, or none when it is missing or not a list. */
 const cleanFixed = (raw: unknown): SearchVar[] => (Array.isArray(raw) ? SEARCH_VARS.filter((v) => raw.includes(v)) : []);
 
@@ -292,6 +307,58 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
     }
   } catch { /* storage unavailable or corrupt: fall back to defaults */ }
   return { params: { ...DEFAULT_PARAMS[kind], ...shared }, search: DEFAULT_SEARCH[kind], profile: null, chart_settings: DEFAULT_CHART_SETTINGS };
+}
+
+/** A stored profile's parameters and ranges, completed for fields added since it was saved. */
+function fromProfilePayload(kind: LinkageKind, raw: Record<string, unknown>): { params: LinkageParams; search: LinkageSearch; chart_settings: LinkageChartSettings } {
+  const rp = (raw.params && typeof raw.params === 'object' ? raw.params : undefined) as Partial<LinkageParams> | undefined;
+  const rs = (raw.search && typeof raw.search === 'object' ? raw.search : undefined) as (Partial<LinkageSearch> & { fixed?: unknown }) | undefined;
+  return {
+    // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
+    params: { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...rp, ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind },
+    search: { ...DEFAULT_SEARCH[kind], ...rs, fixed: cleanFixed(rs?.fixed) },
+    chart_settings: resolveChartSettings(raw.chart_settings),
+  };
+}
+
+/** The import window's preview of a linkage profile: its main dimensions and the ranges the Finder searches. */
+export function LinkageProfilePreview({ kind, payload }: { kind: LinkageKind; payload: Record<string, unknown> }) {
+  const { params: p, search: s } = fromProfilePayload(kind, payload);
+  const mm = (v: number, d = 2) => `${v.toFixed(d)} mm`;
+  const rows: [string, string][] = [
+    ...SEARCH_VARS_OF[kind].map((v): [string, string] => {
+      const value = p[VAR_PARAM[v]] as number;
+      return [VAR_LABEL[kind][v], v === 'foot_angle' ? `${value.toFixed(0)}°` : mm(value)];
+    }),
+    ['Stroke', mm(p.stroke, 1)],
+    ['Pinch pin Ø', mm(p.pin_diameter, 1)],
+    ['Preload', mm(p.preload)],
+    ['Tube', `${p.tube_id.toFixed(2)} x ${p.tube_od.toFixed(2)} mm`],
+    ['Pressure', `${formatKpa(p.input_pressure_kpa)} kPa`],
+  ];
+  if (kind === 'pendulum') rows.push(['Build', p.compliant ? 'One piece' : p.link_curved ? 'Curved link' : 'Pivoted bars']);
+  const row = (label: string, value: string, tone = 'text-neutral-200') => (
+    <div key={label} className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">{label}</span><span className={`text-[11px] font-mono ${tone}`}>{value}</span></div>
+  );
+  return (
+    <div className="grid h-full min-h-0 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
+      <div>
+        <div className="text-[10px] text-neutral-500 font-bold mb-2">Dimensions</div>
+        <div className="grid grid-cols-1 gap-2">{rows.map(([l, v]) => row(l, v))}</div>
+      </div>
+      <div>
+        <div className="text-[10px] text-neutral-500 font-bold mb-2">Finder ranges</div>
+        <div className="grid grid-cols-1 gap-2">
+          {SEARCH_VARS_OF[kind].map((v) => row(
+            VAR_LABEL[kind][v],
+            s.fixed.includes(v) ? 'fixed' : `${s[`${v}_min` as const]} to ${s[`${v}_max` as const]} ${varUnit(v)}`,
+            'text-amber-300',
+          ))}
+          {row('Objective', s.objective === 'target' ? 'Follow target' : 'Most flow, least dead band')}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** Linear interpolation on the uniform Y grid returned by the backend. */
@@ -812,7 +879,12 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
 
 // ─── Tab ─────────────────────────────────────────────────────────
 
-export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: { kind: LinkageKind; shared: LinkageShared; mode: SubTab; onOpenExplorer: () => void }) {
+export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, onProfileStateChange, profileRef }: {
+  kind: LinkageKind; shared: LinkageShared; mode: SubTab; onOpenExplorer: () => void;
+  /** The header pill's view of the loaded profile (type = kind). */
+  onProfileStateChange?: (state: ProfileState) => void;
+  profileRef?: Ref<ProfileHandle>;
+}) {
   const lever = kind === 'lever';
   const pendulum = kind === 'pendulum';
   const [stored] = useState(() => loadStored(kind, shared));
@@ -831,12 +903,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
   const [optOut, setOptOut] = useState<{ found: boolean; report?: SearchReport; params?: LinkageParams; result?: LinkageResult; vars: SearchVar[]; fixed: SearchVar[] } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [profiles, setProfiles] = useState<{ name: string }[]>([]);
   const [activeProfile, setActiveProfile] = useState<string | null>(stored.profile);
-  const [profileName, setProfileName] = useState(stored.profile ?? '');
   /** What the active profile holds on the server, to flag unsaved changes. Unknown after a page reload. */
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-  const [profileMessage, setProfileMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [onshapeOpen, setOnshapeOpen] = useState(false);
   const [materials, setMaterials] = useState<Material[]>(BUILTIN_MATERIALS);
   const [materialName, setMaterialName] = useState('');
@@ -852,14 +921,6 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
   useEffect(() => {
     try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile, chart_settings: chartSettings })); } catch { /* ignore */ }
   }, [kind, params, search, activeProfile, chartSettings]);
-
-  const refreshProfiles = useCallback(async () => {
-    try {
-      const res = await apiFetch(`/api/linkage/profiles?kind=${kind}`);
-      if (res.ok) setProfiles((await res.json()).profiles ?? []);
-    } catch { /* the list stays as it was */ }
-  }, [kind]);
-  useEffect(() => { refreshProfiles(); }, [refreshProfiles]);
 
   const refreshMaterials = useCallback(async () => {
     try {
@@ -896,71 +957,53 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
     } catch (e) { setMaterialMessage(`Not deleted: ${e instanceof Error ? e.message : e}`); }
   };
 
-  const profileUrl = (name: string) => `/api/linkage/profiles/${kind}/${encodeURIComponent(name)}`;
-  const snapshot = JSON.stringify({ params, search });
+  // Key order free: a profile read back from the server compares equal to the same values on screen.
+  const snapshot = stableJson({ params, search });
   const chartSettingsDirty = savedChartSettings != null
     && (Object.keys(savedChartSettings) as LinkageChartKey[]).some((k) => !sameDomainSettings(chartSettings[k], savedChartSettings[k]));
   const profileDirty = activeProfile != null && ((savedSnapshot != null && savedSnapshot !== snapshot) || chartSettingsDirty);
 
-  const loadProfile = async (name: string) => {
-    setProfileMessage(null);
-    try {
-      const res = await apiFetch(profileUrl(name));
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const raw = await res.json();
-      // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
-      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind };
-      const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search, fixed: cleanFixed(raw.search?.fixed) };
-      const c = resolveChartSettings(raw.chart_settings);
+  // No note field here: an update keeps the note stored with the profile.
+  useReportProfileState({ name: activeProfile, dirty: profileDirty, canSave: true }, onProfileStateChange);
+  // After a reload the profile named in localStorage is read once, without touching the values on screen,
+  // so the unsaved marker and Update work against what it holds on the server.
+  useEffect(() => {
+    const name = stored.profile;
+    if (!name) return;
+    let live = true;
+    getProfile(kind, name).then((p) => {
+      if (!live) return;
+      const f = fromProfilePayload(kind, p.payload);
+      setSavedSnapshot((prev) => prev ?? stableJson({ params: f.params, search: f.search }));
+      setSavedChartSettings((prev) => prev ?? f.chart_settings);
+    }).catch(() => { /* unknown, as before: no marker */ });
+    return () => { live = false; };
+  }, [kind, stored.profile]);
+
+  useImperativeHandle(profileRef, () => ({
+    type: kind,
+    getPayload: () => ({ params, search, chart_settings: chartSettings }),
+    apply: (profile) => {
+      const { params: p, search: s, chart_settings: c } = fromProfilePayload(kind, profile.payload);
       setPlaying(false);
       setParams(p);
       setSearch(s);
       setChartSettings(c);
       setSavedChartSettings(c);
+      setActiveProfile(profile.name);
+      setSavedSnapshot(stableJson({ params: p, search: s }));
+    },
+    markSaved: (name, _note, payload) => {
       setActiveProfile(name);
-      setProfileName(name);
-      setSavedSnapshot(JSON.stringify({ params: p, search: s }));
-    } catch {
-      setProfileMessage({ ok: false, text: `Could not load "${name}".` });
-      refreshProfiles();
-    }
-  };
-
-  const saveProfile = async () => {
-    const name = profileName.trim();
-    if (!name) { setProfileMessage({ ok: false, text: 'Give the profile a name first.' }); return; }
-    if (name.includes('/')) { setProfileMessage({ ok: false, text: 'A profile name cannot contain a slash.' }); return; }
-    if (name !== activeProfile && profiles.some((p) => p.name === name) && !confirm(`Overwrite the saved profile "${name}"?`)) return;
-    try {
-      const res = await apiFetch(profileUrl(name), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ params, search, chart_settings: chartSettings }) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const out = await res.json();
-      setActiveProfile(out.name);
-      setProfileName(out.name);
-      setSavedSnapshot(snapshot);
-      setSavedChartSettings(chartSettings);
-      setProfileMessage({ ok: true, text: out.status === 'updated' ? `"${out.name}" updated.` : `"${out.name}" saved.` });
-      refreshProfiles();
-    } catch {
-      setProfileMessage({ ok: false, text: 'Save failed.' });
-    }
-  };
-
-  const deleteProfile = async () => {
-    if (!activeProfile || !confirm(`Delete the saved profile "${activeProfile}"? The current values stay on screen.`)) return;
-    try {
-      const res = await apiFetch(profileUrl(activeProfile), { method: 'DELETE' });
-      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
-      setProfileMessage({ ok: true, text: `"${activeProfile}" deleted.` });
+      setSavedSnapshot(stableJson({ params: payload.params, search: payload.search }));
+      setSavedChartSettings(payload.chart_settings as LinkageChartSettings);
+    },
+    detach: () => {
       setActiveProfile(null);
       setSavedSnapshot(null);
       setSavedChartSettings(null);
-      refreshProfiles();
-    } catch {
-      setProfileMessage({ ok: false, text: 'Delete failed.' });
-    }
-  };
+    },
+  }));
 
   const simulate = useCallback(async (p: LinkageParams) => {
     abortRef.current?.abort();
@@ -1026,7 +1069,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
   };
 
   /** The dimensions this linkage type's optimizer searches, most influential first (as in backend optimize_linkage). */
-  const searchVars: SearchVar[] = pendulum ? ['bar2', 'bar1', 'anchor', 'foot', 'foot_angle'] : lever ? ['lever', 'bar2', 'bar1', 'anchor'] : ['bar1', 'bar2', 'anchor'];
+  const searchVars = SEARCH_VARS_OF[kind];
   // With the total height fixed the link length is computed and its range only filters: pinning it would reject almost everything.
   const canFix = (v: SearchVar) => !(v === 'bar1' && heightFixed);
   const fixedVars = searchVars.filter((v) => canFix(v) && search.fixed.includes(v));
@@ -1100,12 +1143,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
       : savedChartSettings != null && !sameDomainSettings(chartSettings[key], savedChartSettings[key]),
   });
 
-  const varLabel: Record<SearchVar, string> = pendulum
-    ? { bar2: 'Arm, L', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle', lever: 'Lever, L' }
-    : lever
-    ? { lever: 'Lever, L', bar2: 'Attach point, c', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle' }
-    : { bar1: 'Bar 1, L1', bar2: 'Bar 2, L2', anchor: 'Anchor, a', lever: 'Lever, L', foot: 'Foot, f', foot_angle: 'Foot angle' };
-  const varUnit = (v: SearchVar) => (v === 'foot_angle' ? '°' : 'mm');
+  const varLabel = VAR_LABEL[kind];
   const toggleFixed = (v: SearchVar, on: boolean) => setSearch((s) => ({ ...s, fixed: SEARCH_VARS.filter((f) => (f === v ? on : s.fixed.includes(f))) }));
 
   // ─── Control groups shared by both menus: one state, two places ───
@@ -1606,41 +1644,13 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
           <h2 className="text-lg font-bold text-white tracking-tight truncate">{pendulum ? 'Pendulum linkage' : lever ? 'Lever linkage' : 'Bar linkage'}</h2>
         </div>
 
-        {/* Saved profiles: parameters and optimizer ranges, one list per linkage type */}
-        <div className="shrink-0 mb-4 space-y-2 rounded-lg border border-neutral-700 p-2">
-          <div className="flex items-center gap-2">
-            <label htmlFor={`linkage-profile-${kind}`} className="shrink-0 text-xs font-semibold text-neutral-400">Profile</label>
-            <select id={`linkage-profile-${kind}`} value={activeProfile ?? ''} onChange={(e) => { if (e.target.value) loadProfile(e.target.value); }}
-              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100">
-              <option value="">{profiles.length ? 'Load a saved profile…' : 'No saved profile yet'}</option>
-              {activeProfile && !profiles.some((p) => p.name === activeProfile) && <option value={activeProfile}>{activeProfile}</option>}
-              {profiles.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
-            </select>
-            <Button variant="ghost" type="button" onClick={deleteProfile} disabled={!activeProfile} title="Delete the loaded profile" aria-label="Delete the loaded profile"
-              className="shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:text-red-400 disabled:opacity-40">
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input type="text" value={profileName} maxLength={60} placeholder="Profile name" aria-label="Profile name"
-              onChange={(e) => setProfileName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveProfile(); }}
-              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100" />
-            <Button variant="ghost" type="button" onClick={saveProfile}
-              className={`shrink-0 flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold ${profileDirty ? 'border-amber-400 bg-amber-500 text-neutral-900' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
-              <Save className="w-3.5 h-3.5" /> {activeProfile && profileName.trim() === activeProfile ? 'Update' : 'Save'}
-            </Button>
-          </div>
+        <div className="shrink-0 mb-4">
           <Button variant="ghost" type="button" onClick={() => setOnshapeOpen(true)} disabled={!data || data.Y_positions.length === 0}
             title="Compare these dimensions with the Onshape variable table, then overwrite the variables there"
             className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40">
             <UploadCloud className="w-3.5 h-3.5" /> Write to Onshape variables
           </Button>
           <OnshapeVariablesModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params} />
-          {(profileMessage || profileDirty) && (
-            <p className={`text-xs leading-snug ${profileMessage && !profileMessage.ok ? 'text-red-400' : profileDirty ? 'text-amber-400' : 'text-emerald-400'}`} role="status">
-              {profileDirty ? `Unsaved changes to "${activeProfile}".` : profileMessage?.text}
-            </p>
-          )}
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-4">

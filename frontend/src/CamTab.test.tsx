@@ -15,7 +15,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    const body = url.endsWith('/api/simulate') ? simulateDefault : url.endsWith('/api/configs/default') ? { default: null } : []
+    const body = url.endsWith('/api/simulate') ? simulateDefault : url.endsWith('/api/profiles/cam/default') ? { default: null } : []
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
   }))
 })
