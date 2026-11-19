@@ -129,5 +129,47 @@ class OnshapeVariablesTests(unittest.TestCase):
             ov.wanted_rows(replace(LinkageParams(), bar2_length=-1.0))
 
 
+class OnshapeEndpointsTests(unittest.TestCase):
+    """The two routes as FastAPI serves them (main.py imports its siblings by bare name)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        import sys
+        import tempfile
+        try:
+            from fastapi.testclient import TestClient
+        except Exception as exc:   # httpx missing
+            raise unittest.SkipTest(f"TestClient unavailable: {exc}")
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, backend_dir)
+        os.environ["SIM_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
+        import main
+        import onshape_variables
+        cls.main, cls.module = main, onshape_variables
+        cls.client = TestClient(main.app)
+
+    def test_preview_then_apply(self):
+        fake = FakeOnshape()
+        body = {"linkage_type": "pendulum", "bar1_length": 11.95, "bar2_length": 14.43, "anchor_distance": 4.79,
+                "pivot_offset": 4.0, "pad_length": 1.0, "link_curved": True}
+        with mock.patch.object(self.module.oe, "_request_json", fake), \
+                mock.patch.object(self.module, "target_from_env", lambda: self.module.Target("doc", "ws", "vs", "ps")):
+            self.assertEqual(self.client.post("/api/linkage/simulate", json=body).status_code, 200)
+            res = self.client.post("/api/linkage/onshape/preview", json=body)
+            self.assertEqual(res.status_code, 200, res.text)
+            self.assertEqual({r["name"]: r["status"] for r in res.json()["rows"]}["pend_arm_L"], "update")
+            res = self.client.post("/api/linkage/onshape/apply", json={**body, "names": ["pend_arm_L"]})
+            self.assertEqual(res.status_code, 200, res.text)
+            self.assertEqual(fake.expression("pend_arm_L"), "14.43 mm")
+            self.assertEqual(fake.expression("pend_stroke"), "3 mm")
+
+    def test_unconfigured_target_is_a_409_with_the_reason(self):
+        with mock.patch.dict(self.module.os.environ, {"ONSHAPE_DOCUMENT_ID": "", "ONSHAPE_WORKSPACE_ID": ""}):
+            res = self.client.post("/api/linkage/onshape/preview", json={"linkage_type": "pendulum"})
+        self.assertEqual(res.status_code, 409)
+        self.assertIn("ONSHAPE_DOCUMENT_ID", res.json()["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

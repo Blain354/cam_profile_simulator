@@ -696,7 +696,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       const res = await apiFetch(profileUrl(name));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = await res.json();
-      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], ...raw.params, linkage_type: kind };
+      // A profile saved before the curved link existed was a straight one: keep its figures as they were.
+      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, ...raw.params, linkage_type: kind };
       const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search };
       setPlaying(false);
       setParams(p);
