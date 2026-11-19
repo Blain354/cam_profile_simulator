@@ -4,7 +4,7 @@ import { ageOf } from './lib/age';
 import { project } from './project';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import {
   Settings, Import, Download, RefreshCw, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor
@@ -13,9 +13,11 @@ import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
 import {
-  ParameterSlider, StatRow, Accordion, VerticalSystemView, ConfigModal, TooltipHintsProvider, ClosureRampToggle,
+  ParameterSlider, StatRow, Accordion, ConfigModal, TooltipHintsProvider, ClosureRampToggle,
   apiFetch, defaultParams, mergeConfigParams,
 } from './components';
+import { CamSchematicCard } from './CamSchematic';
+import { interpAt, useCamTravel } from './lib/camTravel';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain } from './lib/chartDomain';
@@ -122,6 +124,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const simulateAbortRef = useRef<AbortController | null>(null);
   const [detailsView, setDetailsView] = useState(false);
+  const travel = useCamTravel(data);
   const [showStlExport, setShowStlExport] = useState(false);
 
   const getExplorerChartSettings = useCallback((key: ExplorerChartKey): ChartDomainSettings => {
@@ -445,11 +448,18 @@ export default function App() {
     };
   }, [data, hasDynamicModel]);
 
+  // Same frame as the linkage charts, so a 210 px row holds the card.
+  const chartMargin = { top: 6, right: 16, bottom: 18, left: 16 };
+  const chartMinHeight = (maximized: boolean) => (maximized ? 320 : 158);
+  const legend = <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />;
+  const carriageLine = <ReferenceLine x={travel.y} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={2} />;
+  const carriageTimeMs = data && data.linear_speed_mm_s > 0 ? interpAt(travel.y, data.Y_positions, data.time_axis_ms) : null;
+
   const renderGapY = ({ maximized, settings: s }: ChartCardView) => (
-    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
-      <LineChart data={gapVsYData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={chartMinHeight(maximized)}>
+      <LineChart data={gapVsYData} margin={chartMargin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis dataKey="y" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
+        <XAxis dataKey="y" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(val) => val.toFixed(3)} />
         <YAxis type="number" stroke="#888" label={{ value: 'Gap (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={chartDomain(s, 'y', ['dataMin', 'dataMax'])} tickFormatter={(val) => val.toFixed(3)} />
         <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} formatter={(value: any) => `${Number(value).toFixed(3)} mm`} labelFormatter={(label: any) => `Y: ${Number(label).toFixed(3)} mm`} />
         {data && (
@@ -466,15 +476,16 @@ export default function App() {
         <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
           {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
         </ReferenceLine>
+        {carriageLine}
       </LineChart>
     </ResponsiveContainer>
   );
 
   const renderGapTime = ({ maximized, settings: s }: ChartCardView) => (
-    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
-      <LineChart data={gapVsTimeData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={chartMinHeight(maximized)}>
+      <LineChart data={gapVsTimeData} margin={chartMargin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis dataKey="time" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} stroke="#888" label={{ value: 'Time (ms)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
+        <XAxis dataKey="time" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} stroke="#888" label={{ value: 'Time (ms)', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(val) => val.toFixed(3)} />
         <YAxis type="number" stroke="#888" label={{ value: 'Gap (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={chartDomain(s, 'y', ['dataMin', 'dataMax'])} tickFormatter={(val) => val.toFixed(3)} />
         <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} formatter={(value: any) => `${Number(value).toFixed(3)} mm`} labelFormatter={(label: any) => `Time: ${Number(label).toFixed(3)} ms`} />
         {data && (
@@ -493,15 +504,16 @@ export default function App() {
             {maximized && <Label value="Bushing time" position="insideTopRight" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
           </ReferenceLine>
         )}
+        {carriageTimeMs != null && <ReferenceLine x={carriageTimeMs} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={2} />}
       </LineChart>
     </ResponsiveContainer>
   );
 
   const renderPneumatic = ({ maximized, settings: s }: ChartCardView) => (
-    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
-      <LineChart data={pneumaticData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={chartMinHeight(maximized)}>
+      <LineChart data={pneumaticData} margin={chartMargin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-        <XAxis dataKey="y" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }} tickFormatter={(val) => val.toFixed(3)} />
+        <XAxis dataKey="y" type="number" domain={chartDomain(s, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={true} stroke="#888" label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(val) => val.toFixed(3)} />
         <YAxis type="number" stroke="#888" label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} domain={chartDomain(s, 'y', ['dataMin', 'dataMax'])} tickFormatter={(val) => val.toFixed(3)} />
         <Tooltip
           contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '12px', padding: '12px 16px' }}
@@ -541,6 +553,7 @@ export default function App() {
           }}
           labelFormatter={(label: any) => `Y: ${Number(label).toFixed(3)} mm`}
         />
+        {hasDynamicModel && legend}
         <Line type="monotone" dataKey="flow" name="Static Flow" stroke="#f59e0b" strokeWidth={hasDynamicModel ? 2 : 3} strokeDasharray={hasDynamicModel ? '4 2' : undefined} dot={false} isAnimationActive={false} />
         {hasDynamicModel && (
           <Line type="monotone" dataKey="dynamicFlow" name="Dynamic Flow" stroke="#10b981" strokeWidth={3} dot={false} isAnimationActive={false} />
@@ -549,6 +562,7 @@ export default function App() {
         <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
           {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
         </ReferenceLine>
+        {carriageLine}
       </LineChart>
     </ResponsiveContainer>
   );
@@ -558,7 +572,6 @@ export default function App() {
     onSettingsChange: (next: ChartDomainSettings) => setExplorerChartSettings(key, next),
     modified: isExplorerChartSettingsModified(key),
     settingsTitle: `${key} domain settings`,
-    layout: true,
   });
 
   return (
@@ -579,17 +592,18 @@ export default function App() {
 
           {/* Tab Bar */}
           <div className="flex shrink-0 items-center gap-2">
-            <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
+            {/* Plain buttons with the kit's tab classes, as in SubTabs: a kit ghost Button paints over the selected state. */}
+            <div className="bui-tablist flex shrink-0 items-center">
               {([
                 ['cam', 'Cam', Disc3],
                 ['linkage', 'Bar Linkage', Waypoints],
                 ['lever', 'Lever Linkage', Spline],
                 ['pendulum', 'Pendulum Linkage', Anchor],
               ] as const).map(([tab, label, Icon]) => (
-                <Button key={tab} variant="ghost" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === tab ? (tab === 'cam' ? 'bg-blue-600 text-white' : 'bg-amber-600 text-white') : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+                <button key={tab} type="button" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}
+                  className={`bui-tab flex items-center gap-2 px-2.5 py-1 text-xs${activeTab === tab ? ' bui-tab--active' : ''}`}>
                   <Icon className="w-3.5 h-3.5" /> {label}
-                </Button>
+                </button>
               ))}
             </div>
             <SubTabs label="Mode" value={subTab} options={SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
@@ -716,7 +730,7 @@ export default function App() {
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
 
           {/* Panel 1: Parameters */}
-          <motion.div layout className="lg:col-span-3 xl:col-span-2 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+          <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
             <div className="flex items-center gap-3 mb-6 min-w-0">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Settings className="w-5 h-5 text-blue-500 shrink-0" />
@@ -744,28 +758,27 @@ export default function App() {
                   className={`w-full resize-y min-h-[4.5rem] rounded-lg border bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-600 ${isModified('note') ? 'border-amber-500/50' : 'border-neutral-700'}`} />
               </div>
 
-              <Accordion title="Cam & Actuator Geometry">
+              <Accordion title="Geometry">
                 <div className="space-y-5 pt-2">
-                  <ParameterSlider label="Motor Speed" value={params.motor_speed} min={10} max={1000} step={10} onChange={(val) => handleParamChange('motor_speed', val)} isModified={isModified('motor_speed')} description={explorerMotorSpeed} />
-                  <ParameterSlider label="Default Dist (mm)" value={params.default_distance} min={0.01} max={2.0} step={0.01} onChange={(val) => handleParamChange('default_distance', val)} isModified={isModified('default_distance')} description={explorerDefaultDist} />
-                  <ClosureRampToggle value={params.ramp_enabled} onChange={(val) => handleParamChange('ramp_enabled', val)} isModified={isModified('ramp_enabled')} />
-                  <ParameterSlider label="Thickness (mm)" value={params.thickness} min={0.1} max={5.0} step={0.1} onChange={(val) => handleParamChange('thickness', val)} isModified={isModified('thickness')} description={explorerThickness} />
                   <ParameterSlider label="Height (mm)" value={params.height} min={0.01} max={8.0} step={0.01} onChange={(val) => handleParamChange('height', val)} isModified={isModified('height')} description={explorerHeight} />
                   <ParameterSlider label="Curve Gain (K)" value={params.K} min={0.1} max={10.0} step={0.1} onChange={(val) => handleParamChange('K', val)} isModified={isModified('K')} description={explorerK} />
                   <ParameterSlider label="Deadband (mm)" value={params.deadband} min={0.05} max={8.0} step={0.05} onChange={(val) => handleParamChange('deadband', val)} isModified={isModified('deadband')} description={explorerDeadband} />
+                  <ParameterSlider label="Default Dist (mm)" value={params.default_distance} min={0.01} max={2.0} step={0.01} onChange={(val) => handleParamChange('default_distance', val)} isModified={isModified('default_distance')} description={explorerDefaultDist} />
+                  <ClosureRampToggle value={params.ramp_enabled} onChange={(val) => handleParamChange('ramp_enabled', val)} isModified={isModified('ramp_enabled')} />
+                  <ParameterSlider label="Thickness (mm)" value={params.thickness} min={0.1} max={5.0} step={0.1} onChange={(val) => handleParamChange('thickness', val)} isModified={isModified('thickness')} description={explorerThickness} />
                 </div>
               </Accordion>
 
-              <Accordion title="Pneumatic System">
+              <Accordion title="Pneumatic system">
                 <div className="space-y-5 pt-2">
-                  <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1.0} max={12.0} step={0.1} onChange={(val) => handleParamChange('tube_id', val)} isModified={isModified('tube_id')} description={explorerTubeId} />
-                  <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1.0} max={16.0} step={0.1} onChange={(val) => handleParamChange('tube_od', val)} isModified={isModified('tube_od')} description={explorerTubeOd} />
                   <ParameterSlider label="Pressure (PSI)" value={params.input_pressure_psi} min={0.0} max={150.0} step={1.0}
                     onChange={(val) => handleParamChange('input_pressure_psi', val)}
                     secondaryValue={`${(params.input_pressure_psi * 6.89476).toFixed(3)} kPa`}
                     isModified={isModified('input_pressure_psi')}
                     description={explorerPressure}
                   />
+                  <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1.0} max={12.0} step={0.1} onChange={(val) => handleParamChange('tube_id', val)} isModified={isModified('tube_id')} description={explorerTubeId} />
+                  <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1.0} max={16.0} step={0.1} onChange={(val) => handleParamChange('tube_od', val)} isModified={isModified('tube_od')} description={explorerTubeOd} />
                   <ParameterSlider label="Compliance" value={params.compliance} min={0.0} max={5.0} step={0.01}
                     onChange={(val) => handleParamChange('compliance', val)}
                     secondaryValue={`Opening: ${(params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`}
@@ -780,65 +793,68 @@ export default function App() {
                   />
                 </div>
               </Accordion>
+
+              <Accordion title="Motor and screw">
+                <div className="space-y-5 pt-2">
+                  <ParameterSlider label="Motor Speed" value={params.motor_speed} min={10} max={1000} step={10} onChange={(val) => handleParamChange('motor_speed', val)} isModified={isModified('motor_speed')} description={explorerMotorSpeed} />
+                </div>
+              </Accordion>
+
+              {stats && (
+                <Accordion title="Results" showBottomBorder={false}>
+                  <div className="space-y-2 pt-2">
+                    <StatRow label="Open Latency"
+                      value={
+                        <div className="flex items-center gap-1.5">
+                          <span>{stats.openTime.toFixed(3)} ms</span>
+                          <span className="text-[10px] text-neutral-500 font-normal">
+                            ({((params.motor_speed * params.lead_screw_pitch / 60) * (stats.openTime / 1000)).toFixed(3)} mm)
+                          </span>
+                        </div>
+                      }
+                      highlight={true} />
+                    <StatRow label="Gap at Y=0" value={`${stats.gapAtY0.toFixed(3)} mm`} />
+                    {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`} />}
+                    <StatRow label="Max Flow (static)" value={`${stats.maxFlow.toFixed(3)} L/min`} />
+                    {stats.maxDynamicFlow !== undefined && (
+                      <StatRow label="Max Flow (dynamic)" value={`${stats.maxDynamicFlow.toFixed(3)} L/min`} />
+                    )}
+                    <StatRow
+                      label="Static flow @ Y=0.5 mm"
+                      value={
+                        stats.staticFlowAtHalfMm !== null
+                          ? `${stats.staticFlowAtHalfMm.toFixed(3)} L/min`
+                          : 'N/A'
+                      }
+                    />
+                    {hasDynamicModel && (
+                      <>
+                        <StatRow label="Total Volume" value={`${stats.totalVolume.toFixed(2)} mL`} />
+                        <StatRow label="Equalization" value={stats.equalizationTime >= 0 ? `${stats.equalizationTime.toFixed(1)} ms` : 'N/A'} />
+                      </>
+                    )}
+                  </div>
+                </Accordion>
+              )}
             </div>
+          </div>
 
-            {stats && (
-              <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-2">
-                <h3 className="text-xs font-semibold text-neutral-400 mb-2">Derived Stats</h3>
-                <StatRow label="Gap at Y=0" value={`${stats.gapAtY0.toFixed(3)} mm`} />
-                {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`} />}
-                <StatRow
-                  label="Static flow @ Y=0.5 mm"
-                  value={
-                    stats.staticFlowAtHalfMm !== null
-                      ? `${stats.staticFlowAtHalfMm.toFixed(3)} L/min`
-                      : 'N/A'
-                  }
-                />
-                <StatRow label="Open Latency"
-                  value={
-                    <div className="flex items-center gap-1.5">
-                      <span>{stats.openTime.toFixed(3)} ms</span>
-                      <span className="text-[10px] text-neutral-500 font-normal">
-                        ({((params.motor_speed * params.lead_screw_pitch / 60) * (stats.openTime / 1000)).toFixed(3)} mm)
-                      </span>
-                    </div>
-                  }
-                  highlight={true} />
-                <StatRow label="Max Flow (static)" value={`${stats.maxFlow.toFixed(3)} L/min`} />
-                {stats.maxDynamicFlow !== undefined && (
-                  <StatRow label="Max Flow (dynamic)" value={`${stats.maxDynamicFlow.toFixed(3)} L/min`} />
-                )}
-                {hasDynamicModel && (
-                  <>
-                    <StatRow label="Total Volume" value={`${stats.totalVolume.toFixed(2)} mL`} />
-                    <StatRow label="Equalization" value={stats.equalizationTime >= 0 ? `${stats.equalizationTime.toFixed(1)} ms` : 'N/A'} />
-                  </>
-                )}
-              </div>
-            )}
-          </motion.div>
+          {/* Panel 2: schematic */}
+          <CamSchematicCard id="explorer" data={data} params={params} travel={travel} details={detailsView} setDetails={setDetailsView}
+            speedNote={`${params.motor_speed} RPM × ${params.lead_screw_pitch} mm pitch`} />
 
-          {/* Panel 2: Vertical System View */}
-          <motion.div layout transition={{ duration: 0.25, ease: 'easeOut' }} className={`min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 ${detailsView ? 'lg:col-span-4 xl:col-span-4' : 'lg:col-span-2 xl:col-span-2'}`}>
-            <VerticalSystemView data={data} params={params} details={detailsView} setDetails={setDetailsView} />
-          </motion.div>
-
-          {/* Panel 3: Charts Area */}
-          <motion.div layout transition={{ duration: 0.25, ease: 'easeOut' }} className={`relative min-w-0 grid grid-rows-3 gap-4 min-h-0 ${detailsView ? 'lg:col-span-5 xl:col-span-6' : 'lg:col-span-7 xl:col-span-8'}`}>
-            <ChartCard title="Pneumatic Flow vs Y" {...explorerCard('pneumatic')} className="row-span-2">
+          {/* Panel 3: charts */}
+          <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
+            <ChartCard title="Pneumatic Flow vs Y" {...explorerCard('pneumatic')}>
               {renderPneumatic}
             </ChartCard>
-
-            <div className="row-span-1 flex flex-col lg:flex-row gap-4 min-h-0">
-              <ChartCard title="Gap vs Y" maximizedTitle="Gap vs Y Position" compact {...explorerCard('gapY')} className="flex-1">
-                {renderGapY}
-              </ChartCard>
-              <ChartCard title="Gap vs Time" compact {...explorerCard('gapTime')} className="flex-1">
-                {renderGapTime}
-              </ChartCard>
-            </div>
-          </motion.div>
+            <ChartCard title="Gap vs Y" maximizedTitle="Gap vs Y Position" {...explorerCard('gapY')}>
+              {renderGapY}
+            </ChartCard>
+            <ChartCard title="Gap vs Time" {...explorerCard('gapTime')}>
+              {renderGapTime}
+            </ChartCard>
+          </div>
         </div>
       ) : activeTab !== 'cam' ? (
         <LinkageExplorer
