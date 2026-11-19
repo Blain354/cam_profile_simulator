@@ -144,7 +144,7 @@ class ProfileRouteTests(unittest.TestCase):
             raise unittest.SkipTest(f"TestClient unavailable: {exc}")
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         sys.path.insert(0, backend_dir)
-        os.environ.setdefault("SIM_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
+        os.environ["SIM_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "test.db")
         import main
         cls.main = main
         cls.client = TestClient(main.app)
