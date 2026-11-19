@@ -2,6 +2,7 @@ import { Button, Input, Modal } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { interpAt } from './lib/camTravel';
+import { legacyPsiToKpa } from './lib/pressure';
 import {
   ChevronDown, ChevronRight, Trash2,
   RefreshCw
@@ -109,7 +110,10 @@ export function TooltipHintsProvider({
   return <TooltipHintsEnabledContext.Provider value={enabled}>{children}</TooltipHintsEnabledContext.Provider>;
 }
 
-export function mergeConfigParams(raw: Partial<SimulationParams> & Record<string, unknown>): SimulationParams {
+export function mergeConfigParams(input: Partial<SimulationParams> & Record<string, unknown>): SimulationParams {
+  // A config file saved before pressures were in kPa carries input_pressure_psi: without this the
+  // default 100 kPa would take its place.
+  const raw = legacyPsiToKpa(input);
   return {
     ...defaultParams,
     ...raw,

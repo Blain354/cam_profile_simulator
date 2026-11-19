@@ -22,3 +22,11 @@ test('a converted pressure shows one decimal, a whole one none', () => {
   expect(formatKpa(15 * PSI_TO_KPA)).toBe('103.4')
   expect(formatKpa(100)).toBe('100')
 })
+
+test('a cam config file saved in psi loads converted, not at the default pressure', async () => {
+  const { mergeConfigParams } = await import('../components')
+  const got = mergeConfigParams({ input_pressure_psi: 15, height: 2.5 }) as unknown as Record<string, unknown>
+  expect(got.input_pressure_kpa).toBeCloseTo(15 * PSI_TO_KPA, 9)
+  expect('input_pressure_psi' in got).toBe(false)
+  expect(mergeConfigParams({ input_pressure_kpa: 15 }).input_pressure_kpa).toBe(15)
+})
