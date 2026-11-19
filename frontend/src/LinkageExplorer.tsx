@@ -624,11 +624,13 @@ interface OnshapeRow {
   label: string;
   new_expression: string;
   current_expression: string | null;
-  where: 'variable_studio' | 'part_studio' | null;
-  status: 'update' | 'same' | 'missing' | 'written' | 'created' | 'skipped' | 'error';
+  status: 'update' | 'same' | 'new' | 'written' | 'created' | 'skipped' | 'error';
   detail: string;
 }
-interface OnshapeTable { rows: OnshapeRow[]; api_calls: number; has_variable_studio: boolean; has_part_studio: boolean; document_url: string }
+interface OnshapeTable {
+  rows: OnshapeRow[]; api_calls: number; table_name: string; table_exists: boolean; table_created: boolean;
+  element_id: string | null; table_url: string | null;
+}
 
 async function onshapeCall(path: string, body: unknown): Promise<OnshapeTable> {
   const res = await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -639,37 +641,67 @@ async function onshapeCall(path: string, body: unknown): Promise<OnshapeTable> {
   return res.json();
 }
 
-/** Shows what the Onshape variables hold against the values on screen, then overwrites the ones kept ticked. */
+/** Same rule as `table_name_for` in backend/onshape_variables.py. */
+const TABLE_NAME = /^[A-Za-z0-9 _-]{1,60}$/;
+const tableNameKey = (kind: LinkageKind) => `cam-sim.onshape-table.${kind}`;
+function storedTableName(kind: LinkageKind): string {
+  try {
+    const v = localStorage.getItem(tableNameKey(kind));
+    if (v && TABLE_NAME.test(v)) return v;
+  } catch { /* ignore */ }
+  return `cam_sim_${kind}`;
+}
+
+/** Shows what the simulator's own Variable Studio holds against the values on screen, then writes the ticked rows (creating the table if needed). */
 function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClose: () => void; params: LinkageParams }) {
+  const kind = params.linkage_type;
   const [table, setTable] = useState<OnshapeTable | null>(null);
+  const [nameInput, setNameInput] = useState(() => storedTableName(kind));
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [createMissing, setCreateMissing] = useState(false);
   const [busy, setBusy] = useState<'read' | 'write' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const staleRef = useRef(0);
+
+  const name = nameInput.trim();
+  const nameOk = TABLE_NAME.test(name);
+
+  // One read per opening or per explicit name check, never per keystroke: each read costs Onshape API calls.
+  const read = (tableName: string) => {
+    const ticket = ++staleRef.current;
+    setTable(null); setError(null); setDone(false); setBusy('read');
+    onshapeCall('/api/linkage/onshape/preview', { ...params, table_name: tableName })
+      .then((t) => {
+        if (ticket !== staleRef.current) return;
+        setTable(t);
+        setPicked(new Set(t.rows.filter((r) => r.status === 'update' || r.status === 'new').map((r) => r.name)));
+        try { localStorage.setItem(tableNameKey(kind), t.table_name); } catch { /* ignore */ }
+      })
+      .catch((e) => { if (ticket === staleRef.current) setError(e instanceof Error ? e.message : 'Could not read the Onshape table.'); })
+      .finally(() => { if (ticket === staleRef.current) setBusy(null); });
+  };
 
   useEffect(() => {
-    if (!open) return;
-    let stale = false;
-    setTable(null); setError(null); setDone(false); setCreateMissing(false); setBusy('read');
-    onshapeCall('/api/linkage/onshape/preview', params)
-      .then((t) => { if (stale) return; setTable(t); setPicked(new Set(t.rows.filter((r) => r.status === 'update').map((r) => r.name))); })
-      .catch((e) => { if (!stale) setError(e instanceof Error ? e.message : 'Could not read the Onshape variables.'); })
-      .finally(() => { if (!stale) setBusy(null); });
-    return () => { stale = true; };
+    if (!open) { staleRef.current++; return; }
+    const stored = storedTableName(kind);
+    setNameInput(stored);
+    read(stored);
     // Read once per opening: the values are those on screen when the button was pressed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const canPick = (r: OnshapeRow) => r.status === 'update' || (r.status === 'missing' && createMissing && !!table?.has_variable_studio);
-  const chosen = table ? table.rows.filter((r) => canPick(r) && picked.has(r.name)) : [];
-  const missing = table ? table.rows.filter((r) => r.status === 'missing').length : 0;
-  const toggle = (name: string) => setPicked((p) => { const n = new Set(p); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  const checkName = () => { if (nameOk && busy == null && name !== table?.table_name) read(name); };
+  const canPick = (r: OnshapeRow) => r.status === 'update' || r.status === 'new';
+  // The write goes to the table that was read: a name edited since must be checked first.
+  const current = table != null && name === table.table_name;
+  const chosen = table && current ? table.rows.filter((r) => canPick(r) && picked.has(r.name)) : [];
+  const toggle = (n: string) => setPicked((p) => { const s = new Set(p); if (s.has(n)) s.delete(n); else s.add(n); return s; });
 
   const write = async () => {
+    if (!table) return;
     setBusy('write'); setError(null);
     try {
-      setTable(await onshapeCall('/api/linkage/onshape/apply', { ...params, names: chosen.map((r) => r.name), create_missing: createMissing }));
+      setTable(await onshapeCall('/api/linkage/onshape/apply', { ...params, table_name: table.table_name, names: chosen.map((r) => r.name) }));
       setDone(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The write to Onshape failed.');
@@ -679,27 +711,49 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
   };
 
   const statusText: Record<OnshapeRow['status'], [string, string]> = {
-    update: ['will change', 'text-amber-300'], same: ['already equal', 'text-neutral-500'], missing: ['not in Onshape', 'text-neutral-500'],
-    written: ['written', 'text-emerald-400'], created: ['created', 'text-emerald-400'], skipped: ['left as is', 'text-neutral-500'], error: ['failed', 'text-red-400'],
+    update: ['will change', 'text-amber-300'], same: ['already equal', 'text-neutral-500'], new: ['will be added', 'text-amber-300'],
+    written: ['written', 'text-emerald-400'], created: ['added', 'text-emerald-400'], skipped: ['left as is', 'text-neutral-500'], error: ['failed', 'text-red-400'],
   };
+  const n = chosen.length;
+  const plural = n > 1 ? 's' : '';
 
   return (
     <Modal open={open} onClose={onClose} size="lg" closeOnOverlayClick={busy == null} closeOnEsc={busy == null} showClose={busy == null}
-      title="Write these dimensions to the Onshape variable table">
+      title="Write these dimensions to an Onshape variable table">
       <div className="space-y-3 text-sm">
-        {busy === 'read' && <p className="text-neutral-400" role="status">Reading the Onshape variables…</p>}
+        <div className="space-y-1">
+          <label htmlFor={`onshape-table-${kind}`} className="text-xs text-neutral-400">Variable table name</label>
+          <div className="flex items-center gap-2">
+            <Input id={`onshape-table-${kind}`} type="text" value={nameInput} maxLength={60} disabled={busy != null}
+              onChange={(e) => setNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') checkName(); }}
+              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-sm text-neutral-100" />
+            <Button variant="ghost" type="button" onClick={checkName} disabled={!nameOk || busy != null || current}
+              className="shrink-0 rounded-lg border border-neutral-700 px-2 py-1 text-xs text-neutral-200 disabled:opacity-40">
+              Look up
+            </Button>
+          </div>
+          {!nameOk && <p className="text-xs text-red-300" role="alert">1 to 60 characters: letters, digits, space, dash or underscore.</p>}
+          <p className="text-xs leading-snug text-neutral-500">
+            The table is a Variable Studio tab of the Onshape document. A Part Studio uses these values only once the table is
+            referenced there (Insert &gt; Variable Studio reference), which you do once by hand. A new name gives a new table.
+          </p>
+        </div>
+        {busy === 'read' && <p className="text-neutral-400" role="status">Looking for the table in Onshape…</p>}
         {error && <p className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{error}</p>}
         {table && (
           <>
             <p className="text-xs leading-snug text-neutral-400">
               {done
-                ? 'Done. Onshape regenerates the parts that use these variables the next time the document is open.'
-                : 'Variables are matched by name. Only the ticked ones are overwritten; every other variable in the table is left exactly as it is.'}
+                ? `Done${table.table_created ? `: the table ${table.table_name} was created` : ''}. Parts change once a Part Studio references this table.`
+                : table.table_exists
+                  ? `${table.table_name} exists. Only the ticked variables change; every other variable in it, yours included, is kept as it is.`
+                  : `There is no table called ${table.table_name} in the document yet. Writing creates it with the ticked variables.`}
             </p>
+            {!current && !done && <p className="text-xs text-amber-300">The name changed: press Look up before writing.</p>}
             <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-neutral-700">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-neutral-900 text-left text-neutral-400">
-                  <tr><th className="p-2" /><th className="p-2">Onshape variable</th><th className="p-2">In Onshape now</th><th className="p-2">From the simulator</th><th className="p-2">Status</th></tr>
+                  <tr><th className="p-2" /><th className="p-2">Onshape variable</th><th className="p-2">In the table now</th><th className="p-2">From the simulator</th><th className="p-2">Status</th></tr>
                 </thead>
                 <tbody>
                   {table.rows.map((r) => (
@@ -719,31 +773,22 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
                 </tbody>
               </table>
             </div>
-            {!done && missing > 0 && (
-              <label className={`flex items-start gap-2 text-xs ${table.has_variable_studio ? 'text-neutral-300' : 'text-neutral-500'}`}>
-                <input type="checkbox" checked={createMissing} disabled={!table.has_variable_studio || busy != null} className="mt-0.5 accent-amber-500"
-                  onChange={(e) => {
-                    setCreateMissing(e.target.checked);
-                    if (e.target.checked) setPicked((p) => new Set([...p, ...table.rows.filter((r) => r.status === 'missing').map((r) => r.name)]));
-                  }} />
-                <span>
-                  {table.has_variable_studio
-                    ? `Also create the ${missing} variable${missing > 1 ? 's' : ''} Onshape does not have yet, in the Variable Studio, under the names shown.`
-                    : `${missing} variable${missing > 1 ? 's are' : ' is'} not in Onshape. Create them there under the names shown and they will be picked up next time.`}
-                </span>
-              </label>
-            )}
             <div className="flex items-center justify-between gap-3">
-              <a href={table.document_url} target="_blank" rel="noreferrer" className="text-xs text-amber-300 underline">Open the Onshape document</a>
+              {table.table_url
+                ? <a href={table.table_url} target="_blank" rel="noreferrer" className="text-xs text-amber-300 underline">Open the table in Onshape</a>
+                : <span />}
               <div className="flex gap-2">
                 <Button variant="ghost" type="button" onClick={onClose} disabled={busy != null} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-bold text-neutral-300">
                   {done ? 'Close' : 'Cancel'}
                 </Button>
                 {!done && (
-                  <Button variant="ghost" type="button" onClick={write} disabled={busy != null || chosen.length === 0}
+                  <Button variant="ghost" type="button" onClick={write} disabled={busy != null || n === 0}
                     className="flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-bold text-neutral-900 disabled:opacity-40">
                     <UploadCloud className="w-3.5 h-3.5" />
-                    {busy === 'write' ? 'Writing…' : chosen.length ? `Overwrite ${chosen.length} variable${chosen.length > 1 ? 's' : ''} in Onshape` : 'Nothing to write'}
+                    {busy === 'write' ? 'Writing…'
+                      : n === 0 ? 'Nothing to write'
+                        : table.table_exists ? `Overwrite ${n} variable${plural} in ${table.table_name}`
+                          : `Create the table and write ${n} variable${plural}`}
                   </Button>
                 )}
               </div>

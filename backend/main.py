@@ -821,9 +821,13 @@ def linkage_optimize(req: LinkageOptimizeRequest):
 
 # ─── Linkage dimensions to the Onshape variable table ────────────
 
-class LinkageOnshapeApplyRequest(LinkageRequest):
+class LinkageOnshapePreviewRequest(LinkageRequest):
+    # Name of the simulator's own Variable Studio; empty means cam_sim_<kind>. Checked in onshape_variables.
+    table_name: Optional[str] = Field(None, max_length=200)
+
+
+class LinkageOnshapeApplyRequest(LinkageOnshapePreviewRequest):
     names: list[str] = Field(default_factory=list, max_length=100)
-    create_missing: bool = False
 
 
 def _onshape_variables(call):
@@ -838,15 +842,15 @@ def _onshape_variables(call):
 
 
 @app.post("/api/linkage/onshape/preview")
-def linkage_onshape_preview(req: LinkageRequest):
-    """What writing this design to Onshape would change. Reads only."""
-    return _onshape_variables(lambda: onshape_variables.preview(_linkage_params(req)))
+def linkage_onshape_preview(req: LinkageOnshapePreviewRequest):
+    """What writing this design to its own Onshape Variable Studio would change. Reads only."""
+    return _onshape_variables(lambda: onshape_variables.preview(_linkage_params(req), req.table_name))
 
 
 @app.post("/api/linkage/onshape/apply")
 def linkage_onshape_apply(req: LinkageOnshapeApplyRequest):
-    """Overwrite the named Onshape variables with this design's values."""
-    return _onshape_variables(lambda: onshape_variables.apply(_linkage_params(req), req.names, req.create_missing))
+    """Write the named variables into the simulator's own Variable Studio, creating it if missing."""
+    return _onshape_variables(lambda: onshape_variables.apply(_linkage_params(req), req.names, req.table_name))
 
 
 # ─── Saved linkage profiles ──────────────────────────────────────

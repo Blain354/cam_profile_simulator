@@ -1,26 +1,29 @@
 """
-Write the linkage dimensions on screen into the Onshape variable table.
+Write the linkage dimensions on screen into a Variable Studio of the simulator's own.
 
-Two places hold variables in an Onshape document, and both are matched by name:
-  - a Variable Studio: read with GET /variables/.../variables and written back as a whole
-    list, so every write is read, merge, write and no variable is ever dropped;
-  - `assignVariable` features of a Part Studio (the `#L1`, `#L2` kind): each one is posted
-    back with its expression changed, the way the STL export already does.
+The table is a Variable Studio tab of the configured document, found by name
+(`cam_sim_<kind>` by default). It is created on the first write; the owner then references
+it from a Part Studio once, by hand (Insert > Variable Studio reference). Nothing else in the
+document is read or written: no Part Studio, no other Variable Studio.
 
-Nothing here regenerates or exports: it only changes expressions. The caller previews
-first (`preview`), then applies the rows the user kept (`apply`).
+Onshape REST v10 (https://cad.onshape.com/api/openapi, Glassworks explorer):
+  GET  /documents/d/{did}/w/{wid}/elements?elementType=VARIABLESTUDIO   find the table by name
+  POST /variables/d/{did}/w/{wid}/variablestudio  {"name": ...}          create it
+  GET  /variables/d/{did}/w/{wid}/e/{eid}/variables                       read it
+  POST /variables/d/{did}/w/{wid}/e/{eid}/variables  [ ... ]              write the whole list
+
+The write replaces the whole list, so it is always read, merge, write: a variable added by
+hand in the table is kept. The caller previews first (`preview`), then applies the rows the
+user kept (`apply`).
 
 Environment:
   ONSHAPE_DOCUMENT_ID, ONSHAPE_WORKSPACE_ID      the document (shared with the STL export)
-  ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID             Variable Studio element id (optional)
-  ONSHAPE_LINKAGE_PART_STUDIO_ID                 Part Studio element id (optional)
   ONSHAPE_LINKAGE_MAPPING                        JSON {kind: {onshape_name: value_key}}, replaces
                                                  the default names of that kind
 """
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import re
@@ -87,8 +90,8 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
     },
 }
 
-_QUANTITY_PARAM = {"LENGTH": "lengthValue", "ANGLE": "angleValue", "NUMBER": "numberValue", "ANY": "anyValue"}
 _NUMBER = re.compile(r"^\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*\*?\s*([a-zA-Z]*)\s*$")
+_TABLE_NAME = re.compile(r"^[A-Za-z0-9 _-]{1,60}$")
 
 
 class LinkageOnshapeError(RuntimeError):
@@ -99,8 +102,6 @@ class LinkageOnshapeError(RuntimeError):
 class Target:
     document_id: str
     workspace_id: str
-    variable_studio_id: Optional[str]
-    part_studio_id: Optional[str]
 
 
 @dataclass
@@ -110,24 +111,30 @@ class Row:
     label: str
     new_expression: str
     current_expression: Optional[str] = None
-    where: Optional[str] = None     # "variable_studio" | "part_studio" | None when not found
-    status: str = "missing"         # "update" | "same" | "missing" | "written" | "created" | "skipped" | "error"
+    status: str = "new"             # "update" | "same" | "new" | "written" | "created" | "skipped" | "error"
     detail: str = ""
 
 
 def target_from_env() -> Target:
     did = os.environ.get("ONSHAPE_DOCUMENT_ID", "").strip()
     wid = os.environ.get("ONSHAPE_WORKSPACE_ID", "").strip()
-    vs = os.environ.get("ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID", "").strip() or None
-    ps = os.environ.get("ONSHAPE_LINKAGE_PART_STUDIO_ID", "").strip() or None
     if not (did and wid):
         raise LinkageOnshapeError("Onshape document not configured: set ONSHAPE_DOCUMENT_ID and ONSHAPE_WORKSPACE_ID on the backend.")
-    if not (vs or ps):
+    return Target(did, wid)
+
+
+def default_table_name(kind: str) -> str:
+    return f"cam_sim_{kind}"
+
+
+def table_name_for(kind: str, name: Optional[str]) -> str:
+    """The table name asked for, or the default of this kind. Letters, digits, space, dash, underscore; 1 to 60."""
+    name = (name or "").strip() or default_table_name(kind)
+    if not _TABLE_NAME.match(name):
         raise LinkageOnshapeError(
-            "No Onshape variable table configured: set ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID "
-            "and / or ONSHAPE_LINKAGE_PART_STUDIO_ID on the backend."
+            f"Table name {name[:80]!r} is not allowed: 1 to 60 characters, letters, digits, space, dash or underscore."
         )
-    return Target(did, wid, vs, ps)
+    return name
 
 
 def mapping_for(kind: str) -> dict[str, str]:
@@ -182,90 +189,82 @@ def wanted_rows(params: LinkageParams) -> list[Row]:
     return rows
 
 
-# ── Reading ──────────────────────────────────────────────────────────────────
+# ── The table ────────────────────────────────────────────────────────────────
 
 
-def _studio_path(t: Target) -> str:
-    return f"/variables/d/{t.document_id}/w/{t.workspace_id}/e/{t.variable_studio_id}/variables"
+def _elements_path(t: Target) -> str:
+    return f"/documents/d/{t.document_id}/w/{t.workspace_id}/elements"
 
 
-def _features_path(t: Target) -> str:
-    return f"/partstudios/d/{t.document_id}/w/{t.workspace_id}/e/{t.part_studio_id}/features"
+def _studio_path(t: Target, eid: str) -> str:
+    return f"/variables/d/{t.document_id}/w/{t.workspace_id}/e/{eid}/variables"
 
 
-def _read_studio(t: Target) -> list[dict]:
-    """The Variable Studio's own variables, in order (referenced studios are left out)."""
-    data = oe._request_json("GET", _studio_path(t))
+def table_url(t: Target, eid: str) -> str:
+    return f"{oe.ONSHAPE_BASE_URL}/documents/{t.document_id}/w/{t.workspace_id}/e/{eid}"
+
+
+def find_table(t: Target, name: str) -> Optional[str]:
+    """Element id of the Variable Studio called exactly `name`, None when there is none. One call."""
+    data = oe._request_json("GET", _elements_path(t), query={"elementType": "VARIABLESTUDIO"})
+    found = [
+        e.get("id") for e in (data if isinstance(data, list) else [])
+        if isinstance(e, dict) and e.get("elementType") == "VARIABLESTUDIO" and e.get("name") == name and e.get("id")
+    ]
+    if len(found) > 1:
+        raise LinkageOnshapeError(
+            f"{len(found)} Variable Studios are called {name!r} in this Onshape document. "
+            "Rename or remove the extra ones in Onshape, or choose another table name."
+        )
+    return found[0] if found else None
+
+
+def _create_table(t: Target, name: str) -> str:
+    data = oe._request_json("POST", f"/variables/d/{t.document_id}/w/{t.workspace_id}/variablestudio", body={"name": name})
+    eid = data.get("id") if isinstance(data, dict) else None
+    if not eid:
+        raise oe.OnshapeAPIError(200, "Onshape created no Variable Studio (no element id in the reply)", data)
+    return eid
+
+
+def _read_table(t: Target, eid: str) -> list[dict]:
+    """The table's own variables, in order (referenced studios are left out)."""
+    data = oe._request_json("GET", _studio_path(t, eid))
     tables = data if isinstance(data, list) else []
     own = [tb for tb in tables if isinstance(tb, dict) and not tb.get("variableStudioReference")]
     return [v for tb in own for v in tb.get("variables", []) if isinstance(v, dict) and v.get("name")]
 
 
-def _feature_name(feature: dict) -> Optional[str]:
-    return next((p.get("value") for p in feature.get("parameters", []) if p.get("parameterId") == "name"), None)
-
-
-def _feature_expression(feature: dict) -> Optional[str]:
-    params = feature.get("parameters", [])
-    kind = next((p.get("value") for p in params if p.get("parameterId") == "variableType"), "LENGTH")
-    for p in params:
-        if p.get("parameterId") != _QUANTITY_PARAM.get(kind, "lengthValue"):
-            continue
-        if "expression" in p:
-            return p["expression"]
-        for entry in p.get("values", []):   # configured: show the first configuration's value
-            inner = entry.get("value")
-            if isinstance(inner, dict) and "expression" in inner:
-                return inner["expression"]
-    return None
-
-
-def _read_features(t: Target) -> dict[str, dict]:
-    data = oe._request_json("GET", _features_path(t))
-    feats = data.get("features", []) if isinstance(data, dict) else []
-    out: dict[str, dict] = {}
-    for f in feats:
-        if f.get("featureType") == "assignVariable" and _feature_name(f):
-            out[_feature_name(f)] = f
-    return out
-
-
-def _locate(rows: list[Row], studio: Optional[list[dict]], features: Optional[dict[str, dict]]) -> None:
-    by_name = {v["name"]: v for v in (studio or [])}
+def _locate(rows: list[Row], studio: list[dict]) -> None:
+    by_name = {v["name"]: v for v in studio}
     for row in rows:
-        if features and row.name in features:
-            row.where, row.current_expression = "part_studio", _feature_expression(features[row.name])
-        elif row.name in by_name:
-            row.where, row.current_expression = "variable_studio", by_name[row.name].get("expression")
+        if row.name in by_name:
+            row.current_expression = by_name[row.name].get("expression")
+            row.status = "same" if _same(row.current_expression, row.new_expression) else "update"
         else:
-            row.where, row.current_expression, row.status = None, None, "missing"
-            continue
-        row.status = "same" if _same(row.current_expression, row.new_expression) else "update"
+            row.current_expression, row.status = None, "new"
 
 
-def _read(t: Target):
-    studio = _read_studio(t) if t.variable_studio_id else None
-    features = _read_features(t) if t.part_studio_id else None
-    return studio, features
-
-
-def _summary(t: Target, rows: list[Row], calls: int) -> dict:
+def _summary(t: Target, name: str, eid: Optional[str], rows: list[Row], calls: int, created: bool = False) -> dict:
     return {
         "rows": [asdict(r) for r in rows],
         "api_calls": calls,
-        "has_variable_studio": bool(t.variable_studio_id),
-        "has_part_studio": bool(t.part_studio_id),
-        "document_url": f"{oe.ONSHAPE_BASE_URL}/documents/{t.document_id}/w/{t.workspace_id}/e/{t.variable_studio_id or t.part_studio_id}",
+        "table_name": name,
+        "table_exists": eid is not None,
+        "table_created": created,
+        "element_id": eid,
+        "table_url": table_url(t, eid) if eid else None,
     }
 
 
-def preview(params: LinkageParams, target: Optional[Target] = None) -> dict:
-    """What a write would change. Reads only."""
+def preview(params: LinkageParams, table_name: Optional[str] = None, target: Optional[Target] = None) -> dict:
+    """What a write would change. Reads only: one call to find the table, one more to read it if it exists."""
     t = target or target_from_env()
+    name = table_name_for(params.linkage_type, table_name)
     rows = wanted_rows(params)
-    studio, features = _read(t)
-    _locate(rows, studio, features)
-    return _summary(t, rows, int(studio is not None) + int(features is not None))
+    eid = find_table(t, name)
+    _locate(rows, _read_table(t, eid) if eid else [])
+    return _summary(t, name, eid, rows, 2 if eid else 1)
 
 
 # ── Writing ──────────────────────────────────────────────────────────────────
@@ -274,66 +273,58 @@ def preview(params: LinkageParams, target: Optional[Target] = None) -> dict:
 def apply(
     params: LinkageParams,
     names: list[str],
-    create_missing: bool = False,
+    table_name: Optional[str] = None,
     target: Optional[Target] = None,
 ) -> dict:
-    """Write the rows named in `names`. Variables are read again first, so the merge is on fresh data.
+    """Write the rows named in `names` into the table, creating it when it does not exist yet.
 
-    A name found nowhere is created in the Variable Studio only when `create_missing` is set.
+    An existing table is read again first and written back whole, so the merge is on fresh data
+    and the variables added by hand are kept. With nothing to write, nothing is created.
     """
     t = target or target_from_env()
+    name = table_name_for(params.linkage_type, table_name)
     keep = set(names)
     rows = wanted_rows(params)
-    studio, features = _read(t)
-    _locate(rows, studio, features)
-    calls = int(studio is not None) + int(features is not None)
+    eid = find_table(t, name)
+    calls = 1
+    studio: list[dict] = []
+    if eid:
+        studio = _read_table(t, eid)
+        calls += 1
+    _locate(rows, studio)
 
     for row in rows:
         if row.name not in keep:
             row.status, row.detail = "skipped", "not selected"
-        elif row.status == "missing" and not (create_missing and studio is not None):
-            row.status = "skipped"
-            row.detail = "no Variable Studio to create it in" if create_missing else "not in Onshape"
+    todo = [r for r in rows if r.status in ("update", "new")]
+    if not todo:
+        return _summary(t, name, eid, rows, calls)
 
-    # Variable Studio: one POST with the whole list, the untouched variables exactly as read.
-    studio_rows = [r for r in rows if r.status in ("update", "missing") and r.where != "part_studio"]
-    if studio_rows and studio is not None:
-        merged = [{k: v.get(k) for k in ("name", "type", "expression", "description")} for v in studio]
-        by_name = {v["name"]: v for v in merged}
-        for row in studio_rows:
-            if row.name in by_name:
-                by_name[row.name]["expression"] = row.new_expression
-            else:
-                merged.append({
-                    "name": row.name,
-                    "type": "ANGLE" if VALUES[row.key][1] == "deg" else "LENGTH",
-                    "expression": row.new_expression,
-                    "description": f"{row.label} (cam profile simulator)",
-                })
-        try:
-            oe._request_json("POST", _studio_path(t), body=merged)
-            calls += 1
-            for row in studio_rows:
-                row.status = "written" if row.where else "created"
-                row.where = "variable_studio"
-        except (oe.OnshapeAPIError, oe.OnshapeConfigError) as exc:
-            calls += 1
-            for row in studio_rows:
-                row.status, row.detail = "error", str(exc)
+    created = False
+    if not eid:
+        eid = _create_table(t, name)   # a new table is empty: no read needed
+        calls += 1
+        created = True
 
-    # Part Studio: one POST per variable feature.
-    for row in rows:
-        if row.status != "update" or row.where != "part_studio":
-            continue
-        patched = copy.deepcopy(features[row.name])
-        if not oe._patch_assign_variable_expression(patched, row.new_expression) or not patched.get("featureId"):
-            row.status, row.detail = "error", "this variable has no expression to change"
-            continue
-        try:
-            calls += 1
-            oe._request_json("POST", f"{_features_path(t)}/featureid/{patched['featureId']}",
-                 body={"btType": "BTFeatureDefinitionCall-1406", "feature": patched})
-            row.status = "written"
-        except (oe.OnshapeAPIError, oe.OnshapeConfigError) as exc:
+    # One POST with the whole list, the untouched variables exactly as read.
+    merged = [{k: v.get(k) for k in ("name", "type", "expression", "description")} for v in studio]
+    by_name = {v["name"]: v for v in merged}
+    for row in todo:
+        if row.name in by_name:
+            by_name[row.name]["expression"] = row.new_expression
+        else:
+            merged.append({
+                "name": row.name,
+                "type": "ANGLE" if VALUES[row.key][1] == "deg" else "LENGTH",
+                "expression": row.new_expression,
+                "description": f"{row.label} (cam profile simulator)",
+            })
+    calls += 1
+    try:
+        oe._request_json("POST", _studio_path(t, eid), body=merged)
+        for row in todo:
+            row.status = "written" if row.status == "update" else "created"
+    except (oe.OnshapeAPIError, oe.OnshapeConfigError) as exc:
+        for row in todo:
             row.status, row.detail = "error", str(exc)
-    return _summary(t, rows, calls)
+    return _summary(t, name, eid, rows, calls, created)
