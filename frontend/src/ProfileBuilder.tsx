@@ -2,7 +2,7 @@ import { Textarea } from '@blain-projects/ui';
 import { Button, Input, LoadingState, Modal } from '@blain-projects/ui';
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import { Crosshair, ArrowRight, OctagonX, Trash2, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -46,6 +46,8 @@ import {
   builderCandidateRankFlowYPosition,
 } from './parameterTooltips';
 import SearchGridAxisControls from './SearchGridAxisControls';
+import { CamSchematicCard } from './CamSchematic';
+import { interpAt, useCamTravel } from './lib/camTravel';
 
 /** Must match backend `candidate_rank_by` strings. */
 export const CANDIDATE_RANK_BY_VALUES = ['equalization_rel_time', 'flow_rise_20_80', 'flow_exp', 'flow_at_y'] as const;
@@ -1734,20 +1736,169 @@ export default function ProfileBuilder({
       K: activeCandidate?.K ?? result.K,
       deadband: activeCandidate?.deadband ?? result.deadband,
       default_distance: activeCandidate?.default_distance ?? result.default_distance,
-      tube_id: tubeId,
-      tube_od: tubeOd,
+      // The tube the solve ran with, so the schematic's walls match the simulated gaps.
+      tube_id: lastSolveRequestBody?.tube_id ?? tubeId,
+      tube_od: lastSolveRequestBody?.tube_od ?? tubeOd,
       input_pressure_psi: pressurePsi,
       compliance,
       chamber_volume_ml: chamberVolume,
     };
-  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressurePsi, compliance, chamberVolume]);
+  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressurePsi, compliance, chamberVolume, lastSolveRequestBody]);
 
   const builderCard = (key: BuilderChartSettingsKey) => ({
     settings: builderChartSettings[key],
     onSettingsChange: (next: ChartDomainSettings) => setBuilderChartSettings((prev) => ({ ...prev, [key]: next })),
     settingsTitle: `${key} domain settings`,
-    layout: true,
   });
+
+  const travel = useCamTravel(chartSim);
+  const [schematicDetails, setSchematicDetails] = useState(true);
+  const carriageTimeSec = chartSim && chartSim.linear_speed_mm_s > 0
+    ? (interpAt(travel.y, chartSim.Y_positions, chartSim.time_axis_ms) - y0TimeMs) / 1000
+    : null;
+
+  // Found parameters, dynamic stats and Apply: on top of the chart column once a profile is drawn.
+  const statsBar = result ? (
+              <div className={`shrink-0 p-4 rounded-xl border ${result.success ? 'bg-neutral-800 border-neutral-700' : 'bg-red-900/30 border-red-700/50'}`}>
+                {result.success ? (
+                  <div className="flex flex-wrap items-start gap-6">
+                    <div>
+                      <div className="text-[10px] text-neutral-500 font-bold mb-2">Found Parameters</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        <div><div className="text-[10px] text-neutral-500">Height</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.height ?? result.height).toFixed(3)} mm</div></div>
+                        <div><div className="text-[10px] text-neutral-500">Curve Gain (K)</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.K ?? result.K).toFixed(3)}</div></div>
+                        <div><div className="text-[10px] text-neutral-500">Deadband</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.deadband ?? result.deadband).toFixed(3)} mm</div></div>
+                        <div><div className="text-[10px] text-neutral-500">Default Dist.</div><div className="text-lg font-mono font-bold text-blue-400">{(activeCandidate?.default_distance ?? result.default_distance).toFixed(3)} mm</div></div>
+                        <div><div className="text-[10px] text-neutral-500">gap @ Y=0</div><div className="text-lg font-mono font-bold text-cyan-400">{(activeCandidate?.gap_at_Y0 ?? result.gap_at_Y0) !== undefined ? (activeCandidate?.gap_at_Y0 ?? result.gap_at_Y0)!.toFixed(4) : '—'} mm</div></div>
+                        <div><div className="text-[10px] text-neutral-500">Theoretical gap</div><div className="text-lg font-mono font-bold text-neutral-300">{result.theoretical_gap_mm !== undefined ? result.theoretical_gap_mm.toFixed(4) : '—'} mm</div></div>
+                      </div>
+                      {candidateCount > 1 ? (
+                        <DelayedHoverHint content={builderAggressivity}>
+                          <div className="mt-4 max-w-2xl space-y-2 border-t border-neutral-700/60 pt-4">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-medium text-neutral-300">Aggressivity</span>
+                              <span className="text-[10px] font-mono text-neutral-500">
+                                {activeIdx + 1} / {candidateCount}
+                                <span className="text-neutral-600"> · </span>
+                                <span className={profileAggressivity01 <= 0.35 ? 'text-emerald-400' : profileAggressivity01 >= 0.65 ? 'text-amber-400' : 'text-neutral-400'}>
+                                  {profileAggressivity01 <= 0.35 ? 'Gradual' : profileAggressivity01 >= 0.65 ? 'Snappy' : 'Balanced'}
+                                </span>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] text-neutral-500 shrink-0">Gradual</span>
+                              <input
+                                type="range"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                                value={profileAggressivity01}
+                                onChange={(e) => setProfileAggressivity01(parseFloat(e.target.value))}
+                                className="min-w-0 flex-1 accent-amber-500 hover:accent-400 cursor-pointer"
+                              />
+                              <span className="text-[10px] text-neutral-500 shrink-0">Snappy</span>
+                            </div>
+                            <p className="text-[10px] text-neutral-500 leading-snug">
+                              {rankUsedForAggressivity === 'equalization_rel_time' && (
+                                <>
+                                  Chamber eq. Δt (after Y=0) ≈{' '}
+                                  <span className="font-mono text-amber-400/90">
+                                    {activeCandidate?.equalization_time_rel_ms !== undefined && Number.isFinite(activeCandidate.equalization_time_rel_ms)
+                                      ? `${activeCandidate.equalization_time_rel_ms.toFixed(1)} ms`
+                                      : '—'}
+                                  </span>
+                                  {' '}· vol. err.{' '}
+                                </>
+                              )}
+                              {rankUsedForAggressivity === 'flow_rise_20_80' && (
+                                <>
+                                  Flow rise-rate (5%→25%) ≈{' '}
+                                  <span className="font-mono text-amber-400/90">{(activeCandidate?.flow_slope_l_per_mm ?? 0).toFixed(4)}</span> L/min/mm · vol. err.{' '}
+                                </>
+                              )}
+                              {rankUsedForAggressivity === 'flow_exp' && (
+                                <>
+                                  Exp. fit <span className="font-mono text-neutral-500">k</span> ≈{' '}
+                                  <span className="font-mono text-amber-400/90">
+                                    {activeCandidate?.flow_exp_k_per_mm !== undefined && Number.isFinite(activeCandidate.flow_exp_k_per_mm)
+                                      ? `${activeCandidate.flow_exp_k_per_mm.toFixed(4)}`
+                                      : '—'}
+                                  </span>
+                                  {' '}
+                                  /mm · vol. err.{' '}
+                                </>
+                              )}
+                              {rankUsedForAggressivity === 'flow_at_y' && (
+                                <>
+                                  Static flow @ Y={rankFlowYUsed.toFixed(3)} mm ≈{' '}
+                                  <span className="font-mono text-amber-400/90">
+                                    {activeCandidate?.static_flow_at_rank_y_l_min !== undefined
+                                    && Number.isFinite(activeCandidate.static_flow_at_rank_y_l_min)
+                                      ? `${activeCandidate.static_flow_at_rank_y_l_min.toFixed(3)}`
+                                      : '—'}
+                                  </span>
+                                  {' '}
+                                  L/min · vol. err.{' '}
+                                </>
+                              )}
+                              <span className="font-mono text-neutral-400">{(activeCandidate?.volume_error_pct ?? 0).toFixed(2)}%</span>
+                            </p>
+                            {guidanceEnabled && (
+                              <p className="text-[10px] text-neutral-500 leading-snug">
+                                {candidateCount < MAX_RETURNED_BUILDER_CANDIDATES ? (
+                                  <>
+                                    All <span className="font-mono text-neutral-400">{candidateCount}</span> feasible triple
+                                    {candidateCount !== 1 ? 's are' : ' is'} ranked by{' '}
+                                    <span className="text-neutral-400">{rankingGuidanceShort(rankUsedForAggressivity, rankFlowYUsed)}</span> and shown in full.
+                                  </>
+                                ) : (
+                                  <>
+                                    Every feasible triple is ranked by{' '}
+                                    <span className="text-neutral-400">{rankingGuidanceShort(rankUsedForAggressivity, rankFlowYUsed)}</span>. When there are more than{' '}
+                                    {MAX_RETURNED_BUILDER_CANDIDATES}, we keep {MAX_RETURNED_BUILDER_CANDIDATES} evenly spaced along that order, always including the two extremes.
+                                  </>
+                                )}
+                              </p>
+                            )}
+                            {solveSummary && (
+                              <p className="text-[10px] text-neutral-500 leading-snug">
+                                Tested{' '}
+                                <span className="font-mono text-neutral-300">{solveSummary.testedCount}</span>
+                                {' '}combinaisons · solve time{' '}
+                                <span className="font-mono text-neutral-300">{formatDurationFromMs(solveSummary.totalDurationMs)}</span>
+                              </p>
+                            )}
+                          </div>
+                        </DelayedHoverHint>
+                      ) : candidateCount === 1 ? (
+                        <p className="mt-3 text-[10px] text-neutral-500">Only one combination near the target volume in the acceptable gap band.</p>
+                      ) : null}
+                      {guidanceEnabled && (
+                        <p className="text-[10px] text-neutral-500 mt-2 leading-snug max-w-3xl">{result.message}</p>
+                      )}
+                    </div>
+                    {chartSim && (
+                      <div className="border-l border-neutral-700 pl-6">
+                        <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <div><div className="text-[10px] text-neutral-500">Total Volume</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.total_volume_ml.toFixed(2)} mL</div></div>
+                          <div><div className="text-[10px] text-neutral-500">Equalization</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.equalization_time_ms >= 0 ? `${chartSim.equalization_time_ms.toFixed(1)} ms` : 'N/A'}</div></div>
+                          <div><div className="text-[10px] text-neutral-500">Max Flow</div><div className="text-sm font-mono font-bold text-amber-400">{Math.max(...chartSim.dynamic_flow_l_min).toFixed(3)} L/min</div></div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="order-first basis-full flex justify-end -mb-2">
+                      <Button variant="ghost" onClick={handleApply}
+                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-all shadow-lg flex items-center gap-2">
+                        Apply to Explorer <ArrowRight className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-red-300 text-sm">{result.message}</div>
+                )}
+              </div>
+  ) : null;
 
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
@@ -1771,7 +1922,18 @@ export default function ProfileBuilder({
             </div>
           </DelayedHoverHint>
 
-          <Accordion title="System Parameters">
+          <Accordion title="Target">
+            <div className="space-y-5 pt-2">
+              <ParameterSlider label="Chamber Volume (mL)" value={chamberVolume} min={0.1} max={100} step={0.5} onChange={setChamberVolume} description={builderChamberVolume} />
+              <p className="text-[10px] text-neutral-500 leading-snug -mt-2">
+                Displayed target is <span className="text-neutral-300">absolute free-air equivalent at final pressure ≈ {pressurizationAbsoluteMl.toFixed(2)} mL</span>.
+                {' '}Solver internals still match the added amount from atmosphere (
+                <span className="text-neutral-400">≈ {pressurizationDeltaMl.toFixed(2)} mL</span>).
+              </p>
+            </div>
+          </Accordion>
+
+          <Accordion title="System parameters">
             <div className="space-y-5 pt-2">
               <ParameterSlider label="Motor Speed (RPM)" value={motorSpeed} min={10} max={1000} step={10} onChange={setMotorSpeed} description={builderMotorSpeed} />
               <ParameterSlider label="Tube ID (mm)" value={tubeId} min={1.0} max={12.0} step={0.1} onChange={setTubeId} description={builderTubeId} />
@@ -1784,18 +1946,7 @@ export default function ProfileBuilder({
             </div>
           </Accordion>
 
-          <Accordion title="Target">
-            <div className="space-y-5 pt-2">
-              <ParameterSlider label="Chamber Volume (mL)" value={chamberVolume} min={0.1} max={100} step={0.5} onChange={setChamberVolume} description={builderChamberVolume} />
-              <p className="text-[10px] text-neutral-500 leading-snug -mt-2">
-                Displayed target is <span className="text-neutral-300">absolute free-air equivalent at final pressure ≈ {pressurizationAbsoluteMl.toFixed(2)} mL</span>.
-                {' '}Solver internals still match the added amount from atmosphere (
-                <span className="text-neutral-400">≈ {pressurizationDeltaMl.toFixed(2)} mL</span>).
-              </p>
-            </div>
-          </Accordion>
-
-          <Accordion title="Gap @ Y=0 margin & search grid" defaultOpen={false} showBottomBorder={false}>
+          <Accordion title="Search grid" defaultOpen={false} showBottomBorder={false}>
             <div className="space-y-5 pt-2">
               <ParameterSlider
                 label="Gap @ Y=0 margin (mm)"
@@ -2000,62 +2151,6 @@ export default function ProfileBuilder({
         </div>
 
         <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-4">
-          <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
-          <Button variant="ghost"
-            type="button"
-            onClick={() => setShowInfoPanel((v) => !v)}
-            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors ${
- showInfoPanel
- ? 'text-neutral-200 bg-neutral-800/60 border-b border-neutral-700/70'
- : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
- }`}
-            title={showInfoPanel ? 'Hide context details' : 'Show context details'}
-          >
-            <span>Context & Metrics</span>
-            {showInfoPanel ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          </Button>
-
-          {showInfoPanel && (
-            <div className="space-y-3 p-3">
-              <DelayedHoverHint content={builderTheoreticalGapStat}>
-                <div>
-                  <StatRow
-                    label="Theoretical opening gap"
-                    value={<span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-neutral-300'}>{theoreticalGapMm.toFixed(3)} mm</span>}
-                    highlight={theoreticalGapMm <= 0}
-                  />
-                </div>
-              </DelayedHoverHint>
-
-              <DelayedHoverHint content={builderAcceptableGapStat}>
-                <div>
-                  <StatRow
-                    label="Acceptable gap@Y=0"
-                    value={
-                      <span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-cyan-400'}>
-                        {gapAcceptBand.lo.toFixed(3)} – {gapAcceptBand.hi.toFixed(3)} mm
-                      </span>
-                    }
-                    highlight={theoreticalGapMm <= 0}
-                  />
-                </div>
-              </DelayedHoverHint>
-
-              <DelayedHoverHint content={builderPressurizationTargetStat}>
-                <div>
-          <StatRow label="Pressurization target (absolute)" value={`≈ ${pressurizationAbsoluteMl.toFixed(2)} mL (equiv. @ amb.)`} />
-                </div>
-              </DelayedHoverHint>
-
-              <DelayedHoverHint content={builderLinearSpeedStat}>
-                <div>
-                  <StatRow label="Linear Speed" value={`${(motorSpeed * 0.5 / 60).toFixed(2)} mm/s`} />
-                </div>
-              </DelayedHoverHint>
-            </div>
-          )}
-          </div>
-
           <div className="relative space-y-2.5 pt-1">
             <Button variant="ghost"
               type="button"
@@ -2142,6 +2237,62 @@ export default function ProfileBuilder({
           {theoreticalGapMm <= 0 && (
             <p className="text-[10px] text-red-400 text-center">Theoretical gap ≤ 0. Adjust tube dimensions, pressure, or compliance.</p>
           )}
+          <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
+          <Button variant="ghost"
+            type="button"
+            onClick={() => setShowInfoPanel((v) => !v)}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors ${
+ showInfoPanel
+ ? 'text-neutral-200 bg-neutral-800/60 border-b border-neutral-700/70'
+ : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+ }`}
+            title={showInfoPanel ? 'Hide context details' : 'Show context details'}
+          >
+            <span>Context & Metrics</span>
+            {showInfoPanel ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </Button>
+
+          {showInfoPanel && (
+            <div className="space-y-3 p-3">
+              <DelayedHoverHint content={builderTheoreticalGapStat}>
+                <div>
+                  <StatRow
+                    label="Theoretical opening gap"
+                    value={<span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-neutral-300'}>{theoreticalGapMm.toFixed(3)} mm</span>}
+                    highlight={theoreticalGapMm <= 0}
+                  />
+                </div>
+              </DelayedHoverHint>
+
+              <DelayedHoverHint content={builderAcceptableGapStat}>
+                <div>
+                  <StatRow
+                    label="Acceptable gap@Y=0"
+                    value={
+                      <span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-cyan-400'}>
+                        {gapAcceptBand.lo.toFixed(3)} – {gapAcceptBand.hi.toFixed(3)} mm
+                      </span>
+                    }
+                    highlight={theoreticalGapMm <= 0}
+                  />
+                </div>
+              </DelayedHoverHint>
+
+              <DelayedHoverHint content={builderPressurizationTargetStat}>
+                <div>
+          <StatRow label="Pressurization target (absolute)" value={`≈ ${pressurizationAbsoluteMl.toFixed(2)} mL (equiv. @ amb.)`} />
+                </div>
+              </DelayedHoverHint>
+
+              <DelayedHoverHint content={builderLinearSpeedStat}>
+                <div>
+                  <StatRow label="Linear Speed" value={`${(motorSpeed * 0.5 / 60).toFixed(2)} mm/s`} />
+                </div>
+              </DelayedHoverHint>
+            </div>
+          )}
+          </div>
+
         </div>
       </div>
 
@@ -2207,189 +2358,56 @@ export default function ProfileBuilder({
             <motion.div key="results" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
               className="flex flex-col gap-4 min-h-0 flex-1">
 
-              {/* Top bar: found params + stats */}
-              <div className={`shrink-0 p-4 rounded-xl border ${result.success ? 'bg-neutral-800 border-neutral-700' : 'bg-red-900/30 border-red-700/50'}`}>
-                {result.success ? (
-                  <div className="flex flex-wrap items-start gap-6">
-                    <div>
-                      <div className="text-[10px] text-neutral-500 font-bold mb-2">Found Parameters</div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                        <div><div className="text-[10px] text-neutral-500">Height</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.height ?? result.height).toFixed(3)} mm</div></div>
-                        <div><div className="text-[10px] text-neutral-500">Curve Gain (K)</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.K ?? result.K).toFixed(3)}</div></div>
-                        <div><div className="text-[10px] text-neutral-500">Deadband</div><div className="text-lg font-mono font-bold text-emerald-400">{(activeCandidate?.deadband ?? result.deadband).toFixed(3)} mm</div></div>
-                        <div><div className="text-[10px] text-neutral-500">Default Dist.</div><div className="text-lg font-mono font-bold text-blue-400">{(activeCandidate?.default_distance ?? result.default_distance).toFixed(3)} mm</div></div>
-                        <div><div className="text-[10px] text-neutral-500">gap @ Y=0</div><div className="text-lg font-mono font-bold text-cyan-400">{(activeCandidate?.gap_at_Y0 ?? result.gap_at_Y0) !== undefined ? (activeCandidate?.gap_at_Y0 ?? result.gap_at_Y0)!.toFixed(4) : '—'} mm</div></div>
-                        <div><div className="text-[10px] text-neutral-500">Theoretical gap</div><div className="text-lg font-mono font-bold text-neutral-300">{result.theoretical_gap_mm !== undefined ? result.theoretical_gap_mm.toFixed(4) : '—'} mm</div></div>
-                      </div>
-                      {candidateCount > 1 ? (
-                        <DelayedHoverHint content={builderAggressivity}>
-                          <div className="mt-4 max-w-2xl space-y-2 border-t border-neutral-700/60 pt-4">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-medium text-neutral-300">Aggressivity</span>
-                              <span className="text-[10px] font-mono text-neutral-500">
-                                {activeIdx + 1} / {candidateCount}
-                                <span className="text-neutral-600"> · </span>
-                                <span className={profileAggressivity01 <= 0.35 ? 'text-emerald-400' : profileAggressivity01 >= 0.65 ? 'text-amber-400' : 'text-neutral-400'}>
-                                  {profileAggressivity01 <= 0.35 ? 'Gradual' : profileAggressivity01 >= 0.65 ? 'Snappy' : 'Balanced'}
-                                </span>
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className="text-[10px] text-neutral-500 shrink-0">Gradual</span>
-                              <input
-                                type="range"
-                                min={0}
-                                max={1}
-                                step={0.01}
-                                value={profileAggressivity01}
-                                onChange={(e) => setProfileAggressivity01(parseFloat(e.target.value))}
-                                className="min-w-0 flex-1 accent-amber-500 hover:accent-400 cursor-pointer"
-                              />
-                              <span className="text-[10px] text-neutral-500 shrink-0">Snappy</span>
-                            </div>
-                            <p className="text-[10px] text-neutral-500 leading-snug">
-                              {rankUsedForAggressivity === 'equalization_rel_time' && (
-                                <>
-                                  Chamber eq. Δt (after Y=0) ≈{' '}
-                                  <span className="font-mono text-amber-400/90">
-                                    {activeCandidate?.equalization_time_rel_ms !== undefined && Number.isFinite(activeCandidate.equalization_time_rel_ms)
-                                      ? `${activeCandidate.equalization_time_rel_ms.toFixed(1)} ms`
-                                      : '—'}
-                                  </span>
-                                  {' '}· vol. err.{' '}
-                                </>
-                              )}
-                              {rankUsedForAggressivity === 'flow_rise_20_80' && (
-                                <>
-                                  Flow rise-rate (5%→25%) ≈{' '}
-                                  <span className="font-mono text-amber-400/90">{(activeCandidate?.flow_slope_l_per_mm ?? 0).toFixed(4)}</span> L/min/mm · vol. err.{' '}
-                                </>
-                              )}
-                              {rankUsedForAggressivity === 'flow_exp' && (
-                                <>
-                                  Exp. fit <span className="font-mono text-neutral-500">k</span> ≈{' '}
-                                  <span className="font-mono text-amber-400/90">
-                                    {activeCandidate?.flow_exp_k_per_mm !== undefined && Number.isFinite(activeCandidate.flow_exp_k_per_mm)
-                                      ? `${activeCandidate.flow_exp_k_per_mm.toFixed(4)}`
-                                      : '—'}
-                                  </span>
-                                  {' '}
-                                  /mm · vol. err.{' '}
-                                </>
-                              )}
-                              {rankUsedForAggressivity === 'flow_at_y' && (
-                                <>
-                                  Static flow @ Y={rankFlowYUsed.toFixed(3)} mm ≈{' '}
-                                  <span className="font-mono text-amber-400/90">
-                                    {activeCandidate?.static_flow_at_rank_y_l_min !== undefined
-                                    && Number.isFinite(activeCandidate.static_flow_at_rank_y_l_min)
-                                      ? `${activeCandidate.static_flow_at_rank_y_l_min.toFixed(3)}`
-                                      : '—'}
-                                  </span>
-                                  {' '}
-                                  L/min · vol. err.{' '}
-                                </>
-                              )}
-                              <span className="font-mono text-neutral-400">{(activeCandidate?.volume_error_pct ?? 0).toFixed(2)}%</span>
-                            </p>
-                            {guidanceEnabled && (
-                              <p className="text-[10px] text-neutral-500 leading-snug">
-                                {candidateCount < MAX_RETURNED_BUILDER_CANDIDATES ? (
-                                  <>
-                                    All <span className="font-mono text-neutral-400">{candidateCount}</span> feasible triple
-                                    {candidateCount !== 1 ? 's are' : ' is'} ranked by{' '}
-                                    <span className="text-neutral-400">{rankingGuidanceShort(rankUsedForAggressivity, rankFlowYUsed)}</span> and shown in full.
-                                  </>
-                                ) : (
-                                  <>
-                                    Every feasible triple is ranked by{' '}
-                                    <span className="text-neutral-400">{rankingGuidanceShort(rankUsedForAggressivity, rankFlowYUsed)}</span>. When there are more than{' '}
-                                    {MAX_RETURNED_BUILDER_CANDIDATES}, we keep {MAX_RETURNED_BUILDER_CANDIDATES} evenly spaced along that order, always including the two extremes.
-                                  </>
-                                )}
-                              </p>
-                            )}
-                            {solveSummary && (
-                              <p className="text-[10px] text-neutral-500 leading-snug">
-                                Tested{' '}
-                                <span className="font-mono text-neutral-300">{solveSummary.testedCount}</span>
-                                {' '}combinaisons · solve time{' '}
-                                <span className="font-mono text-neutral-300">{formatDurationFromMs(solveSummary.totalDurationMs)}</span>
-                              </p>
-                            )}
-                          </div>
-                        </DelayedHoverHint>
-                      ) : candidateCount === 1 ? (
-                        <p className="mt-3 text-[10px] text-neutral-500">Only one combination near the target volume in the acceptable gap band.</p>
-                      ) : null}
-                      {guidanceEnabled && (
-                        <p className="text-[10px] text-neutral-500 mt-2 leading-snug max-w-3xl">{result.message}</p>
+              {/* Schematic and charts: the same columns as the other tabs */}
+              {chartSim && builderViewParams ? (
+                <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-9 gap-4">
+                  <CamSchematicCard id="finder" data={chartSim} params={builderViewParams} travel={travel} details={schematicDetails} setDetails={setSchematicDetails}
+                    speedNote={`${(chartSim.linear_speed_mm_s * 60 / builderViewParams.lead_screw_pitch).toFixed(0)} RPM × ${builderViewParams.lead_screw_pitch} mm pitch`}
+                    domain={builderChartSettings.vertical} onDomainChange={(next) => setBuilderChartSettings((prev) => ({ ...prev, vertical: next }))} />
+                  <div className="lg:col-span-5 min-w-0 flex flex-col gap-4 min-h-0 overflow-y-auto pr-1">
+                    {statsBar}
+                    <div className="flex min-h-[210px] flex-1 flex-col">
+                    <ChartCard title="Flow vs Y" {...builderCard('flowY')} className="flex-1">
+                      {({ maximized, settings: c }) => (
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={maximized ? 320 : 158}>
+                          <LineChart data={pneumaticData} margin={{ top: 6, right: 16, bottom: 18, left: 16 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                            <XAxis
+                              dataKey="y"
+                              type="number"
+                              stroke="#888"
+                              label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888', offset: 0 }}
+                              tickFormatter={(v) => v.toFixed(3)}
+                              domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
+                              allowDataOverflow
+                            />
+                            <YAxis
+                              type="number"
+                              stroke="#888"
+                              label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+                              domain={chartDomain(c, 'y', ['dataMin', 'dataMax'])}
+                              allowDataOverflow={!c.autoY}
+                              tickFormatter={(v) => v.toFixed(3)}
+                            />
+                            <FlowVsYTooltipLikeExplorer />
+                            {builderHasDynamicModel && <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />}
+                            <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
+                            <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
+                              {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+                            </ReferenceLine>
+                            <ReferenceLine x={travel.y} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={2} />
+                          </LineChart>
+                        </ResponsiveContainer>
                       )}
+                    </ChartCard>
                     </div>
-                    {chartSim && (
-                      <div className="border-l border-neutral-700 pl-6">
-                        <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          <div><div className="text-[10px] text-neutral-500">Total Volume</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.total_volume_ml.toFixed(2)} mL</div></div>
-                          <div><div className="text-[10px] text-neutral-500">Equalization</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.equalization_time_ms >= 0 ? `${chartSim.equalization_time_ms.toFixed(1)} ms` : 'N/A'}</div></div>
-                          <div><div className="text-[10px] text-neutral-500">Max Flow</div><div className="text-sm font-mono font-bold text-amber-400">{Math.max(...chartSim.dynamic_flow_l_min).toFixed(3)} L/min</div></div>
-                        </div>
-                      </div>
-                    )}
-                    <div className="ml-auto flex items-center">
-                      <Button variant="ghost" onClick={handleApply}
-                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-all shadow-lg flex items-center gap-2">
-                        Apply to Explorer <ArrowRight className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-red-300 text-sm">{result.message}</div>
-                )}
-              </div>
-
-              {/* Charts — same layout / semi-fullscreen as Explorer */}
-              {chartSim && builderViewParams && (
-                <div className="relative min-h-0 flex-1 grid grid-rows-3 gap-4">
-                  <ChartCard title="Flow vs Y" {...builderCard('flowY')} className="row-span-2">
-                    {({ maximized, settings: c }) => (
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={maximized ? 320 : 260}>
-                        <LineChart data={pneumaticData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                          <XAxis
-                            dataKey="y"
-                            type="number"
-                            stroke="#888"
-                            label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }}
-                            tickFormatter={(v) => v.toFixed(3)}
-                            domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
-                            allowDataOverflow
-                          />
-                          <YAxis
-                            type="number"
-                            stroke="#888"
-                            label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                            domain={chartDomain(c, 'y', ['dataMin', 'dataMax'])}
-                            allowDataOverflow={!c.autoY}
-                            tickFormatter={(v) => v.toFixed(3)}
-                          />
-                          <FlowVsYTooltipLikeExplorer />
-                          <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
-                          <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-                            {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
-                          </ReferenceLine>
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </ChartCard>
-
-                  <div className="row-span-1 flex min-h-0 flex-col gap-4 lg:flex-row">
-                    <ChartCard title="Chamber Pressure" maximizedTitle="Chamber Pressure vs Time" compact {...builderCard('pressure')} className="min-w-0 flex-1">
+                    <div className="flex min-h-[210px] flex-1 flex-col">
+                    <ChartCard title="Chamber Pressure" maximizedTitle="Chamber Pressure vs Time" {...builderCard('pressure')} className="flex-1">
                       {({ maximized, settings: c }) => {
                         const font = maximized ? 12 : 11;
                         return (
-                          <ResponsiveContainer width="100%" height="100%" minHeight={maximized ? 320 : 160}>
-                            <LineChart data={pressureData} margin={maximized ? { top: 16, right: 20, bottom: 24, left: 20 } : { top: 10, right: 15, bottom: 20, left: 15 }}>
+                          <ResponsiveContainer width="100%" height="100%" minHeight={maximized ? 320 : 158}>
+                            <LineChart data={pressureData} margin={maximized ? { top: 16, right: 20, bottom: 24, left: 20 } : { top: 6, right: 16, bottom: 18, left: 16 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                               <XAxis
                                 dataKey="timeSec"
@@ -2419,6 +2437,7 @@ export default function ProfileBuilder({
                                 {maximized && <Label value="Supply (gauge)" position="insideRight" fill="#22d3ee" fontSize={10} />}
                               </ReferenceLine>
                               <Line type="monotone" dataKey="pressureGaugeKpa" name="Chamber" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
+                              {carriageTimeSec != null && <ReferenceLine x={carriageTimeSec} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={2} />}
                               {equalizationTimeRelSec >= 0 && (
                                 <ReferenceLine x={equalizationTimeRelSec} stroke="#d946ef" strokeDasharray="5 5" strokeWidth={2}>
                                   <Label value="Equalized" position="insideTopRight" fill="#d946ef" fontSize={font} />
@@ -2429,27 +2448,10 @@ export default function ProfileBuilder({
                         );
                       }}
                     </ChartCard>
-
-                    <ChartCard title="Cam Profile" maximizedTitle="Vertical System" compact maximizeLabel="Expand view" {...builderCard('vertical')}
-                      className="min-w-0 flex-1" bodyClassName="overflow-hidden">
-                      {({ maximized, settings: c }) => {
-                        const view = (
-                          <VerticalSystemView
-                            data={chartSim}
-                            params={builderViewParams}
-                            details={true}
-                            setDetails={() => {}}
-                            isPreview={true}
-                            allowInteractInPreview={maximized}
-                            domainOverride={c}
-                          />
-                        );
-                        return maximized ? <div className="h-full min-h-[320px] w-full">{view}</div> : view;
-                      }}
-                    </ChartCard>
+                    </div>
                   </div>
                 </div>
-              )}
+              ) : statsBar}
             </motion.div>
           ) : (
             <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}

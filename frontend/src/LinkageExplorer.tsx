@@ -1399,13 +1399,14 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
     <>
       <Accordion title="Goal">
         <div className="space-y-3 pt-2">
-          <div className="flex gap-1 rounded-lg border border-neutral-700 p-1">
+          {/* Plain buttons with the kit's tab classes: a kit ghost Button paints over the selected state. */}
+          <div className="bui-tablist flex w-full">
             {(['response', 'target'] as const).map((goal) => (
-              <Button key={goal} variant="ghost" type="button" aria-pressed={search.objective === goal}
+              <button key={goal} type="button" aria-pressed={search.objective === goal}
                 onClick={() => setSearch((s) => ({ ...s, objective: goal }))}
-                className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${search.objective === goal ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>
+                className={`bui-tab flex-1 px-2 py-1 text-xs${search.objective === goal ? ' bui-tab--active' : ''}`}>
                 {goal === 'response' ? 'Most flow, least dead band' : 'Follow target'}
-              </Button>
+              </button>
             ))}
           </div>
           <p className="text-[10px] leading-snug text-neutral-400">
