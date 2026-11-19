@@ -340,6 +340,8 @@ class OnshapeVariablesTests(unittest.TestCase):
         with mock.patch.dict(ov.os.environ, {"ONSHAPE_DOCUMENT_ID": "d", "ONSHAPE_WORKSPACE_ID": ""}, clear=True):
             with self.assertRaises(ov.LinkageOnshapeError):
                 ov.target_from_env()
+        with mock.patch.dict(ov.os.environ, {"ONSHAPE_DOCUMENT_ID": "d", "ONSHAPE_WORKSPACE_ID": "w", "ONSHAPE_LINKAGE_WORKSPACE_ID": "main"}, clear=True):
+            self.assertEqual(ov.target_from_env().workspace_id, "main")      # the table's own branch wins
         with mock.patch.dict(ov.os.environ, {"ONSHAPE_DOCUMENT_ID": "d", "ONSHAPE_WORKSPACE_ID": "w"}, clear=True):
             self.assertEqual(ov.target_from_env(), ov.Target("d", "w"))
         with mock.patch.dict(ov.os.environ, {"ONSHAPE_LINKAGE_MAPPING": '{"pendulum": {"x": "nope"}}'}):

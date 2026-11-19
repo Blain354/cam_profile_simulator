@@ -52,6 +52,7 @@ services:
       ONSHAPE_CONFIG_ENUM_VALUE: ${ONSHAPE_CONFIG_ENUM_VALUE:-}
       # Linkage tabs, "Write to Onshape variables" — see docs/onshape-export.md.
       ONSHAPE_LINKAGE_MAPPING: ${ONSHAPE_LINKAGE_MAPPING:-}
+      ONSHAPE_LINKAGE_WORKSPACE_ID: ${ONSHAPE_LINKAGE_WORKSPACE_ID:-}
     networks:
       - web_network
     labels:

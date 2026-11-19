@@ -184,7 +184,8 @@ Click **Export STL** in the header. `StlExportModal` is a kit `Modal`
 The Bar, Lever and Pendulum linkage tabs have a **Write to Onshape variables** button
 (`OnshapeVariablesModal` in `frontend/src/LinkageExplorer.tsx`, `backend/onshape_variables.py`).
 It does not export anything. It writes the dimensions into a Variable Studio that belongs to the
-simulator, in the configured document and workspace (`ONSHAPE_DOCUMENT_ID`, `ONSHAPE_WORKSPACE_ID`),
+simulator, in the configured document (`ONSHAPE_DOCUMENT_ID`) and in the branch given by `ONSHAPE_LINKAGE_WORKSPACE_ID`
+(the document's Main; without it, the STL export's `ONSHAPE_WORKSPACE_ID`),
 and nowhere else: no Part Studio and no other Variable Studio is read or written.
 
 The table is found by name among the document's Variable Studios. The default name is

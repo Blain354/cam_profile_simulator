@@ -137,7 +137,8 @@ class Row:
 
 def target_from_env() -> Target:
     did = os.environ.get("ONSHAPE_DOCUMENT_ID", "").strip()
-    wid = os.environ.get("ONSHAPE_WORKSPACE_ID", "").strip()
+    # The table goes to the branch named for it (Main); the STL export keeps its own branch.
+    wid = os.environ.get("ONSHAPE_LINKAGE_WORKSPACE_ID", "").strip() or os.environ.get("ONSHAPE_WORKSPACE_ID", "").strip()
     if not (did and wid):
         raise LinkageOnshapeError("Onshape document not configured: set ONSHAPE_DOCUMENT_ID and ONSHAPE_WORKSPACE_ID on the backend.")
     return Target(_checked_id(did, "document"), _checked_id(wid, "workspace"))
