@@ -128,6 +128,8 @@ Image generee: `simulation_came_profile.png`
 - `GET /api/export/stl-download/{job_id}`: one-shot — telecharge le binaire STL produit (cache 10 min).
 - `GET /api/health`: verification rapide du backend.
 
+Profils : une seule table SQLite `profiles` (type `cam`, `cam-finder`, `elbow`, `lever`, `pendulum`, un profil par defaut par type), servie par `/api/profiles?type=`, `/api/profiles/{type}/{name}`, `POST /api/profiles/{type}` et `/api/profiles/{type}/default`. Les routes `/api/configs`, `/api/save-config`, `/api/builder-experiences` et `/api/linkage/profiles` lisent et ecrivent la meme table. Au premier demarrage, les anciennes tables `simulation_configs`, `builder_experiences` et `linkage_profiles` y sont copiees une fois, puis laissees telles quelles ; les materiaux personnalises restent dans `linkage_profiles`.
+
 ## Export STL via Onshape
 
 Bouton **Export STL** dans le header → `StlExportModal` qui suit en direct

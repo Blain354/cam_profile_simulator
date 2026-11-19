@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from simulation import SimulationParams, compute_simulation, SolverParams, SolverResult, solve_cam_profile
-from storage import LINKAGE_KINDS, BuilderExperienceStorage, LinkageProfileStorage, SimulationStorage, default_db_path
+from storage import LINKAGE_KINDS, PROFILE_TYPES, LinkageProfileStorage, ProfileStorage, default_db_path
 
 import onshape_export
 import onshape_variables
@@ -34,8 +34,9 @@ _solve_candidates_cache_lock = threading.Lock()
 _solve_candidates_cache: dict[str, list] = {}
 _solve_candidates_cache_order: list[str] = []
 _MAX_SOLVE_CANDIDATE_SETS = 6
-storage = SimulationStorage(default_db_path())
-builder_storage = BuilderExperienceStorage(default_db_path())
+# Every saved profile lives in `profiles` (copied once from the old tables at import).
+# linkage_storage only serves the custom materials, still in linkage_profiles.
+profiles = ProfileStorage(default_db_path())
 linkage_storage = LinkageProfileStorage(default_db_path())
 
 app.add_middleware(
@@ -60,7 +61,7 @@ def startup_event() -> None:
     ]
     for cfg_dir in candidate_dirs:
         if cfg_dir.exists() and cfg_dir.is_dir():
-            storage.migrate_legacy_configs_from_dir(cfg_dir)
+            profiles.import_legacy_config_files(cfg_dir)
             break
 
 
@@ -337,43 +338,137 @@ def solve_candidate_detail(solve_id: str, index: int):
     return {"cached": True, "simulation": dataclasses.asdict(sims[index])}
 
 
+# ─── Saved profiles: one store, one type per feature ─────────────
+
+_PROFILE_MAX_BYTES = 2 * 1024 * 1024
+
+
+class ProfileBody(BaseModel):
+    payload: dict
+    note: str = ""
+
+
+def _profile_type(profile_type: str) -> str:
+    if profile_type not in PROFILE_TYPES:
+        raise HTTPException(status_code=404, detail="Unknown profile type")
+    return profile_type
+
+
+def _profile_name(profile_type: str, name: str) -> str:
+    """Linkage names: 1 to 60 characters. Cam names are generated file-like names
+    (`20260326_162442_1.json`, `…_1.builder.json`): up to 120. Never a slash or a control character."""
+    name = name.strip()
+    limit = 120 if profile_type in ("cam", "cam-finder") else 60
+    if not 1 <= len(name) <= limit or "/" in name or any(ord(ch) < 32 for ch in name):
+        raise HTTPException(status_code=400, detail=f"Profile name must be 1 to {limit} characters, without slashes")
+    return name
+
+
+def _check_payload_size(body: ProfileBody) -> None:
+    if len(json.dumps([body.payload, body.note], ensure_ascii=False).encode("utf-8")) > _PROFILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Profile payload is larger than 2 MB")
+
+
+@app.get("/api/profiles")
+def profiles_list(type: str):
+    profile_type = _profile_type(type)
+    return {"profiles": profiles.list(profile_type), "default": profiles.get_default(profile_type)}
+
+
+@app.post("/api/profiles/{type}")
+def profiles_create(type: str, body: ProfileBody):
+    profile_type = _profile_type(type)
+    _check_payload_size(body)
+    return {"status": "saved", "name": profiles.create(profile_type, body.payload, body.note)}
+
+
+# Declared before /{type}/{name}: a profile named "default" is reserved.
+@app.get("/api/profiles/{type}/default")
+def profiles_get_default(type: str):
+    return {"default": profiles.get_default(_profile_type(type))}
+
+
+@app.put("/api/profiles/{type}/default/{name}")
+def profiles_set_default(type: str, name: str):
+    profile_type = _profile_type(type)
+    if profiles.get(profile_type, name) is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profiles.set_default(profile_type, name)
+    return {"status": "set", "default": name}
+
+
+@app.get("/api/profiles/{type}/{name}")
+def profiles_get(type: str, name: str):
+    item = profiles.get(_profile_type(type), name)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {key: item[key] for key in ("name", "type", "note", "payload", "updated_at")}
+
+
+@app.put("/api/profiles/{type}/{name}")
+def profiles_save(type: str, name: str, body: ProfileBody):
+    profile_type = _profile_type(type)
+    name = _profile_name(profile_type, name)
+    if name == "default":
+        raise HTTPException(status_code=400, detail='"default" is reserved')
+    _check_payload_size(body)
+    existed = profiles.save(profile_type, name, body.payload, body.note)
+    return {"status": "updated" if existed else "saved", "name": name}
+
+
+@app.delete("/api/profiles/{type}/{name}")
+def profiles_delete(type: str, name: str):
+    if not profiles.delete(_profile_type(type), name):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"status": "deleted"}
+
+
+# ─── Cam configs: the old routes, over the profile store (type "cam") ───
+
 @app.get("/api/configs")
 def list_configs():
-    return {"configs": storage.list_configs()}
+    return {"configs": [{"filename": p["name"], "note": p["note"]} for p in profiles.list("cam")]}
 
 @app.get("/api/configs/default")
 def get_default_config():
-    return {"default": storage.get_default_config()}
+    return {"default": profiles.get_default("cam")}
 
 @app.post("/api/configs/default/{name}")
 def set_default_config(name: str):
-    storage.set_default_config(name)
+    # The frontend posts "none" to clear the default.
+    profiles.set_default("cam", None if name == "none" else name)
     return {"status": "set", "default": name}
 
 @app.get("/api/configs/{name}")
 def get_config(name: str):
-    cfg = storage.get_config(name)
-    if cfg is None:
+    item = profiles.get("cam", name)
+    if item is None:
         raise HTTPException(status_code=404, detail="Config not found")
-    return cfg
+    # A cam payload carries its note; the note column is the one to trust.
+    # Old payloads without a note key come back exactly as stored.
+    payload = item["payload"]
+    if "note" in payload or item["note"]:
+        payload["note"] = item["note"]
+    return payload
 
 @app.put("/api/configs/{name}")
 def update_config(name: str, req: SimRequest):
-    ok = storage.update_config(name, req.model_dump())
-    if not ok:
+    if profiles.get("cam", name) is None:
         raise HTTPException(status_code=404, detail="Config not found")
+    payload = req.model_dump()
+    profiles.save("cam", name, payload, payload["note"])
     return {"status": "updated", "filename": name}
 
 @app.delete("/api/configs/{name}")
 def delete_config(name: str):
-    ok = storage.delete_config(name)
-    if not ok:
+    if not profiles.delete("cam", name):
         raise HTTPException(status_code=404, detail="Config not found")
     return {"status": "deleted"}
 
 @app.post("/api/save-config")
 def save_config(req: SimRequest):
-    name = storage.save_new_config(req.model_dump())
+    payload = req.model_dump()
+    name = profiles.create("cam", payload, payload["note"])
     return {"status": "saved", "filename": name}
 
 @app.get("/api/health")
@@ -583,48 +678,54 @@ def export_stl_download(job_id: str):
     return Response(content=job["bytes"], media_type="model/stl", headers=headers)
 
 
+# ─── Builder experiences: the old routes, over the profile store (type "cam-finder") ───
+
+def _experience_payload(req: BuilderExperienceSaveRequest) -> dict:
+    payload = {"builder_params": req.builder_params, "solver_result": req.solver_result}
+    if req.last_solve_request is not None:
+        payload["last_solve_request"] = req.last_solve_request
+    return payload
+
+
 @app.get("/api/builder-experiences")
 def list_builder_experiences():
-    return {"experiences": builder_storage.list_experiences()}
+    return {"experiences": [{"filename": p["name"], "note": p["note"]} for p in profiles.list("cam-finder")]}
 
 
 @app.get("/api/builder-experiences/{name}")
 def get_builder_experience(name: str):
-    item = builder_storage.get_experience(name)
+    item = profiles.get("cam-finder", name)
     if item is None:
         raise HTTPException(status_code=404, detail="Experience not found")
-    return item
+    payload = item["payload"]
+    out = {
+        "filename": item["name"],
+        "note": item["note"],
+        "builder_params": payload.get("builder_params"),
+        "solver_result": payload.get("solver_result"),
+    }
+    if payload.get("last_solve_request") is not None:
+        out["last_solve_request"] = payload["last_solve_request"]
+    return out
 
 
 @app.post("/api/builder-experiences")
 def save_builder_experience(req: BuilderExperienceSaveRequest):
-    filename = builder_storage.save_experience(
-        builder_params=req.builder_params,
-        solver_result=req.solver_result,
-        note=req.note or "",
-        last_solve_request=req.last_solve_request,
-    )
+    filename = profiles.create("cam-finder", _experience_payload(req), req.note or "")
     return {"status": "saved", "filename": filename}
 
 
 @app.put("/api/builder-experiences/{name}")
 def update_builder_experience(name: str, req: BuilderExperienceSaveRequest):
-    ok = builder_storage.update_experience(
-        name=name,
-        builder_params=req.builder_params,
-        solver_result=req.solver_result,
-        note=req.note or "",
-        last_solve_request=req.last_solve_request,
-    )
-    if not ok:
+    if profiles.get("cam-finder", name) is None:
         raise HTTPException(status_code=404, detail="Experience not found")
+    profiles.save("cam-finder", name, _experience_payload(req), req.note or "")
     return {"status": "updated", "filename": name}
 
 
 @app.delete("/api/builder-experiences/{name}")
 def delete_builder_experience(name: str):
-    ok = builder_storage.delete_experience(name)
-    if not ok:
+    if not profiles.delete("cam-finder", name):
         raise HTTPException(status_code=404, detail="Experience not found")
     return {"status": "deleted"}
 
@@ -769,27 +870,27 @@ def _profile_key(kind: str, name: str):
 def linkage_profiles(kind: str):
     if kind not in LINKAGE_KINDS:
         raise HTTPException(status_code=404, detail="Unknown linkage type")
-    return {"profiles": linkage_storage.list_profiles(kind)}
+    return {"profiles": [{"name": p["name"], "updated_at": p["updated_at"]} for p in profiles.list(kind)]}
 
 
 @app.get("/api/linkage/profiles/{kind}/{name}")
 def linkage_profile_get(kind: str, name: str):
-    item = linkage_storage.get_profile(*_profile_key(kind, name))
+    item = profiles.get(*_profile_key(kind, name))
     if item is None:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return item
+    return item["payload"]
 
 
 @app.put("/api/linkage/profiles/{kind}/{name}")
 def linkage_profile_save(kind: str, name: str, body: LinkageProfileBody):
     kind, name = _profile_key(kind, name)
-    existed = linkage_storage.save_profile(kind, name, {"params": body.params, "search": body.search, "chart_settings": body.chart_settings})
+    existed = profiles.save(kind, name, {"params": body.params, "search": body.search, "chart_settings": body.chart_settings})
     return {"status": "updated" if existed else "saved", "name": name}
 
 
 @app.delete("/api/linkage/profiles/{kind}/{name}")
 def linkage_profile_delete(kind: str, name: str):
-    if not linkage_storage.delete_profile(*_profile_key(kind, name)):
+    if not profiles.delete(*_profile_key(kind, name)):
         raise HTTPException(status_code=404, detail="Profile not found")
     return {"status": "deleted"}
 

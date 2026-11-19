@@ -1,9 +1,10 @@
+import contextlib
 import datetime
 import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 
 def _utc_now_iso() -> str:
@@ -479,3 +480,277 @@ class LinkageProfileStorage:
             cur = conn.execute("DELETE FROM linkage_profiles WHERE kind = ? AND name = ?", (kind, name))
             conn.commit()
             return cur.rowcount > 0
+
+
+# ─── Unified profile store ───────────────────────────────────────
+# One table for every saved profile of the app. The three tables above
+# (simulation_configs, builder_experiences, linkage_profiles) are copied here
+# once and then left as a frozen copy; linkage_profiles still holds the custom
+# materials (kind "material"), which are not profiles.
+
+PROFILE_TYPES = ("cam", "cam-finder", "elbow", "lever", "pendulum")
+_MIGRATION_KEY = "profiles_migrated_v1"
+
+
+def _default_key(profile_type: str) -> str:
+    return f"default_profile:{profile_type}"
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> List[str]:
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
+
+class ProfileStorage:
+    """Named JSON payloads, one namespace per profile type, with one default per type."""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (type, name)
+                )
+                """
+            )
+            conn.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            conn.commit()
+        self.migrate_from_old_tables()
+
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """One connection per call: committed on success, rolled back on error, always closed."""
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    # Migration -----------------------------------------------------------
+
+    def migrate_from_old_tables(self) -> bool:
+        """Copy the three old tables into `profiles`, once. Returns True when it ran.
+
+        Additive: INSERT OR IGNORE keeps any row already in `profiles`, a default is
+        only set when the type has none, and the old tables are only read.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM app_meta WHERE key = ?", (_MIGRATION_KEY,)).fetchone():
+                conn.rollback()
+                return False
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            insert = (
+                "INSERT OR IGNORE INTO profiles (type, name, note, payload_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            if "simulation_configs" in tables:
+                for r in conn.execute("SELECT name, note, payload_json, created_at, updated_at FROM simulation_configs"):
+                    conn.execute(insert, ("cam", r["name"], r["note"] or "", r["payload_json"], r["created_at"], r["updated_at"]))
+                row = conn.execute("SELECT value FROM app_meta WHERE key = 'default_config_name'").fetchone()
+                if row and conn.execute(
+                    "SELECT 1 FROM profiles WHERE type = 'cam' AND name = ?", (row["value"],)
+                ).fetchone():
+                    conn.execute("INSERT OR IGNORE INTO app_meta (key, value) VALUES (?, ?)", (_default_key("cam"), row["value"]))
+            if "builder_experiences" in tables:
+                has_last = "last_solve_request_json" in _table_columns(conn, "builder_experiences")
+                cols = "name, note, builder_params_json, solver_result_json, created_at, updated_at"
+                if has_last:
+                    cols += ", last_solve_request_json"
+                for r in conn.execute(f"SELECT {cols} FROM builder_experiences"):
+                    try:
+                        payload: Dict[str, Any] = {
+                            "builder_params": json.loads(r["builder_params_json"]),
+                            "solver_result": json.loads(r["solver_result_json"]),
+                        }
+                    except json.JSONDecodeError as exc:
+                        # Fail loud: the whole copy rolls back and the app does not start
+                        # on a half-filled store. Fix the row, then restart.
+                        raise RuntimeError(
+                            f"profiles migration stopped, nothing copied: builder_experiences row {r['name']!r} is not valid JSON"
+                        ) from exc
+                    raw_last = r["last_solve_request_json"] if has_last else None
+                    if raw_last is not None and str(raw_last).strip():
+                        try:
+                            payload["last_solve_request"] = json.loads(raw_last)
+                        except json.JSONDecodeError:
+                            pass  # the old GET dropped it too; the raw text stays in the old table
+                    conn.execute(insert, (
+                        "cam-finder", r["name"], r["note"] or "", json.dumps(payload, ensure_ascii=False),
+                        r["created_at"], r["updated_at"],
+                    ))
+            if "linkage_profiles" in tables:
+                kinds = ("elbow", "lever", "pendulum")
+                rows = conn.execute(
+                    f"SELECT kind, name, payload_json, created_at, updated_at FROM linkage_profiles "
+                    f"WHERE kind IN ({','.join('?' * len(kinds))})",
+                    kinds,
+                )
+                for r in rows:
+                    conn.execute(insert, (r["kind"], r["name"], "", r["payload_json"], r["created_at"], r["updated_at"]))
+            conn.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (_MIGRATION_KEY, _utc_now_iso()))
+            conn.commit()
+        return True
+
+    def import_legacy_config_files(self, configs_dir: Path) -> int:
+        """Legacy `configs/*.json` files as `cam` profiles (never overwrites a profile).
+
+        As before, `default_config.json` sets the cam default each time it runs.
+        """
+        if not configs_dir.exists() or not configs_dir.is_dir():
+            return 0
+        imported = 0
+        files = sorted(p for p in configs_dir.iterdir() if p.suffix == ".json" and p.name != "default_config.json")
+        with self._connect() as conn:
+            for path in files:
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                note = payload.get("note", "")
+                now = _utc_now_iso()
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO profiles (type, name, note, payload_json, created_at, updated_at) "
+                    "VALUES ('cam', ?, ?, ?, ?, ?)",
+                    (path.name, note if isinstance(note, str) else "", json.dumps(payload, ensure_ascii=False), now, now),
+                )
+                imported += cur.rowcount > 0
+            default_path = configs_dir / "default_config.json"
+            if default_path.exists():
+                try:
+                    default_name = json.loads(default_path.read_text(encoding="utf-8")).get("default")
+                except (OSError, json.JSONDecodeError, AttributeError):
+                    default_name = None
+                if isinstance(default_name, str) and default_name:
+                    conn.execute(
+                        "INSERT INTO app_meta (key, value) VALUES (?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (_default_key("cam"), default_name),
+                    )
+            conn.commit()
+        return imported
+
+    # Profiles ------------------------------------------------------------
+
+    def list(self, profile_type: str) -> List[Dict[str, Any]]:
+        order = "created_at DESC, name DESC" if profile_type in ("cam", "cam-finder") else "name COLLATE NOCASE"
+        default = self.get_default(profile_type)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT name, note, created_at, updated_at FROM profiles WHERE type = ? ORDER BY {order}",
+                (profile_type,),
+            ).fetchall()
+        return [
+            {
+                "name": r["name"],
+                "type": profile_type,
+                "note": r["note"] or "",
+                "updated_at": r["updated_at"],
+                "created_at": r["created_at"],
+                "is_default": r["name"] == default,
+            }
+            for r in rows
+        ]
+
+    def get(self, profile_type: str, name: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            r = conn.execute(
+                "SELECT name, note, payload_json, created_at, updated_at FROM profiles WHERE type = ? AND name = ?",
+                (profile_type, name),
+            ).fetchone()
+        if r is None:
+            return None
+        payload = json.loads(r["payload_json"])
+        return {
+            "name": r["name"],
+            "type": profile_type,
+            "note": r["note"] or "",
+            "payload": payload if isinstance(payload, dict) else {},
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+        }
+
+    def save(self, profile_type: str, name: str, payload: Dict[str, Any], note: str = "") -> bool:
+        """Create or overwrite. Returns True when the profile already existed."""
+        now = _utc_now_iso()
+        body = json.dumps(payload, ensure_ascii=False)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE profiles SET payload_json = ?, note = ?, updated_at = ? WHERE type = ? AND name = ?",
+                (body, note, now, profile_type, name),
+            )
+            existed = cur.rowcount > 0
+            if not existed:
+                conn.execute(
+                    "INSERT INTO profiles (type, name, note, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (profile_type, name, note, body, now, now),
+                )
+            conn.commit()
+        return existed
+
+    def create(self, profile_type: str, payload: Dict[str, Any], note: str = "") -> str:
+        """Save under a generated unique name: YYYYMMDD_HHMMSS_N, plus `.json` for cam and
+        `.builder.json` for cam-finder (N = highest trailing number of the type + 1)."""
+        suffix = {"cam": ".json", "cam-finder": ".builder.json"}.get(profile_type, "")
+        now = _utc_now_iso()
+        body = json.dumps(payload, ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            seq = 0
+            for r in conn.execute("SELECT name FROM profiles WHERE type = ?", (profile_type,)):
+                stem = r["name"][: -len(suffix)] if suffix and r["name"].endswith(suffix) else r["name"]
+                try:
+                    seq = max(seq, int(stem.split("_")[-1]))
+                except ValueError:
+                    continue
+            prefix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            while True:
+                seq += 1
+                name = f"{prefix}_{seq}{suffix}"
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO profiles (type, name, note, payload_json, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (profile_type, name, note, body, now, now),
+                )
+                if cur.rowcount > 0:
+                    break
+            conn.commit()
+        return name
+
+    def delete(self, profile_type: str, name: str) -> bool:
+        """Delete a profile; deleting the type's default clears the default."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM profiles WHERE type = ? AND name = ?", (profile_type, name))
+            if cur.rowcount > 0:
+                conn.execute("DELETE FROM app_meta WHERE key = ? AND value = ?", (_default_key(profile_type), name))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_default(self, profile_type: str) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM app_meta WHERE key = ?", (_default_key(profile_type),)).fetchone()
+        return None if row is None else row["value"]
+
+    def set_default(self, profile_type: str, name: Optional[str]) -> None:
+        """Set the type's default profile; None clears it."""
+        with self._connect() as conn:
+            if name is None:
+                conn.execute("DELETE FROM app_meta WHERE key = ?", (_default_key(profile_type),))
+            else:
+                conn.execute(
+                    "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (_default_key(profile_type), name),
+                )
+            conn.commit()

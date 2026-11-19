@@ -177,7 +177,7 @@ class OnshapeEndpointsTests(unittest.TestCase):
         c.put(url, json={"params": {"bar1_length": 7.0}})
         self.assertEqual(c.get(url).json(), {"params": {"bar1_length": 7.0}, "search": {}, "chart_settings": {}})
         # A profile stored before the field existed still loads.
-        self.main.linkage_storage.save_profile("lever", "old", {"params": {"bar1_length": 5.0}, "search": {}})
+        self.main.profiles.save("lever", "old", {"params": {"bar1_length": 5.0}, "search": {}})
         self.assertEqual(c.get("/api/linkage/profiles/lever/old").json(), {"params": {"bar1_length": 5.0}, "search": {}})
         c.delete(url)
         c.delete("/api/linkage/profiles/lever/old")
