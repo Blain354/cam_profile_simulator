@@ -999,9 +999,10 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
       const report: SearchReport | undefined = out.search_report && typeof out.search_report === 'object' ? out.search_report : undefined;
       if (!out.found) {
         setOptOut({ found: false, report, vars: sentVars, fixed: sentFixed });
-        setOptMessage({ ok: false, text: report
-          ? 'No design passed the limits. The design on screen was kept.'
-          : `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze (it must be above the preload).` });
+        const widen = `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze (it must be above the preload).`;
+        setOptMessage({ ok: false, text: !report ? widen
+          : (report.shortlist ?? 0) > 0 ? 'No design passed the limits. The design on screen was kept.'
+          : `${widen} The design on screen was kept.` });
         return;
       }
       // An older backend returns params without the newer fields: keep those from the screen.
@@ -1453,7 +1454,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
                 </div>
                 {fixed
                   ? <p className="text-xs text-neutral-400">{`Kept at ${current.toFixed(v === 'foot_angle' ? 0 : 2)} ${varUnit(v)}`}</p>
-                  : <RangeRow label="Search" min={search[`${v}_min` as const]} max={search[`${v}_max` as const]} onMin={(x) => setS(`${v}_min` as const, x)} onMax={(x) => setS(`${v}_max` as const, x)} />}
+                  : <RangeRow label={`${varLabel[v]} range`} min={search[`${v}_min` as const]} max={search[`${v}_max` as const]} onMin={(x) => setS(`${v}_min` as const, x)} onMax={(x) => setS(`${v}_max` as const, x)} />}
               </div>
             );
           })}
