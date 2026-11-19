@@ -706,7 +706,7 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
       const t = await onshapeCall('/api/linkage/onshape/apply', { ...params, table_name: table.table_name, names: chosen.map((r) => r.name) });
       setTable(t);
       if (t.write_error) {
-        setError(`${t.table_created ? `The table ${t.table_name} was created and now exists, but nothing` : 'Nothing'} was written: ${t.write_error}. Writing again uses the same table.`);
+        setError(`${t.table_created ? `The table ${t.table_name} was created and now exists, but the` : 'The'} write did not go through: ${t.write_error}. Writing again reads the same table first, then writes.`);
       } else {
         setDone(true);
       }

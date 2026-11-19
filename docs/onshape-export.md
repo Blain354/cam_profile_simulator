@@ -221,7 +221,8 @@ What can go wrong:
 
 - **Created, then the write fails.** The reply has `table_created: true`, the element id and
   `write_error`, and every ticked row is `error`. The window says the table now exists and that
-  nothing was written. Writing again finds that table by name: no second table is made.
+  the write did not go through (after a refusal nothing was written; after a timeout it may
+  have landed, and the next look-up shows it). Writing again finds that table by name: no second table is made.
 - **Two clicks at once.** The button is disabled while a request runs, and the backend holds a
   lock per (document, workspace, table name) around list, create and write, so only one table
   is created. The lock is in memory: it holds with the single uvicorn worker the image runs.
