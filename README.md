@@ -80,7 +80,7 @@ Frontend disponible sur: `http://localhost:5173`
 
 Chrome UI partage (header full-width, theme, champs kit, `SiteFooter`
 sous l'outil plein ecran, labels en sentence case, kit
-`@blain-projects/ui` ^3.2.0, surfaces plates et motion 250 ms,
+`@blain-projects/ui` ^3.3.1, surfaces plates et motion 250 ms,
 attentes Solve / export STL via `Button.loading` / `LoadingState` / `Loader`) : voir
 [`docs/ui-uniformity-2026-10-08.md`](docs/ui-uniformity-2026-10-08.md).
 En Docker, passer `APP_VERSION` / `APP_COMMIT` / `APP_COMMIT_DATE` au build
