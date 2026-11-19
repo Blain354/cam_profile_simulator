@@ -50,7 +50,7 @@ class ClosureRampTests(unittest.TestCase):
         for compliance in (0.2, 0.7, 2.0):
             p = replace(params, compliance=compliance)
             result = compute_simulation(p)
-            threshold = p.tube_od - p.tube_id - compliance * p.input_pressure_psi * 0.00689476
+            threshold = p.tube_od - p.tube_id - compliance * p.input_pressure_kpa * 1e-3
             gap = np.array(result.min_gaps)
             flow = np.array(result.flow_l_min)
             np.testing.assert_array_equal(flow[gap <= threshold], 0.0)
@@ -59,20 +59,20 @@ class ClosureRampTests(unittest.TestCase):
         self.assertGreater(first_open[0], first_open[1])
         self.assertGreater(first_open[1], first_open[2])
 
-        low_pressure = compute_simulation(replace(params, input_pressure_psi=15))
-        high_pressure = compute_simulation(replace(params, input_pressure_psi=60))
+        low_pressure = compute_simulation(replace(params, input_pressure_kpa=103.4))
+        high_pressure = compute_simulation(replace(params, input_pressure_kpa=413.7))
         low_y = next(y for y, q in zip(low_pressure.Y_positions, low_pressure.flow_l_min) if q > 0)
         high_y = next(y for y, q in zip(high_pressure.Y_positions, high_pressure.flow_l_min) if q > 0)
         self.assertLess(high_y, low_y)
 
     def test_geometric_zero_does_not_artificially_force_zero_flow(self):
         # With this deliberately soft tube, pressure expansion exceeds wall thickness.
-        result = compute_simulation(SimulationParams(ramp_enabled=True, compliance=5.0))
+        result = compute_simulation(SimulationParams(ramp_enabled=True, compliance=5.0, input_pressure_kpa=206.8))
         self.assertGreater(result.flow_l_min[0], 0.0)
         self.assertEqual(result.cam_X[0], 1.5)
 
     def test_default_opening_flow_remains_close(self):
-        params = SimulationParams(input_pressure_psi=15)
+        params = SimulationParams(input_pressure_kpa=103.4)
         plateau = compute_simulation(params)
         ramp = compute_simulation(replace(params, ramp_enabled=True))
         y = np.linspace(0.0, min(plateau.Y_end, ramp.Y_end), 500)

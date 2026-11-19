@@ -771,17 +771,16 @@ export default function App() {
 
               <Accordion title="Pneumatic system">
                 <div className="space-y-5 pt-2">
-                  <ParameterSlider label="Pressure (PSI)" value={params.input_pressure_psi} min={0.0} max={150.0} step={1.0}
-                    onChange={(val) => handleParamChange('input_pressure_psi', val)}
-                    secondaryValue={`${(params.input_pressure_psi * 6.89476).toFixed(3)} kPa`}
-                    isModified={isModified('input_pressure_psi')}
+                  <ParameterSlider label="Pressure (kPa)" value={params.input_pressure_kpa} min={0} max={1050} step={1} inputDecimals={1}
+                    onChange={(val) => handleParamChange('input_pressure_kpa', val)}
+                    isModified={isModified('input_pressure_kpa')}
                     description={explorerPressure}
                   />
                   <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1.0} max={12.0} step={0.1} onChange={(val) => handleParamChange('tube_id', val)} isModified={isModified('tube_id')} description={explorerTubeId} />
                   <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1.0} max={16.0} step={0.1} onChange={(val) => handleParamChange('tube_od', val)} isModified={isModified('tube_od')} description={explorerTubeOd} />
                   <ParameterSlider label="Compliance" value={params.compliance} min={0.0} max={5.0} step={0.01}
                     onChange={(val) => handleParamChange('compliance', val)}
-                    secondaryValue={`Opening: ${(params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`}
+                    secondaryValue={`Opening: ${(params.compliance * params.input_pressure_kpa * 1e-3).toFixed(3)} mm`}
                     isModified={isModified('compliance')}
                     description={explorerCompliance}
                   />
@@ -814,7 +813,7 @@ export default function App() {
                       }
                       highlight={true} />
                     <StatRow label="Gap at Y=0" value={`${stats.gapAtY0.toFixed(3)} mm`} />
-                    {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_psi * 0.00689476).toFixed(3)} mm`} />}
+                    {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_kpa * 1e-3).toFixed(3)} mm`} />}
                     <StatRow label="Max Flow (static)" value={`${stats.maxFlow.toFixed(3)} L/min`} />
                     {stats.maxDynamicFlow !== undefined && (
                       <StatRow label="Max Flow (dynamic)" value={`${stats.maxDynamicFlow.toFixed(3)} L/min`} />
@@ -865,7 +864,7 @@ export default function App() {
           shared={{
             tube_id: params.tube_id,
             tube_od: params.tube_od,
-            input_pressure_psi: params.input_pressure_psi,
+            input_pressure_kpa: params.input_pressure_kpa,
             compliance: params.compliance,
             motor_speed: params.motor_speed,
             lead_screw_pitch: params.lead_screw_pitch,

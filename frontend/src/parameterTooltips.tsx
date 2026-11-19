@@ -68,7 +68,7 @@ export const explorerTubeOd: ReactNode = (
 export const explorerPressure: ReactNode = (
   <Tip title="Supply pressure">
     <p>Upstream air pressure driving the pneumatic circuit. Higher pressure increases the force available to expand the tube and push flow once an opening exists.</p>
-    <p>Shown also in kPa for quick SI reference.</p>
+    <p>In kPa, gauge (above atmosphere).</p>
   </Tip>
 );
 

@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 
 def _utc_now_iso() -> str:
@@ -602,9 +602,10 @@ class ProfileStorage:
             conn.commit()
         return True
 
-    def import_legacy_config_files(self, configs_dir: Path) -> int:
+    def import_legacy_config_files(self, configs_dir: Path, transform: Callable[[Dict[str, Any]], Dict[str, Any]] = lambda p: p) -> int:
         """Legacy `configs/*.json` files as `cam` profiles (never overwrites a profile).
 
+        `transform` brings each file's payload to the current fields before it is stored.
         As before, `default_config.json` sets the cam default each time it runs.
         """
         if not configs_dir.exists() or not configs_dir.is_dir():
@@ -619,6 +620,7 @@ class ProfileStorage:
                     continue
                 if not isinstance(payload, dict):
                     continue
+                payload = transform(payload)
                 note = payload.get("note", "")
                 now = _utc_now_iso()
                 cur = conn.execute(

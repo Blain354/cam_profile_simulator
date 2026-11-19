@@ -93,3 +93,18 @@ test('a rigid search does not print an empty shortlist count', async () => {
   await findByText('Found dimensions')
   expect(queryByText(/shortlisted designs passed/)).toBeNull()
 })
+
+test('a linkage state saved in psi comes back in kPa, shown with one decimal', async () => {
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: {} }))
+  localStorage.setItem('cam-sim.linkage.pendulum.v2', JSON.stringify({ params: { input_pressure_psi: 15 }, search: {} }))
+  const { getByText } = render(<App />)
+  fireEvent.click(getByText('Pneumatic system'))
+  const box = getByText('Pressure (kPa)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
+  expect(box.value).toBe('103.4')
+  expect(box.validity.valid).toBe(true)
+  await waitFor(() => {
+    const saved = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(saved.params.input_pressure_kpa).toBeCloseTo(103.42, 2)
+    expect('input_pressure_psi' in saved.params).toBe(false)
+  })
+})

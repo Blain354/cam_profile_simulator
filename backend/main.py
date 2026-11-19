@@ -16,12 +16,13 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from simulation import SimulationParams, compute_simulation, SolverParams, SolverResult, solve_cam_profile
 from storage import LINKAGE_KINDS, PROFILE_TYPES, LinkageProfileStorage, ProfileStorage, default_db_path
 
 import onshape_export
 import onshape_variables
+from legacy_units import legacy_psi_to_kpa
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
 
 
@@ -61,11 +62,20 @@ def startup_event() -> None:
     ]
     for cfg_dir in candidate_dirs:
         if cfg_dir.exists() and cfg_dir.is_dir():
-            profiles.import_legacy_config_files(cfg_dir)
+            profiles.import_legacy_config_files(cfg_dir, transform=legacy_psi_to_kpa)
             break
 
 
-class SimRequest(BaseModel):
+class KpaBody(BaseModel):
+    """A body that used to carry pressures in psi: an old client or saved body still works."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_psi(cls, data):
+        return legacy_psi_to_kpa(data)
+
+
+class SimRequest(KpaBody):
     motor_speed: float = 100.0
     height: float = 2.0
     thickness: float = 2.5
@@ -77,7 +87,7 @@ class SimRequest(BaseModel):
     lead_screw_pitch: float = 0.5
     tube_id: float = 2.0
     tube_od: float = 3.0
-    input_pressure_psi: float = 30.0
+    input_pressure_kpa: float = 100.0
     compliance: float = 0.7
     chamber_volume_ml: float = 0.0
     note: str = ""
@@ -98,7 +108,7 @@ def simulate(req: SimRequest):
         lead_screw_pitch=req.lead_screw_pitch,
         tube_id=req.tube_id,
         tube_od=req.tube_od,
-        input_pressure_psi=req.input_pressure_psi,
+        input_pressure_kpa=req.input_pressure_kpa,
         compliance=req.compliance,
         chamber_volume_ml=req.chamber_volume_ml,
     )
@@ -106,11 +116,11 @@ def simulate(req: SimRequest):
     return dataclasses.asdict(result)
 
 
-class SolveRequest(BaseModel):
+class SolveRequest(KpaBody):
     motor_speed: float = 100.0
     tube_id: float = 2.0
     tube_od: float = 3.0
-    input_pressure_psi: float = 30.0
+    input_pressure_kpa: float = 100.0
     chamber_volume_ml: float = 5.0
     compliance: float = 0.7
     thickness: float = 2.5
@@ -151,7 +161,7 @@ class SolveRequest(BaseModel):
     candidate_rank_flow_y_mm: float = 1.0
 
 
-class BuilderExperienceSaveRequest(BaseModel):
+class BuilderExperienceSaveRequest(KpaBody):
     note: str = ""
     builder_params: dict
     solver_result: dict
@@ -164,7 +174,7 @@ def _solver_params_from_request(req: SolveRequest) -> SolverParams:
         motor_speed=req.motor_speed,
         tube_id=req.tube_id,
         tube_od=req.tube_od,
-        input_pressure_psi=req.input_pressure_psi,
+        input_pressure_kpa=req.input_pressure_kpa,
         chamber_volume_ml=req.chamber_volume_ml,
         compliance=req.compliance,
         thickness=req.thickness,
@@ -343,7 +353,7 @@ def solve_candidate_detail(solve_id: str, index: int):
 _PROFILE_MAX_BYTES = 2 * 1024 * 1024
 
 
-class ProfileBody(BaseModel):
+class ProfileBody(KpaBody):
     payload: dict
     note: str = ""
 
@@ -362,6 +372,14 @@ def _profile_name(profile_type: str, name: str) -> str:
     if not 1 <= len(name) <= limit or "/" in name or any(ord(ch) < 32 for ch in name):
         raise HTTPException(status_code=400, detail=f"Profile name must be 1 to {limit} characters, without slashes")
     return name
+
+
+def _get_profile(profile_type: str, name: str):
+    """A stored profile, its payload in kPa whatever it was saved in."""
+    item = profiles.get(profile_type, name)
+    if item is not None:
+        item["payload"] = legacy_psi_to_kpa(item["payload"])
+    return item
 
 
 def _check_payload_size(body: ProfileBody) -> None:
@@ -399,7 +417,7 @@ def profiles_set_default(type: str, name: str):
 
 @app.get("/api/profiles/{type}/{name}")
 def profiles_get(type: str, name: str):
-    item = profiles.get(_profile_type(type), name)
+    item = _get_profile(_profile_type(type), name)
     if item is None:
         raise HTTPException(status_code=404, detail="Profile not found")
     return {key: item[key] for key in ("name", "type", "note", "payload", "updated_at")}
@@ -441,7 +459,7 @@ def set_default_config(name: str):
 
 @app.get("/api/configs/{name}")
 def get_config(name: str):
-    item = profiles.get("cam", name)
+    item = _get_profile("cam", name)
     if item is None:
         raise HTTPException(status_code=404, detail="Config not found")
     # A cam payload carries its note; the note column is the one to trust.
@@ -501,7 +519,7 @@ def _prune_stl_jobs() -> None:
             _stl_jobs.popitem(last=False)
 
 
-class STLExportRequest(BaseModel):
+class STLExportRequest(KpaBody):
     """Configuration payload pushed to Onshape before exporting the STL.
 
     Mirrors `SimRequest` but only the fields that are actually mapped to
@@ -519,7 +537,7 @@ class STLExportRequest(BaseModel):
     lead_screw_pitch: Optional[float] = None
     tube_id: Optional[float] = None
     tube_od: Optional[float] = None
-    input_pressure_psi: Optional[float] = None
+    input_pressure_kpa: Optional[float] = None
     compliance: Optional[float] = None
     chamber_volume_ml: Optional[float] = None
     note: Optional[str] = ""
@@ -694,7 +712,7 @@ def list_builder_experiences():
 
 @app.get("/api/builder-experiences/{name}")
 def get_builder_experience(name: str):
-    item = profiles.get("cam-finder", name)
+    item = _get_profile("cam-finder", name)
     if item is None:
         raise HTTPException(status_code=404, detail="Experience not found")
     payload = item["payload"]
@@ -732,7 +750,7 @@ def delete_builder_experience(name: str):
 
 # ─── Bar linkage pinch valves ────────────────────────────────────
 
-class LinkageRequest(BaseModel):
+class LinkageRequest(KpaBody):
     linkage_type: str = "elbow"
     bar1_length: float = 13.0
     bar2_length: float = 7.8
@@ -750,7 +768,7 @@ class LinkageRequest(BaseModel):
     target_exponent: float = Field(1.0, gt=0, le=10)
     tube_id: float = 2.0
     tube_od: float = 3.0
-    input_pressure_psi: float = 15.0
+    input_pressure_kpa: float = 100.0
     compliance: float = 0.7
     chamber_volume_ml: float = Field(10.0, ge=0, le=10000)
     motor_speed: float = Field(100.0, ge=0, le=100000)
@@ -857,7 +875,7 @@ def linkage_onshape_apply(req: LinkageOnshapeApplyRequest):
 
 # ─── Saved linkage profiles ──────────────────────────────────────
 
-class LinkageProfileBody(BaseModel):
+class LinkageProfileBody(KpaBody):
     params: dict
     search: dict = Field(default_factory=dict)
     chart_settings: dict = Field(default_factory=dict)
@@ -881,7 +899,7 @@ def linkage_profiles(kind: str):
 
 @app.get("/api/linkage/profiles/{kind}/{name}")
 def linkage_profile_get(kind: str, name: str):
-    item = profiles.get(*_profile_key(kind, name))
+    item = _get_profile(*_profile_key(kind, name))
     if item is None:
         raise HTTPException(status_code=404, detail="Profile not found")
     return item["payload"]

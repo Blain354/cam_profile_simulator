@@ -125,7 +125,7 @@ type SolveStreamRequestBody = {
   motor_speed: number;
   tube_id: number;
   tube_od: number;
-  input_pressure_psi: number;
+  input_pressure_kpa: number;
   chamber_volume_ml: number;
   compliance: number;
   thickness: number;
@@ -163,7 +163,7 @@ function buildSolveStreamBody(i: {
   motorSpeed: number;
   tubeId: number;
   tubeOd: number;
-  pressurePsi: number;
+  pressureKpa: number;
   chamberVolume: number;
   compliance: number;
   thickness: number;
@@ -199,7 +199,7 @@ function buildSolveStreamBody(i: {
     motor_speed: i.motorSpeed,
     tube_id: i.tubeId,
     tube_od: i.tubeOd,
-    input_pressure_psi: i.pressurePsi,
+    input_pressure_kpa: i.pressureKpa,
     chamber_volume_ml: i.chamberVolume,
     compliance: i.compliance,
     thickness: i.thickness,
@@ -242,7 +242,7 @@ function solveStreamBodyFromBuilderParams(p: Record<string, unknown>, compliance
     motorSpeed: num('motorSpeed', 100),
     tubeId: num('tubeId', 2),
     tubeOd: num('tubeOd', 3),
-    pressurePsi: num('pressurePsi', 15),
+    pressureKpa: num('pressureKpa', 100),
     chamberVolume: num('chamberVolume', 50),
     compliance: num('compliance', complianceFallback),
     thickness: num('thickness', 2.5),
@@ -297,7 +297,7 @@ const SOLVE_INPUT_ROWS: { key: keyof SolveStreamRequestBody; label: string }[] =
   { key: 'motor_speed', label: 'Motor speed (RPM)' },
   { key: 'tube_id', label: 'Tube ID (mm)' },
   { key: 'tube_od', label: 'Tube OD (mm)' },
-  { key: 'input_pressure_psi', label: 'Pressure (psi)' },
+  { key: 'input_pressure_kpa', label: 'Pressure (kPa)' },
   { key: 'chamber_volume_ml', label: 'Chamber volume (mL)' },
   { key: 'compliance', label: 'Compliance' },
   { key: 'thickness', label: 'Thickness (mm)' },
@@ -663,7 +663,7 @@ export default function ProfileBuilder({
   const [motorSpeed, setMotorSpeed] = useState(100);
   const [tubeId, setTubeId] = useState(2.0);
   const [tubeOd, setTubeOd] = useState(3.0);
-  const [pressurePsi, setPressurePsi] = useState(15.0);
+  const [pressureKpa, setPressureKpa] = useState(100);
   const [chamberVolume, setChamberVolume] = useState(50.0);
   const [compliance, setCompliance] = useState(explorerCompliance);
   const [thickness, setThickness] = useState(2.5);
@@ -869,7 +869,7 @@ export default function ProfileBuilder({
         default_distance: activeCandidate.default_distance,
         tube_id: tubeId,
         tube_od: tubeOd,
-        input_pressure_psi: pressurePsi,
+        input_pressure_kpa: pressureKpa,
         compliance,
         chamber_volume_ml: chamberVolume,
         note: '',
@@ -922,7 +922,7 @@ export default function ProfileBuilder({
     thickness,
     tubeId,
     tubeOd,
-    pressurePsi,
+    pressureKpa,
     compliance,
     chamberVolume,
   ]);
@@ -962,7 +962,7 @@ export default function ProfileBuilder({
             default_distance: cand.default_distance,
             tube_id: tubeId,
             tube_od: tubeOd,
-            input_pressure_psi: pressurePsi,
+            input_pressure_kpa: pressureKpa,
             compliance,
             chamber_volume_ml: chamberVolume,
             note: '',
@@ -997,16 +997,16 @@ export default function ProfileBuilder({
     thickness,
     tubeId,
     tubeOd,
-    pressurePsi,
+    pressureKpa,
     compliance,
     chamberVolume,
   ]);
 
   /** Gap where inner_gap = 0 at Y=0 (no design margin) */
   const theoreticalGapMm = useMemo(() => {
-    const pMpa = pressurePsi * 0.00689476;
+    const pMpa = pressureKpa * 1e-3;
     return tubeOd - tubeId - compliance * pMpa;
-  }, [tubeOd, tubeId, compliance, pressurePsi]);
+  }, [tubeOd, tubeId, compliance, pressureKpa]);
 
   const gapAcceptBand = useMemo(() => {
     const hi = theoreticalGapMm;
@@ -1016,9 +1016,9 @@ export default function ProfileBuilder({
 
   /** Air added from atmosphere to reach line pressure (solver target internally). */
   const pressurizationDeltaMl = useMemo(() => {
-    const pGaugePa = pressurePsi * 6894.76;
+    const pGaugePa = pressureKpa * 1000;
     return chamberVolume * (pGaugePa / P_ATM_PA);
-  }, [chamberVolume, pressurePsi]);
+  }, [chamberVolume, pressureKpa]);
 
   /** Absolute free-air equivalent in chamber at final pressure (more intuitive display). */
   const pressurizationAbsoluteMl = useMemo(() => {
@@ -1035,7 +1035,7 @@ export default function ProfileBuilder({
   };
 
   const collectBuilderParams = (): Record<string, unknown> => ({
-    motorSpeed, tubeId, tubeOd, pressurePsi, chamberVolume, compliance, thickness, rampEnabled,
+    motorSpeed, tubeId, tubeOd, pressureKpa, chamberVolume, compliance, thickness, rampEnabled,
     profileAggressivity01, gapAtY0MarginMm, kMin, kMax, fixK, fixedK, kSampleMode, kSteps, kStep,
     hSearchMin, hSearchMax, fixHeight, fixedHeight, heightSampleMode, heightSteps, heightStep,
     deadbandSearchMin, deadbandSearchMax, fixDeadband, fixedDeadband, deadbandSampleMode, deadbandSteps, deadbandStep,
@@ -1065,7 +1065,7 @@ export default function ProfileBuilder({
       ),
     [
       experienceNote,
-      motorSpeed, tubeId, tubeOd, pressurePsi, chamberVolume, compliance, thickness, rampEnabled,
+      motorSpeed, tubeId, tubeOd, pressureKpa, chamberVolume, compliance, thickness, rampEnabled,
       gapAtY0MarginMm,
       kMin, kMax, fixK, fixedK, kSampleMode, kSteps, kStep,
       hSearchMin, hSearchMax, fixHeight, fixedHeight, heightSampleMode, heightSteps, heightStep,
@@ -1090,7 +1090,7 @@ export default function ProfileBuilder({
         motorSpeed,
         tubeId,
         tubeOd,
-        pressurePsi,
+        pressureKpa,
         chamberVolume,
         compliance,
         thickness,
@@ -1126,7 +1126,7 @@ export default function ProfileBuilder({
       motorSpeed,
       tubeId,
       tubeOd,
-      pressurePsi,
+      pressureKpa,
       chamberVolume,
       compliance,
       thickness,
@@ -1171,7 +1171,7 @@ export default function ProfileBuilder({
     if (typeof p.motorSpeed === 'number') setMotorSpeed(p.motorSpeed);
     if (typeof p.tubeId === 'number') setTubeId(p.tubeId);
     if (typeof p.tubeOd === 'number') setTubeOd(p.tubeOd);
-    if (typeof p.pressurePsi === 'number') setPressurePsi(p.pressurePsi);
+    if (typeof p.pressureKpa === 'number') setPressureKpa(p.pressureKpa);
     if (typeof p.chamberVolume === 'number') setChamberVolume(p.chamberVolume);
     if (typeof p.compliance === 'number') setCompliance(p.compliance);
     if (typeof p.thickness === 'number') setThickness(p.thickness);
@@ -1345,7 +1345,7 @@ export default function ProfileBuilder({
       motorSpeed,
       tubeId,
       tubeOd,
-      pressurePsi,
+      pressureKpa,
       chamberVolume,
       compliance,
       thickness,
@@ -1664,7 +1664,7 @@ export default function ProfileBuilder({
       default_distance: activeCandidate?.default_distance ?? result.default_distance,
       tube_id: tubeId,
       tube_od: tubeOd,
-      input_pressure_psi: pressurePsi,
+      input_pressure_kpa: pressureKpa,
       compliance,
       chamber_volume_ml: chamberVolume,
       note: `[Builder] candidate ${activeIdx + 1}/${Math.max(1, candidateCount)} vol=${chamberVolume}mL${experienceTag}`,
@@ -1712,7 +1712,7 @@ export default function ProfileBuilder({
     if (!chartSim) return [];
     return chartSim.time_axis_ms.map((t, i) => ({
       timeSec: (t - y0TimeMs) / 1000,
-      /** Gauge vs atmosphere (kPa), same convention as the Pressure slider secondary readout */
+      /** Gauge vs atmosphere (kPa), same convention as the Pressure slider */
       pressureGaugeKpa: chartSim.chamber_pressure_kpa[i] - P_ATM_KPA,
     }));
   }, [chartSim, y0TimeMs]);
@@ -1722,8 +1722,8 @@ export default function ProfileBuilder({
     return (chartSim.equalization_time_ms - y0TimeMs) / 1000;
   }, [chartSim, y0TimeMs]);
 
-  /** Slider secondary uses psi × 6.89476 kPa (gauge); aligns with pressureGaugeKpa on the chart */
-  const supplyGaugeKpa = pressurePsi * 6.89476;
+  /** The Pressure slider is gauge kPa; aligns with pressureGaugeKpa on the chart */
+  const supplyGaugeKpa = pressureKpa;
 
   const builderViewParams = useMemo((): SimulationParams | null => {
     if (!result?.success || !chartSim) return null;
@@ -1739,11 +1739,11 @@ export default function ProfileBuilder({
       // The tube the solve ran with, so the schematic's walls match the simulated gaps.
       tube_id: lastSolveRequestBody?.tube_id ?? tubeId,
       tube_od: lastSolveRequestBody?.tube_od ?? tubeOd,
-      input_pressure_psi: pressurePsi,
+      input_pressure_kpa: pressureKpa,
       compliance,
       chamber_volume_ml: chamberVolume,
     };
-  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressurePsi, compliance, chamberVolume, lastSolveRequestBody]);
+  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressureKpa, compliance, chamberVolume, lastSolveRequestBody]);
 
   const builderCard = (key: BuilderChartSettingsKey) => ({
     settings: builderChartSettings[key],
@@ -1938,8 +1938,8 @@ export default function ProfileBuilder({
               <ParameterSlider label="Motor Speed (RPM)" value={motorSpeed} min={10} max={1000} step={10} onChange={setMotorSpeed} description={builderMotorSpeed} />
               <ParameterSlider label="Tube ID (mm)" value={tubeId} min={1.0} max={12.0} step={0.1} onChange={setTubeId} description={builderTubeId} />
               <ParameterSlider label="Tube OD (mm)" value={tubeOd} min={1.0} max={16.0} step={0.1} onChange={setTubeOd} description={builderTubeOd} />
-              <ParameterSlider label="Pressure (PSI)" value={pressurePsi} min={1} max={150} step={1} onChange={setPressurePsi}
-                secondaryValue={`${(pressurePsi * 6.89476).toFixed(0)} kPa`} description={builderPressure} />
+              <ParameterSlider label="Pressure (kPa)" value={pressureKpa} min={5} max={1050} step={1} inputDecimals={1} onChange={setPressureKpa}
+                description={builderPressure} />
               <ParameterSlider label="Compliance (mm/MPa)" value={compliance} min={0.0} max={5.0} step={0.01} onChange={setCompliance} description={builderCompliance} />
               <ParameterSlider label="Thickness (mm)" value={thickness} min={0.1} max={5.0} step={0.1} onChange={setThickness} description={builderThickness} />
               <ClosureRampToggle value={rampEnabled} onChange={setRampEnabled} />
@@ -2570,7 +2570,7 @@ export default function ProfileBuilder({
                           { label: 'Motor Speed', value: `${n('motorSpeed', 100).toFixed(0)} RPM` },
                           { label: 'Tube ID', value: `${n('tubeId', 2.0).toFixed(2)} mm` },
                           { label: 'Tube OD', value: `${n('tubeOd', 3.0).toFixed(2)} mm` },
-                          { label: 'Pressure', value: `${n('pressurePsi', 15).toFixed(1)} PSI` },
+                          { label: 'Pressure', value: `${n('pressureKpa', 100).toFixed(1)} kPa` },
                           { label: 'Compliance', value: `${n('compliance', 0.9).toFixed(3)} mm/MPa` },
                           { label: 'Thickness', value: `${n('thickness', 2.5).toFixed(2)} mm` },
                           { label: 'Chamber Volume', value: `${n('chamberVolume', 50).toFixed(1)} mL` },

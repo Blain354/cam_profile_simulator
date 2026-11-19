@@ -50,7 +50,7 @@ AXIS_BUSHING_PLAY_MM = 0.25
 # The closure ramp replaces the existing 10 mm straight wall, in the same Y domain.
 CLOSURE_SECTION_LENGTH_MM = 10.0
 
-def _target_free_air_ml_for_chamber_fill(chamber_volume_ml: float, input_pressure_psi: float) -> float:
+def _target_free_air_ml_for_chamber_fill(chamber_volume_ml: float, input_pressure_kpa: float) -> float:
     """
     Mass of air needed to bring a rigid chamber of volume chamber_volume_ml from
     atmospheric pressure to line (absolute) pressure, expressed as equivalent volume
@@ -59,7 +59,7 @@ def _target_free_air_ml_for_chamber_fill(chamber_volume_ml: float, input_pressur
     Ideal gas, isothermal: Δm = (P_up - P_atm) * V / (R T)
     Equivalent free-air volume: Δm * R T / P_atm = V * (P_up - P_atm) / P_atm
     """
-    pressure_pa = input_pressure_psi * 6894.76
+    pressure_pa = input_pressure_kpa * 1000.0
     p_up = P_ATM + pressure_pa
     return float(chamber_volume_ml * (p_up - P_ATM) / P_ATM)
 
@@ -77,7 +77,7 @@ class SimulationParams:
     lead_screw_pitch: float = 0.5    # mm
     tube_id: float = 2.0             # mm
     tube_od: float = 3.0             # mm
-    input_pressure_psi: float = 30.0 # psi
+    input_pressure_kpa: float = 100.0  # kPa gauge
     compliance: float = 0.7          # mm/MPa - tube opening per unit pressure
     chamber_volume_ml: float = 0.0   # mL (0 = static model / infinite volume)
 
@@ -150,7 +150,7 @@ def _max_static_flow_l_min_full_opening(params: SimulationParams) -> float:
     """
     r_inner = params.tube_id / 2.0
     max_area_mm2 = float(np.pi * (r_inner**2))
-    pressure_pa = params.input_pressure_psi * 6894.76
+    pressure_pa = params.input_pressure_kpa * 1000.0
     p_upstream = P_ATM + pressure_pa
     rho_upstream = p_upstream / (R_AIR * T_AMB)
     mdot = _compute_orifice_mass_flow_rate(max_area_mm2, p_upstream, P_ATM)
@@ -198,7 +198,7 @@ def _compute_static_flow_vs_y_arrays(
             gap = distances.min() - bushing_radius + AXIS_BUSHING_PLAY_MM
             min_gaps[i] = gap
 
-    pressure_mpa = params.input_pressure_psi * 0.00689476
+    pressure_mpa = params.input_pressure_kpa * 1e-3
     compliance_opening = params.compliance * pressure_mpa
     r_inner = params.tube_id / 2.0
     flow_area = np.zeros(n_sim)
@@ -211,7 +211,7 @@ def _compute_static_flow_vs_y_arrays(
             area = width * inner_gap
             flow_area[i] = min(area, np.pi * (r_inner**2))
 
-    pressure_pa = params.input_pressure_psi * 6894.76
+    pressure_pa = params.input_pressure_kpa * 1000.0
     p_upstream = P_ATM + pressure_pa
     rho_upstream = p_upstream / (R_AIR * T_AMB)
     static_flow_l_min = np.zeros(n_sim)
@@ -395,7 +395,7 @@ def compute_simulation(params: SimulationParams) -> SimulationResult:
     N_SIM = int(y_positions.size)
     gap_at_Y0 = float(np.interp(0.0, y_positions, min_gaps))
 
-    pressure_pa = params.input_pressure_psi * 6894.76
+    pressure_pa = params.input_pressure_kpa * 1000.0
     P_upstream = P_ATM + pressure_pa
     rho_upstream = P_upstream / (R_AIR * T_AMB)
 
@@ -527,7 +527,7 @@ class SolverParams:
     motor_speed: float = 100.0
     tube_id: float = 2.0
     tube_od: float = 3.0
-    input_pressure_psi: float = 30.0
+    input_pressure_kpa: float = 100.0
     chamber_volume_ml: float = 5.0
     compliance: float = 0.7
     thickness: float = 2.5
@@ -595,7 +595,7 @@ class SolverResult:
 
 
 def _theoretical_mechanical_gap_mm(sp: SolverParams) -> float:
-    pressure_mpa = sp.input_pressure_psi * 0.00689476
+    pressure_mpa = sp.input_pressure_kpa * 1e-3
     return float((sp.tube_od - sp.tube_id) - sp.compliance * pressure_mpa)
 
 
@@ -637,7 +637,7 @@ def _max_default_distance_for_gap_ceiling(
                 lead_screw_pitch=sp.lead_screw_pitch,
                 tube_id=sp.tube_id,
                 tube_od=sp.tube_od,
-                input_pressure_psi=sp.input_pressure_psi,
+                input_pressure_kpa=sp.input_pressure_kpa,
                 compliance=sp.compliance,
                 ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
@@ -992,7 +992,7 @@ def solve_cam_profile(
     gap_band_hi = float(theoretical_gap_mm)
     # Upper bound for binary search on default_distance: never exceed full theoretical opening.
     ceiling_mm = gap_band_hi
-    target_vol = _target_free_air_ml_for_chamber_fill(sp.chamber_volume_ml, sp.input_pressure_psi)
+    target_vol = _target_free_air_ml_for_chamber_fill(sp.chamber_volume_ml, sp.input_pressure_kpa)
     sf = max(0.01, min(1.0, float(sp.default_distance_safety_factor)))
     # Fixed rest gap for whole grid (when not optimizing dd per triple): CAD distance centers the bushing;
     # effective opening includes +AXIS_BUSHING_PLAY_MM in compute_simulation, so subtract it here.
@@ -1093,7 +1093,7 @@ def solve_cam_profile(
                             lead_screw_pitch=sp.lead_screw_pitch,
                             tube_id=sp.tube_id,
                             tube_od=sp.tube_od,
-                            input_pressure_psi=sp.input_pressure_psi,
+                            input_pressure_kpa=sp.input_pressure_kpa,
                             compliance=sp.compliance,
                             ramp_enabled=sp.ramp_enabled,
                             chamber_volume_ml=sp.chamber_volume_ml,
@@ -1181,7 +1181,7 @@ def solve_cam_profile(
                 lead_screw_pitch=sp.lead_screw_pitch,
                 tube_id=sp.tube_id,
                 tube_od=sp.tube_od,
-                input_pressure_psi=sp.input_pressure_psi,
+                input_pressure_kpa=sp.input_pressure_kpa,
                 compliance=sp.compliance,
                 ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
@@ -1222,7 +1222,7 @@ def solve_cam_profile(
                 lead_screw_pitch=sp.lead_screw_pitch,
                 tube_id=sp.tube_id,
                 tube_od=sp.tube_od,
-                input_pressure_psi=sp.input_pressure_psi,
+                input_pressure_kpa=sp.input_pressure_kpa,
                 compliance=sp.compliance,
                 ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,

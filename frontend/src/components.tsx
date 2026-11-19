@@ -22,7 +22,7 @@ export interface SimulationParams {
   lead_screw_pitch: number;
   tube_id: number;
   tube_od: number;
-  input_pressure_psi: number;
+  input_pressure_kpa: number;
   compliance: number;
   chamber_volume_ml: number;
   note: string;
@@ -88,7 +88,7 @@ export const defaultParams: SimulationParams = {
   lead_screw_pitch: 0.5,
   tube_id: 2.0,
   tube_od: 3.0,
-  input_pressure_psi: 15.0,
+  input_pressure_kpa: 100,
   compliance: 0.7,
   chamber_volume_ml: 0.0,
   note: '',
@@ -364,6 +364,7 @@ export function ParameterSlider({
   isModified,
   description,
   disabled = false,
+  inputDecimals,
 }: {
   label: string;
   value: number;
@@ -376,6 +377,8 @@ export function ParameterSlider({
   /** Shown after 500 ms when hovering the control (label + inputs). */
   description?: React.ReactNode;
   disabled?: boolean;
+  /** The number box shows a value off the step (a converted 103.42…) to this many decimals and accepts it. */
+  inputDecimals?: number;
 }) {
   const hintsEnabled = useContext(TooltipHintsEnabledContext);
   const inner = (
@@ -394,10 +397,10 @@ export function ParameterSlider({
         </label>
         <Input
           type="number"
-          value={value}
+          value={inputDecimals != null && !Number.isInteger(value) ? Number(value.toFixed(inputDecimals)) : value}
           min={min}
           max={max}
-          step={step}
+          step={inputDecimals != null ? 'any' : step}
           disabled={disabled}
           onChange={(e) => {
             const v = parseFloat(e.target.value);
@@ -886,7 +889,7 @@ export function ConfigModal({
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Motor speed</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.motor_speed.toFixed(1)} RPM</span></div>
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Thickness</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.thickness.toFixed(3)} mm</span></div>
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Tube</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.tube_id.toFixed(2)} x {previewParams.tube_od.toFixed(2)} mm</span></div>
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Pressure</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.input_pressure_psi.toFixed(1)} PSI</span></div>
+                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Pressure</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.input_pressure_kpa.toFixed(1)} kPa</span></div>
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Compliance</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.compliance.toFixed(3)} mm/MPa</span></div>
                       <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Chamber vol.</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.chamber_volume_ml.toFixed(2)} mL</span></div>
                     </div>
