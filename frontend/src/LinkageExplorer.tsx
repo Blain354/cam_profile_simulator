@@ -1,10 +1,10 @@
-import { Button, Input } from '@blain-projects/ui';
+import { Button, Input, Modal } from '@blain-projects/ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
-import { Pause, Play, Save, Settings, Target, Trash2 } from 'lucide-react';
+import { Pause, Play, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
@@ -41,6 +41,8 @@ export interface LinkageParams {
   member_modulus_mpa: number;
   member_width: number;
   member_thickness: number;
+  contact_deformation: boolean;
+  link_curved: boolean;
 }
 
 interface LinkageSearch {
@@ -75,6 +77,14 @@ interface LinkageResult {
   tip_y: Series;
   gap_a: Series;
   gap_b: Series;
+  gap_loaded_a: Series;
+  gap_loaded_b: Series;
+  contact_solved: boolean;
+  link_arc_half_angle_deg: number;
+  link_arc_radius: number | null;
+  link_arc_sag: number;
+  link_arc_side: number;
+  link_bending_stress_mpa: number | null;
   flow_a: Series;
   flow_b: Series;
   flow_target: Series;
@@ -164,13 +174,15 @@ const COMMON = {
   member_modulus_mpa: 2500,
   member_width: 2.0,
   member_thickness: 3.0,
+  contact_deformation: true,
+  link_curved: false,
 };
 
 // All sets were measured on the concept sketches (about 30 px/mm).
 const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   elbow: { ...COMMON, linkage_type: 'elbow', bar1_length: 13.0, bar2_length: 7.8, lever_length: 16.5, anchor_distance: 2.33, pivot_offset: 3.9, pin_diameter: 1.0 },
   lever: { ...COMMON, linkage_type: 'lever', bar1_length: 6.9, bar2_length: 6.9, lever_length: 16.5, anchor_distance: 5.05, pivot_offset: 3.97, pin_diameter: 0.4 },
-  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0 },
+  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true },
 };
 
 const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3 };
@@ -215,7 +227,86 @@ const CYAN = '#22d3ee';
 const BLUE = '#3b82f6';
 const SCREW_R = 1.5;
 
-interface Pose { anchor: [number, number]; pivotX: number; joint: [number, number] | null; tip: [number, number] | null }
+type Pt = [number, number];
+interface Pose { anchor: Pt; pivotX: number; joint: Pt | null; tip: Pt | null }
+
+/** The contact pad's two ends: a segment centred on the pinch point, square to the foot. A round pin is both ends at the tip. */
+function padEnds(pose: Pose, padLength: number): [Pt, Pt] | null {
+  if (!pose.tip) return null;
+  if (padLength > 0 && pose.joint) {
+    const dx = pose.tip[0] - pose.joint[0], dy = pose.tip[1] - pose.joint[1];
+    const n = Math.hypot(dx, dy);
+    if (n > 1e-6) {
+      const k = padLength / 2 / n;
+      return [[pose.tip[0] - dy * k, pose.tip[1] + dx * k], [pose.tip[0] + dy * k, pose.tip[1] - dx * k]];
+    }
+  }
+  return [pose.tip, pose.tip];
+}
+
+/**
+ * Tube thickness (wall to pin side, mm) along its axis once the pin has pressed into it.
+ * Under the pin the tube takes the pin's shape; on each side the silicone climbs back to its
+ * full diameter along a smooth shoulder, about three quarters of a diameter long for a tube pressed flat.
+ * `ends` are in (distance from the wall, height) coordinates.
+ */
+function tubeProfile(ends: [Pt, Pt] | null, r: number, od: number, y0: number, y1: number): Pt[] {
+  if (!ends) return [[od, y0], [od, y1]];
+  const [[u1, v1], [u2, v2]] = ends;
+  const len = Math.hypot(u2 - u1, v2 - v1);
+  // Unit normal of the pad that faces the wall.
+  let nu = len > 1e-9 ? -(v2 - v1) / len : -1, nv = len > 1e-9 ? (u2 - u1) / len : 0;
+  if (nu > 0) { nu = -nu; nv = -nv; }
+  const indenter = (v: number) => {
+    let u = Infinity;
+    for (const [cu, cv] of ends) {
+      const d = v - cv;
+      if (Math.abs(d) < r) u = Math.min(u, cu - Math.sqrt(r * r - d * d));
+    }
+    if (Math.abs(v2 - v1) > 1e-9) {
+      const t = (v - v1 - r * nv) / (v2 - v1);
+      if (t >= 0 && t <= 1) u = Math.min(u, u1 + t * (u2 - u1) + r * nu);
+    }
+    return u;
+  };
+  const lo = Math.max(y0, Math.min(v1, v2) - r - od), hi = Math.min(y1, Math.max(v1, v2) + r + od);
+  if (hi <= lo) return [[od, y0], [od, y1]];
+  const n = 140;
+  const vs = Array.from({ length: n + 1 }, (_, i) => lo + (hi - lo) * i / n);
+  const pressed = vs.map((v) => Math.max(indenter(v), 0.04));
+  const pts: Pt[] = [[od, y0]];
+  vs.forEach((v, i) => {
+    let h = od;
+    for (let j = 0; j <= n; j++) {
+      const depth = od - pressed[j];
+      if (depth <= 0) continue;
+      const t = Math.min(Math.abs(v - vs[j]) / Math.max(0.25 * od, 0.75 * Math.sqrt(depth * od)), 1);
+      h = Math.min(h, pressed[j] + depth * t * t * (3 - 2 * t));
+    }
+    pts.push([i === 0 || i === n ? od : h, v]);
+  });
+  pts.push([od, y1]);
+  return pts;
+}
+
+/** Points of the curved link from the joint to the carriage pivot (an arc that meets the joint along the foot). */
+function linkPath(joint: Pt, pivot: Pt, halfAngleDeg: number, side: number): string {
+  const pts: Pt[] = [];
+  const alpha = halfAngleDeg * Math.PI / 180;
+  const dx = pivot[0] - joint[0], dy = pivot[1] - joint[1];
+  const l = Math.hypot(dx, dy);
+  if (alpha < 1e-4 || l < 1e-6) {
+    pts.push(joint, pivot);
+  } else {
+    const radius = l / (2 * Math.sin(alpha));
+    for (let i = 0; i <= 24; i++) {
+      const th = -alpha + 2 * alpha * i / 24;
+      const along = l / 2 + radius * Math.sin(th), off = side * radius * (Math.cos(th) - Math.cos(alpha));
+      pts.push([joint[0] + (dx * along - dy * off) / l, joint[1] + (dy * along + dx * off) / l]);
+    }
+  }
+  return pts.map(([px, py], i) => `${i ? 'L' : 'M'}${px.toFixed(3)},${(-py).toFixed(3)}`).join(' ');
+}
 
 function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; data: LinkageResult; y: number; details: boolean }) {
   const lever = params.linkage_type === 'lever';
@@ -238,8 +329,12 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   const poseA: Pose = { anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) };
   const poseB: Pose = { anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) };
 
-  const gapA = interpAt(y, data.Y_positions, data.gap_a);
-  const gapB = interpAt(y, data.Y_positions, data.gap_b);
+  const gapA = interpAt(y, data.Y_positions, data.gap_loaded_a);
+  const gapB = interpAt(y, data.Y_positions, data.gap_loaded_b);
+  // Bars drawn at their real width, kept readable on very thin or very wide sections.
+  const barW = Math.min(Math.max(params.member_width, 0.3), 3);
+  // A top-anchored frame is drawn mirrored, which turns the arc's bulge to the other side.
+  const arcSide = data.link_arc_side * (onTop ? -1 : 1);
   const flowA = interpAt(y, data.Y_positions, data.flow_a) ?? 0;
   const flowB = interpAt(y, data.Y_positions, data.flow_b) ?? 0;
   const forceA = interpAt(y, data.Y_positions, data.force_a);
@@ -252,16 +347,24 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
     [hw, hB - 0.9], [hw - 0.9, hB - 1.5], [-hw + 0.9, hB - 1.5], [-hw, hB - 0.9],
   ].map(([px, py]) => `${px},${-py}`).join(' ');
 
-  const tube = (sign: 1 | -1, flow: number, name: string) => {
+  const tube = (sign: 1 | -1, flow: number, name: string, pose: Pose) => {
     const cx = sign * params.tube_center_x;
     const frac = data.max_flow_l_min > 0 ? Math.min(flow / data.max_flow_l_min, 1) : 0;
+    const od = params.tube_od, skin = (params.tube_od - params.tube_id) / 2;
+    // Work in (distance from the wall, height): the wall is at 0, the tube's free side at OD.
+    const ends = padEnds(pose, pendulum ? params.pad_length : 0);
+    const toWall = ends ? ends.map(([px, py]) => [wall - sign * px, py]) as [Pt, Pt] : null;
+    const profile = tubeProfile(toWall, rPin, od, -1, top + 1);
+    const xy = (u: number, v: number) => `${(sign * (wall - u)).toFixed(3)},${(-v).toFixed(3)}`;
+    const ring = (inner: (h: number) => number, outer: (h: number) => number) =>
+      [...profile.map(([h, v]) => xy(outer(h), v)), ...[...profile].reverse().map(([h, v]) => xy(inner(h), v))].join(' ');
+    // Where the tube is pressed thinner than its two walls the bore is shut and the walls share what is left.
+    const wallSide = (h: number) => Math.min(skin, h / 2), pinSide = (h: number) => Math.max(h - skin, h / 2);
     return (
       <g>
-        <rect x={cx - params.tube_od / 2} y={-top - 1} width={params.tube_od} height={top + 2}
-          fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.1 + 0.3 * frac} />
-        {[-params.tube_od / 2, 0, params.tube_od / 2].map((dx) => (
-          <line key={dx} x1={cx + dx} y1={-top - 1} x2={cx + dx} y2={1} stroke="var(--bui-text)" strokeWidth={0.05} strokeDasharray="0.5 0.12 0.1 0.12" />
-        ))}
+        <polygon points={ring(() => 0, (h) => h)} fill="var(--bui-text)" fillOpacity={0.16} stroke="var(--bui-text)" strokeWidth={0.05} strokeLinejoin="round" />
+        <polygon points={ring(wallSide, pinSide)} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
+        <line x1={cx} y1={-top - 1} x2={cx} y2={1} stroke="var(--bui-text)" strokeOpacity={0.5} strokeWidth={0.04} strokeDasharray="0.5 0.12 0.1 0.12" />
         {label(cx, onTop ? -1.1 : top + 1.1, name, 'var(--bui-text)')}
       </g>
     );
@@ -274,38 +377,30 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
 
   const linkage = (pose: Pose, color: string) => {
     const [axx, ayy] = pose.anchor;
-    // Contact pad: a segment centred on the pinch point, square to the foot.
-    let pad: number[] | null = null;
-    if (pendulum && params.pad_length > 0 && pose.joint && pose.tip) {
-      const dx = pose.tip[0] - pose.joint[0], dy = pose.tip[1] - pose.joint[1];
-      const n = Math.hypot(dx, dy);
-      if (n > 1e-6) {
-        const k = params.pad_length / 2 / n;
-        pad = [pose.tip[0] - dy * k, pose.tip[1] + dx * k, pose.tip[0] + dy * k, pose.tip[1] - dx * k];
-      }
-    }
+    const ends = pendulum && params.pad_length > 0 ? padEnds(pose, params.pad_length) : null;
+    const link = pose.joint ? linkPath(pose.joint, [pose.pivotX, hB], data.link_arc_half_angle_deg, arcSide) : '';
+    // The hinged body: the arm, and for the pendulum its foot, as one rigid piece.
+    const body = pose.joint && pose.tip
+      ? (pendulum ? [pose.anchor, pose.joint, pose.tip] : [pose.anchor, pose.tip]).map(([px, py]) => `${px},${-py}`).join(' ')
+      : '';
     return (
       <g>
         {/* Ground mark at the fixed anchor */}
         <line x1={axx - 0.6} y1={-ayy} x2={axx + 0.6} y2={-ayy} stroke="var(--bui-text)" strokeWidth={0.14} />
         {pose.joint && pose.tip && (
           <>
-            {pendulum ? (
-              <>
-                <line x1={axx} y1={-ayy} x2={pose.joint[0]} y2={-pose.joint[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
-                <line x1={pose.joint[0]} y1={-pose.joint[1]} x2={pose.tip[0]} y2={-pose.tip[1]} stroke={color} strokeWidth={0.5} strokeLinecap="round" />
-              </>
-            ) : (
-              <line x1={axx} y1={-ayy} x2={pose.tip[0]} y2={-pose.tip[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
-            )}
-            <line x1={pose.pivotX} y1={-hB} x2={pose.joint[0]} y2={-pose.joint[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
-            {(lever || pendulum) && <circle cx={pose.joint[0]} cy={-pose.joint[1]} r={0.2} fill={color} />}
-            {pad
-              ? <line x1={pad[0]} y1={-pad[1]} x2={pad[2]} y2={-pad[3]} stroke={color} strokeWidth={2 * rPin} strokeLinecap="round" />
-              : <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill="var(--bui-surface)" stroke={color} strokeWidth={0.1} />}
+            {/* Real section of the bars, then their centre lines */}
+            <polyline points={body} fill="none" stroke={color} strokeOpacity={0.25} strokeWidth={barW} strokeLinecap="round" strokeLinejoin="round" />
+            <path d={link} fill="none" stroke={color} strokeOpacity={0.25} strokeWidth={barW} strokeLinecap="round" />
+            <polyline points={body} fill="none" stroke={color} strokeWidth={0.14} strokeLinecap="round" strokeLinejoin="round" />
+            <path d={link} fill="none" stroke={color} strokeWidth={0.14} strokeLinecap="round" />
+            {(lever || pendulum) && <circle cx={pose.joint[0]} cy={-pose.joint[1]} r={0.26} fill="var(--bui-surface)" stroke={color} strokeWidth={0.1} />}
+            {ends
+              ? <line x1={ends[0][0]} y1={-ends[0][1]} x2={ends[1][0]} y2={-ends[1][1]} stroke={color} strokeWidth={2 * rPin} strokeLinecap="round" />
+              : <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill={color} />}
           </>
         )}
-        <circle cx={axx} cy={-ayy} r={0.22} fill={color} />
+        <circle cx={axx} cy={-ayy} r={0.3} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />
         <circle cx={pose.pivotX} cy={-hB} r={0.42} fill={BLUE} />
       </g>
     );
@@ -317,8 +412,11 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
       className="w-full h-full select-none" role="img" aria-label="Linkage schematic">
       {/* Fixed base: floor, ceiling and the two walls the tubes rest on */}
       <rect x={-wall} y={-top} width={2 * wall} height={top} fill="var(--bui-muted)" fillOpacity={0.08} stroke="var(--bui-text)" strokeWidth={0.14} />
-      {tube(-1, flowA, 'A  supply')}
-      {tube(1, flowB, 'B  exhaust')}
+      {[-1, 1].map((side) => (
+        <rect key={side} x={side < 0 ? -wall - 0.7 : wall} y={-top - 1} width={0.7} height={top + 2} fill="var(--bui-text)" fillOpacity={0.35} />
+      ))}
+      {tube(-1, flowA, 'A  supply', poseA)}
+      {tube(1, flowB, 'B  exhaust', poseB)}
 
       {/* Lead screw and carriage */}
       <rect x={-SCREW_R} y={-top - 0.6} width={2 * SCREW_R} height={top + 1.2} rx={0.2} fill="#d4a94a" fillOpacity={0.85} />
@@ -383,6 +481,18 @@ function RangeRow({ label, min, max, onMin, onMax }: { label: string; min: numbe
   );
 }
 
+function Switch({ label, on, onChange, title }: { label: string; on: boolean; onChange: (on: boolean) => void; title?: string }) {
+  return (
+    <Button variant="ghost" type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)} title={title}
+      className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${on ? 'border-amber-500/50 text-amber-300' : 'border-neutral-700 text-neutral-300'}`}>
+      <span className="text-left">{label}</span>
+      <span aria-hidden="true" className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${on ? 'bg-amber-600' : 'bg-neutral-600'}`}>
+        <span className={`h-4 w-4 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : ''}`} />
+      </span>
+    </Button>
+  );
+}
+
 function ChartCard({ title, children }: { title: string; children: ReactElement }) {
   return (
     <div className="bg-neutral-800 p-3 rounded-xl border border-neutral-700 flex flex-col min-h-0">
@@ -391,6 +501,145 @@ function ChartCard({ title, children }: { title: string; children: ReactElement 
         <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={170}>{children}</ResponsiveContainer>
       </div>
     </div>
+  );
+}
+
+// ─── Onshape variable table ──────────────────────────────────────
+
+interface OnshapeRow {
+  name: string;
+  key: string;
+  label: string;
+  new_expression: string;
+  current_expression: string | null;
+  where: 'variable_studio' | 'part_studio' | null;
+  status: 'update' | 'same' | 'missing' | 'written' | 'created' | 'skipped' | 'error';
+  detail: string;
+}
+interface OnshapeTable { rows: OnshapeRow[]; api_calls: number; has_variable_studio: boolean; has_part_studio: boolean; document_url: string }
+
+async function onshapeCall(path: string, body: unknown): Promise<OnshapeTable> {
+  const res = await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => (typeof j.detail === 'string' ? j.detail : null)).catch(() => null);
+    throw new Error(detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Shows what the Onshape variables hold against the values on screen, then overwrites the ones kept ticked. */
+function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClose: () => void; params: LinkageParams }) {
+  const [table, setTable] = useState<OnshapeTable | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [createMissing, setCreateMissing] = useState(false);
+  const [busy, setBusy] = useState<'read' | 'write' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let stale = false;
+    setTable(null); setError(null); setDone(false); setCreateMissing(false); setBusy('read');
+    onshapeCall('/api/linkage/onshape/preview', params)
+      .then((t) => { if (stale) return; setTable(t); setPicked(new Set(t.rows.filter((r) => r.status === 'update').map((r) => r.name))); })
+      .catch((e) => { if (!stale) setError(e instanceof Error ? e.message : 'Could not read the Onshape variables.'); })
+      .finally(() => { if (!stale) setBusy(null); });
+    return () => { stale = true; };
+    // Read once per opening: the values are those on screen when the button was pressed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const canPick = (r: OnshapeRow) => r.status === 'update' || (r.status === 'missing' && createMissing && !!table?.has_variable_studio);
+  const chosen = table ? table.rows.filter((r) => canPick(r) && picked.has(r.name)) : [];
+  const missing = table ? table.rows.filter((r) => r.status === 'missing').length : 0;
+  const toggle = (name: string) => setPicked((p) => { const n = new Set(p); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+
+  const write = async () => {
+    setBusy('write'); setError(null);
+    try {
+      setTable(await onshapeCall('/api/linkage/onshape/apply', { ...params, names: chosen.map((r) => r.name), create_missing: createMissing }));
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The write to Onshape failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const statusText: Record<OnshapeRow['status'], [string, string]> = {
+    update: ['will change', 'text-amber-300'], same: ['already equal', 'text-neutral-500'], missing: ['not in Onshape', 'text-neutral-500'],
+    written: ['written', 'text-emerald-400'], created: ['created', 'text-emerald-400'], skipped: ['left as is', 'text-neutral-500'], error: ['failed', 'text-red-400'],
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} size="lg" closeOnOverlayClick={busy == null} closeOnEsc={busy == null} showClose={busy == null}
+      title="Write these dimensions to the Onshape variable table">
+      <div className="space-y-3 text-sm">
+        {busy === 'read' && <p className="text-neutral-400" role="status">Reading the Onshape variables…</p>}
+        {error && <p className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{error}</p>}
+        {table && (
+          <>
+            <p className="text-xs leading-snug text-neutral-400">
+              {done
+                ? 'Done. Onshape regenerates the parts that use these variables the next time the document is open.'
+                : 'Variables are matched by name. Only the ticked ones are overwritten; every other variable in the table is left exactly as it is.'}
+            </p>
+            <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-neutral-700">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-neutral-900 text-left text-neutral-400">
+                  <tr><th className="p-2" /><th className="p-2">Onshape variable</th><th className="p-2">In Onshape now</th><th className="p-2">From the simulator</th><th className="p-2">Status</th></tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((r) => (
+                    <tr key={r.name} className="border-t border-neutral-800">
+                      <td className="p-2">
+                        {!done && <input type="checkbox" aria-label={`Write ${r.name}`} checked={canPick(r) && picked.has(r.name)} disabled={!canPick(r) || busy != null}
+                          onChange={() => toggle(r.name)} className="accent-amber-500" />}
+                      </td>
+                      <td className="p-2"><span className="font-mono text-neutral-100">#{r.name}</span><span className="block text-[10px] text-neutral-500">{r.label}</span></td>
+                      <td className="p-2 font-mono text-neutral-300">{r.current_expression ?? '—'}</td>
+                      <td className="p-2 font-mono text-neutral-100">{r.new_expression}</td>
+                      <td className={`p-2 ${statusText[r.status][1]}`} title={r.detail || undefined}>
+                        {statusText[r.status][0]}{r.status === 'error' && r.detail ? `: ${r.detail}` : ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!done && missing > 0 && (
+              <label className={`flex items-start gap-2 text-xs ${table.has_variable_studio ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                <input type="checkbox" checked={createMissing} disabled={!table.has_variable_studio || busy != null} className="mt-0.5 accent-amber-500"
+                  onChange={(e) => {
+                    setCreateMissing(e.target.checked);
+                    if (e.target.checked) setPicked((p) => new Set([...p, ...table.rows.filter((r) => r.status === 'missing').map((r) => r.name)]));
+                  }} />
+                <span>
+                  {table.has_variable_studio
+                    ? `Also create the ${missing} variable${missing > 1 ? 's' : ''} Onshape does not have yet, in the Variable Studio, under the names shown.`
+                    : `${missing} variable${missing > 1 ? 's are' : ' is'} not in Onshape. Create them there under the names shown and they will be picked up next time.`}
+                </span>
+              </label>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <a href={table.document_url} target="_blank" rel="noreferrer" className="text-xs text-amber-300 underline">Open the Onshape document</a>
+              <div className="flex gap-2">
+                <Button variant="ghost" type="button" onClick={onClose} disabled={busy != null} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-bold text-neutral-300">
+                  {done ? 'Close' : 'Cancel'}
+                </Button>
+                {!done && (
+                  <Button variant="ghost" type="button" onClick={write} disabled={busy != null || chosen.length === 0}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-bold text-neutral-900 disabled:opacity-40">
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    {busy === 'write' ? 'Writing…' : chosen.length ? `Overwrite ${chosen.length} variable${chosen.length > 1 ? 's' : ''} in Onshape` : 'Nothing to write'}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -416,6 +665,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   /** What the active profile holds on the server, to flag unsaved changes. Unknown after a page reload. */
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [profileMessage, setProfileMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [onshapeOpen, setOnshapeOpen] = useState(false);
   /** Time into the cycle 0, +stroke, 0, -stroke, 0 while oscillating (s). */
   const [cycleT, setCycleT] = useState<number | null>(null);
   /** Distance run in the current cycle (mm), plus the live speed and stroke for the animation loop. */
@@ -592,7 +842,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   };
 
   const chartData = useMemo(() => (data?.Y_positions ?? []).map((yy, i) => ({
-    y: yy, flowA: data!.flow_a[i], flowB: data!.flow_b[i], target: data!.flow_target[i], gapA: data!.gap_a[i], gapB: data!.gap_b[i],
+    y: yy, flowA: data!.flow_a[i], flowB: data!.flow_b[i], target: data!.flow_target[i], gapA: data!.gap_loaded_a[i], gapB: data!.gap_loaded_b[i], rigidA: data!.gap_a[i],
     forceA: data!.force_a[i] ?? null, forceB: data!.force_b[i] ?? null, thrust: data!.thrust[i] ?? null,
     flexA: data!.flex_a[i] ?? null, flexB: data!.flex_b[i] ?? null, flexLink: data!.flex_link_a[i] ?? null, flexBend: data!.flex_bend_a[i] ?? null,
   })), [data]);
@@ -644,6 +894,12 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <Save className="w-3.5 h-3.5" /> {activeProfile && profileName.trim() === activeProfile ? 'Update' : 'Save'}
             </Button>
           </div>
+          <Button variant="ghost" type="button" onClick={() => setOnshapeOpen(true)} disabled={!data || data.Y_positions.length === 0}
+            title="Compare these dimensions with the Onshape variable table, then overwrite the variables there"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40">
+            <UploadCloud className="w-3.5 h-3.5" /> Write to Onshape variables
+          </Button>
+          <OnshapeVariablesModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params} />
           {(profileMessage || profileDirty) && (
             <p className={`text-xs leading-snug ${profileMessage && !profileMessage.ok ? 'text-red-400' : profileDirty ? 'text-amber-400' : 'text-emerald-400'}`} role="status">
               {profileDirty ? `Unsaved changes to "${activeProfile}".` : profileMessage?.text}
@@ -680,6 +936,18 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                     min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)} disabled={heightFixed}
                     secondaryValue={heightFixed ? 'from height' : undefined}
                     description="Carriage pivot (blue) to the joint at the end of the arm. Computed when the total height is fixed." />
+                  <div className="space-y-1.5">
+                    <Switch label="Curved link, tangent to the foot" on={params.link_curved} onChange={(v) => set('link_curved', v)}
+                      title="The link becomes an arc of a circle from the carriage pivot to the joint, arriving along the foot at Y = 0. The pivots do not move, so the opening law is the same; the arc bends under the pull, which is counted in the flex and the stresses." />
+                    {params.link_curved && data && data.link_arc_radius != null && (
+                      <p className="text-[10px] leading-snug text-neutral-400">
+                        {`Arc radius ${data.link_arc_radius.toFixed(2)} mm, ${data.link_arc_sag.toFixed(2)} mm off the straight line, meeting the joint at ${data.link_arc_half_angle_deg.toFixed(0)}° from it.`}
+                      </p>
+                    )}
+                    {params.link_curved && data && data.link_arc_radius == null && (
+                      <p className="text-[10px] leading-snug text-neutral-400">The foot is already in line with the link, or has no length: the link stays straight.</p>
+                    )}
+                  </div>
                   <ParameterSlider label="Foot, f (mm)" value={params.foot_length} min={0} max={8} step={0.05} onChange={(v) => set('foot_length', v)}
                     description="Rigid foot from the joint to the centre of the pin that presses on the tube." />
                   <ParameterSlider label="Foot angle (deg)" value={params.foot_angle_deg} min={0} max={180} step={1} onChange={(v) => set('foot_angle_deg', v)}
@@ -803,6 +1071,15 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <p className="text-[10px] leading-snug text-neutral-400">
                 Forces are for the pressure set under Pneumatic system, taken as the maximum the seal must hold. The defaults here are assumed: set them to the real motor and bars.
               </p>
+              <div className="space-y-1.5">
+                <Switch label="Tube pushes the pin back" on={params.contact_deformation} onChange={(v) => set('contact_deformation', v)}
+                  title="On: at each position the crushed tube and the flexing bars are balanced, and the flow, the dead band and the response use the gap that results. Off: rigid bars, the gap is the bar geometry alone." />
+                <p className="text-[10px] leading-snug text-neutral-400">
+                  {params.contact_deformation
+                    ? 'Flow, dead band and response use the gap left once the crushed tube and the flexing bars balance. The optimizer still searches on rigid bars.'
+                    : 'Rigid bars: the gap is the bar geometry alone.'}
+                </p>
+              </div>
               <ParameterSlider label="Motor torque (mN·m)" value={params.motor_torque_mnm} min={1} max={300} step={1} onChange={(v) => set('motor_torque_mnm', v)}
                 secondaryValue={`${(params.motor_torque_mnm / 98.0665).toFixed(2)} kg·cm`}
                 description="Torque the gearmotor gives at its output shaft at the firmware's current limit (150 mA on the 100 RPM profile), not its stall torque." />
@@ -847,6 +1124,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <StatRow label="Bar stiffness at the pin" value={n2(data.pin_stiffness, 'N/mm', 0)} />
               <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />
               <StatRow label="Worst side load on carriage" value={n2(data.max_side_load, 'N', 1)} />
+              {data.link_bending_stress_mpa != null && (
+                <StatRow label="Curved link bending" value={`${data.link_bending_stress_mpa.toFixed(1)} MPa, ${data.link_arc_sag.toFixed(2)} mm off line`} />
+              )}
               <StatRow label="Worst bending / axial stress" value={`${data.max_bending_stress_mpa!.toFixed(1)} / ${data.max_axial_stress_mpa!.toFixed(1)} MPa`} />
               {data.buckling_factor != null && (
                 <StatRow label="Buckling margin" value={<span className={data.buckling_factor < 3 ? 'text-amber-400' : undefined}>{`× ${data.buckling_factor.toFixed(1)}`}</span>} />
@@ -947,6 +1227,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${Number(v).toFixed(3)} mm`} labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`} />
             {data && <ReferenceLine y={data.closed_gap} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'closed', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />}
             {data && <ReferenceLine y={data.full_open_gap} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'full bore', fill: '#10b981', fontSize: 11, position: 'insideTopRight' }} />}
+            <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+            {data?.contact_solved && <Line type="linear" dataKey="rigidA" name="Tube A, rigid bars" stroke={ORANGE} strokeOpacity={0.6} strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} />}
             <Line type="linear" dataKey="gapA" name="Tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
             <Line type="linear" dataKey="gapB" name="Tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
             <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />

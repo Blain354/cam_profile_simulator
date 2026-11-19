@@ -82,7 +82,7 @@ class LinkageTests(unittest.TestCase):
         self.assertIsNone(short.jam_y)
         # Just closed against the pressure takes less than closed with the preload on top.
         self.assertLess(short.seal_force_min, short.seal_force)
-        self.assertAlmostEqual(compute_linkage(replace(PENDULUM, stroke=0.3, preload=0.0)).seal_force, short.seal_force_min, places=6)
+        self.assertAlmostEqual(compute_linkage(replace(PENDULUM, stroke=0.3, preload=0.0, contact_deformation=False)).seal_force, short.seal_force_min, places=6)
 
     def test_forces_absent_rather_than_infinite(self):
         for change in ({"compliance": 0.0}, {"pin_diameter": 0.0}, {"member_width": 0.0}):
@@ -215,6 +215,59 @@ class LinkageTests(unittest.TestCase):
             self.assertAlmostEqual(gap, pad.wall_x + tx - 0.5 * tilt - PENDULUM.pin_diameter / 2, places=9)
         # The other linkage types ignore the pad.
         self.assertEqual(compute_linkage(replace(LEVER, pad_length=1.0)).gap_a, compute_linkage(LEVER).gap_a)
+
+    def test_tube_pushes_the_pin_back_until_bars_and_tube_balance(self):
+        p = replace(PENDULUM, pad_length=1.0, stroke=0.3)
+        rigid, r = compute_linkage(replace(p, contact_deformation=False)), compute_linkage(p)
+        self.assertTrue(r.contact_solved)
+        self.assertFalse(rigid.contact_solved)
+        # Same bars, same geometry: only the loaded gap moves, and only away from the wall.
+        self.assertEqual(r.gap_a, rigid.gap_a)
+        self.assertEqual(rigid.gap_loaded_a, rigid.gap_a)
+        gap, loaded, flex, force = (np.array(v, dtype=float) for v in (r.gap_a, r.gap_loaded_a, r.flex_a, r.force_a))
+        np.testing.assert_allclose(loaded, gap + flex, atol=1e-12)
+        self.assertTrue(np.all(flex >= 0.0))
+        self.assertEqual(r.gap_loaded_b, r.gap_loaded_a[::-1])
+        # The pin gives way, so it presses less than rigid bars would and the tube opens sooner.
+        i0 = len(r.Y_positions) // 2
+        self.assertLess(r.seal_force, rigid.seal_force)
+        self.assertLess(r.y_open, rigid.y_open)
+        self.assertEqual(r.flow_a[i0], 0.0)
+        # Balance: the push-back is the pin force times the bars' compliance at the pin.
+        self.assertAlmostEqual(flex[i0], force[i0] / r.pin_stiffness, places=7)
+        # Softer bars give way more, and the tube opens sooner still.
+        soft = compute_linkage(replace(p, member_width=0.4))
+        self.assertGreater(soft.flex_y0, r.flex_y0)
+        self.assertGreater(soft.gap_loaded_a[i0], r.gap_loaded_a[i0])
+        self.assertLess(soft.y_open, r.y_open)
+
+    def test_curved_link_keeps_the_kinematics_and_bends(self):
+        p = replace(PENDULUM, pad_length=1.0, stroke=0.3)
+        straight, r = compute_linkage(p), compute_linkage(replace(p, link_curved=True))
+        self.assertEqual(r.gap_a, straight.gap_a)
+        self.assertEqual(r.joint_x, straight.joint_x)
+        self.assertEqual(straight.link_arc_half_angle_deg, 0.0)
+        self.assertIsNone(straight.link_bending_stress_mpa)
+        alpha = math.radians(r.link_arc_half_angle_deg)
+        self.assertTrue(0.0 < alpha <= math.pi / 2 + 1e-9)
+        self.assertAlmostEqual(2.0 * r.link_arc_radius * math.sin(alpha), p.bar1_length, places=9)
+        self.assertAlmostEqual(r.link_arc_sag, r.link_arc_radius * (1.0 - math.cos(alpha)), places=9)
+        self.assertIn(r.link_arc_side, (-1.0, 1.0))
+        # The arc meets the joint along the foot, at Y = 0.
+        i0 = len(r.Y_positions) // 2
+        cx, cy, px, py = r.joint_x[i0], r.joint_y[i0], r.tip_x[i0], r.tip_y[i0]
+        bx, by = p.pivot_offset, r.pivot_height_y0
+        chord = math.atan2(by - cy, bx - cx)
+        tangent = chord + r.link_arc_side * alpha
+        foot = math.atan2(py - cy, px - cx)
+        self.assertAlmostEqual(abs(math.sin(tangent - foot)), 0.0, places=9)
+        # A curved bar bends under the pull a straight one only stretches under.
+        self.assertGreater(r.link_bending_stress_mpa, 0.0)
+        self.assertGreater(r.flex_y0, straight.flex_y0)
+        self.assertLess(r.pin_stiffness, straight.pin_stiffness)
+        self.assertGreaterEqual(r.max_bending_stress_mpa, r.link_bending_stress_mpa)
+        # The other types have no foot to be tangent to.
+        self.assertEqual(compute_linkage(replace(LEVER, link_curved=True)).link_arc_half_angle_deg, 0.0)
 
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))

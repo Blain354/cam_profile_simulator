@@ -86,6 +86,8 @@ class LinkageParams:
     member_modulus_mpa: float = 2500.0  # MPa, bar material (printed plastic)
     member_width: float = 2.0        # mm, bar section in the plane of the mechanism (the bending direction)
     member_thickness: float = 3.0    # mm, bar section out of the plane
+    contact_deformation: bool = True  # the tube pushes the pin back until bars and tube balance; False = rigid bars
+    link_curved: bool = False        # link drawn as an arc that meets the joint along the foot (pendulum only)
 
 
 @dataclass
@@ -97,8 +99,17 @@ class LinkageResult:
     joint_y: List[Optional[float]] = field(default_factory=list)
     tip_x: List[Optional[float]] = field(default_factory=list)
     tip_y: List[Optional[float]] = field(default_factory=list)
-    gap_a: List[Optional[float]] = field(default_factory=list)
+    gap_a: List[Optional[float]] = field(default_factory=list)      # pin to wall from the bar geometry alone
     gap_b: List[Optional[float]] = field(default_factory=list)
+    gap_loaded_a: List[Optional[float]] = field(default_factory=list)   # the same once the tube has pushed the pin back
+    gap_loaded_b: List[Optional[float]] = field(default_factory=list)
+    contact_solved: bool = False     # flow, dead band and response come from the loaded gap
+    # Curved link (see _link_arc). Zero angle = straight bar.
+    link_arc_half_angle_deg: float = 0.0   # angle between the chord B-C and the arc's tangent at the joint
+    link_arc_radius: Optional[float] = None
+    link_arc_sag: float = 0.0              # mm, arc's farthest point from the chord
+    link_arc_side: float = 0.0             # +1 / -1: side of the chord C->B the arc bulges to, in this frame
+    link_bending_stress_mpa: Optional[float] = None   # worst bending in the curved link
     flow_a: List[Optional[float]] = field(default_factory=list)
     flow_b: List[Optional[float]] = field(default_factory=list)
     flow_target: List[Optional[float]] = field(default_factory=list)
@@ -294,6 +305,27 @@ def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: 
 N_FOOT = 161
 
 
+def _link_arc(p: LinkageParams, l1, cx, cy, bx, by, px, py) -> Tuple[float, float]:
+    """Curved link: the arc of a circle from the carriage pivot B to the joint C that meets C
+    along the foot C-P, at the Y = 0 pose. Returns (alpha, side): alpha (rad) is the angle
+    between the chord and the arc's tangent at C, side the sign of the bulge about C->B.
+
+    The link stays a pin-ended bar of chord l1, so the kinematics do not change. What changes
+    is that the pull T along the chord now bends it, by T times the offset from the chord.
+    """
+    if not (p.link_curved and p.linkage_type == TYPE_PENDULUM and p.foot_length > 0):
+        return 0.0, 0.0
+    ux, uy = (bx - cx) / l1, (by - cy) / l1
+    fx, fy = (px - cx) / p.foot_length, (py - cy) / p.foot_length
+    dot, cross = ux * fx + uy * fy, ux * fy - uy * fx
+    if dot < 0.0:   # the link leaves the joint on the side of the foot line that faces the carriage
+        dot, cross = -dot, -cross
+    alpha = float(np.arctan2(abs(cross), dot))
+    if not np.isfinite(alpha) or alpha < 1e-4:
+        return 0.0, 0.0
+    return alpha, float(np.sign(cross))
+
+
 def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarray):
     """Pin force (N) on one tube for a pin-to-wall gap, as (flatten, squeeze, pressure) parts.
 
@@ -355,6 +387,8 @@ def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarr
 def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap, closed_gap, half, phi):
     """Pin forces, screw thrust and bar flex over the stroke; fills the force fields of `out`.
 
+    Returns the pin-to-wall gap once the tube has pushed the pin back (None without forces).
+
     Statics of the hinged body about its anchor A: the tube pushes the pin away from the
     wall with F, the link (a two-force bar along B-C) holds it with a tension T. The
     second linkage is the first at -Y with its pull on the carriage reversed.
@@ -362,14 +396,18 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     """
     if p.compliance <= 0:
         out.forces_message = "No forces: they are derived from the tube compliance, which is 0."
-        return
+        return None
     if p.pin_diameter <= 0 and half == 0.0:
         out.forces_message = "No forces: the pin has no diameter and no pad, so no contact area."
-        return
+        return None
     if min(p.member_modulus_mpa, p.member_width, p.member_thickness) <= 0:
         out.forces_message = "No forces: the bar section and modulus must be positive."
-        return
+        return None
     wall = p.tube_od - p.tube_id
+    i0 = N_SAMPLES // 2
+    alpha, side = (0.0, 0.0)
+    if ok[i0]:
+        alpha, side = _link_arc(p, l1, jx[i0], jy[i0], xb, h0, tx[i0], ty[i0])
     with np.errstate(invalid="ignore", divide="ignore"):
         tilt = np.arctan2(jy, jx - xa) + phi
         st, ct = np.abs(np.sin(tilt)), np.abs(np.cos(tilt))
@@ -388,10 +426,40 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
         area = p.member_width * p.member_thickness
         inertia = p.member_thickness * p.member_width ** 3 / 12.0
         e = p.member_modulus_mpa
-        c_link = t_unit ** 2 * l1 / (e * area)
+        if alpha > 0.0:
+            # Pin-ended arc under a pull T along its chord: moment T * offset, so the chord
+            # gives by T * integral(offset^2 ds) / (E I) on top of the stretch.
+            radius = l1 / (2.0 * np.sin(alpha))
+            sag = radius * (1.0 - np.cos(alpha))
+            offset_sq = radius ** 3 * (alpha * (1.0 + 2.0 * np.cos(alpha) ** 2) - 3.0 * np.sin(alpha) * np.cos(alpha))
+            c_chord = 2.0 * alpha * radius / (e * area) + offset_sq / (e * inertia)
+            out.link_arc_half_angle_deg, out.link_arc_radius = float(np.degrees(alpha)), float(radius)
+            out.link_arc_sag, out.link_arc_side = float(sag), side
+        else:
+            sag, c_chord = 0.0, l1 / (e * area)
+        c_link = t_unit ** 2 * c_chord
         c_bend = arm ** 2 * (l2 + np.hypot(tx - jx, ty - jy)) / (3.0 * e * inertia)
         c_all = c_link + c_bend + axial_unit ** 2 * l2 / (e * area)   # mm of pin per N, from the strain energy
-        flex = force * c_all / (1.0 + np.clip(stiff, 0.0, None) * c_all)
+        if p.contact_deformation:
+            # The tube pushes the pin back by `flex` until the bars' spring and the tube agree:
+            # flex = c_all * F(gap + flex). F mostly falls as the gap opens, so the root is near
+            # the push-back the rigid force would give; just at closure the air let back into
+            # the bore makes F rise a little, hence the widening of the bracket.
+            c_safe = np.where(np.isfinite(c_all) & ok, c_all, 0.0)
+            lo, hi = np.zeros_like(g), c_safe * np.nan_to_num(sum(parts))
+            for _ in range(8):
+                hi = np.where(hi < c_safe * sum(_pinch_force(p, g + hi, st0, ct0)), 2.0 * hi + 1e-6, hi)
+            for _ in range(40):
+                mid = 0.5 * (lo + hi)
+                short = mid < c_safe * sum(_pinch_force(p, g + mid, st0, ct0))
+                lo, hi = np.where(short, mid, lo), np.where(short, hi, mid)
+            pushed = 0.5 * (lo + hi)
+            parts = _pinch_force(p, g + pushed, st0, ct0)
+            force = np.where(ok, sum(parts), np.nan)
+            flex = np.where(ok, pushed, np.nan)
+        else:
+            flex = force * c_all / (1.0 + np.clip(stiff, 0.0, None) * c_all)
+        loaded = gap + flex
         pull = sgn * -t_unit * uy * force                # along +Y, linkage A on the carriage
     thrust = pull - pull[::-1]
     # Past the travel where a pin has crushed its tube to the wall nothing moves any more:
@@ -402,19 +470,19 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
         past = np.abs(y) >= out.jam_y
         force, flex, thrust = (np.where(past, np.nan, v) for v in (force, flex, thrust))
 
-    i0 = N_SAMPLES // 2
     out.force_a, out.force_b = _nan_to_none(force), _nan_to_none(force[::-1])
     out.thrust = _nan_to_none(np.abs(thrust))
     out.flex_a, out.flex_b = _nan_to_none(flex), _nan_to_none(flex[::-1])
     out.flex_link_a, out.flex_bend_a = _nan_to_none(flex * c_link / c_all), _nan_to_none(flex * c_bend / c_all)
     out.tube_modulus_mpa = wall / p.compliance
     if not ok[i0] or not np.isfinite(force[i0]):
-        return
+        return loaded
     out.seal_force = float(force[i0])
     out.seal_force_min = float(sum(_pinch_force(p, np.array([closed_gap]), st0[i0:i0 + 1], ct0[i0:i0 + 1]))[0])
     out.seal_force_flatten, out.seal_force_squeeze, out.seal_force_pressure = (float(v[i0]) for v in parts)
     out.max_pinch_force = float(np.nanmax(force))
-    out.max_wall_strain = float(np.clip(wall - np.nanmin(np.where(np.isfinite(force), gap, np.nan)), 0.0, wall) / wall)
+    squeezed_to = loaded if p.contact_deformation else gap
+    out.max_wall_strain = float(np.clip(wall - np.nanmin(np.where(np.isfinite(force), squeezed_to, np.nan)), 0.0, wall) / wall)
     out.thrust_y0 = float(abs(thrust[i0]))
     out.thrust_needed = float(np.nanmax(np.abs(thrust))) if np.any(np.isfinite(thrust)) else out.thrust_y0
 
@@ -434,7 +502,11 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     tension = t_unit * force
     out.max_link_force = float(tension[np.nanargmax(np.abs(tension))])
     out.max_side_load = float(np.nanmax(np.abs(tension * ux)))
-    out.max_bending_stress_mpa = float(np.nanmax(np.abs(arm) * force) * 6.0 / (p.member_thickness * p.member_width ** 2))
+    section = p.member_thickness * p.member_width ** 2 / 6.0
+    out.max_bending_stress_mpa = float(np.nanmax(np.abs(arm) * force) / section)
+    if alpha > 0.0:
+        out.link_bending_stress_mpa = float(np.nanmax(np.abs(tension)) * sag / section)
+        out.max_bending_stress_mpa = max(out.max_bending_stress_mpa, out.link_bending_stress_mpa)
     compression = np.nanmax(np.stack([-tension, axial_unit * force]), axis=1)   # link, arm
     out.max_axial_stress_mpa = float(max(np.nanmax(np.abs(tension)), np.nanmax(np.abs(axial_unit * force))) / area)
     euler = np.pi ** 2 * e * min(inertia, p.member_width * p.member_thickness ** 3 / 12.0)
@@ -445,6 +517,7 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     held = (wall - (gap[i0] + flex[i0])) / p.compliance          # MPa
     out.seal_pressure_y0_psi = float(max(held, 0.0) / 0.00689476)
     out.sealed_after_flex = bool(gap[i0] + flex[i0] <= closed_gap + 1e-12)
+    return loaded
 
 
 def compute_linkage(p: LinkageParams) -> LinkageResult:
@@ -482,8 +555,52 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
     jx, jy = np.where(ok, jx, np.nan), np.where(ok, jy, np.nan)
     tx, ty = _tip(xa, jx, jy, reach / l2, delta)
     gap_a = wall_x + tx - _pad_reach(xa, jx, jy, half, phi) - r_pin
-    gap_b = gap_a[::-1]
-    area_a = np.where(ok, _area_mm2(p, np.nan_to_num(gap_a, nan=0.0), closed_gap), 0.0)
+    i0 = N_SAMPLES // 2
+    lo = hi = i0
+    while lo > 0 and ok[lo - 1]:
+        lo -= 1
+    while hi < N_SAMPLES - 1 and ok[hi + 1]:
+        hi += 1
+    feasible = bool(np.all(ok))
+    if not ok[i0]:
+        msg = "Linkage cannot be assembled at Y = 0."
+    elif hi < N_SAMPLES - 1:
+        msg = "Bars reach full extension at Y = %.2f mm, before the end of the stroke." % y[hi]
+    elif lo > 0:
+        msg = "The linkage locks at Y = %.2f mm (hinged bar at dead centre) before -stroke: the closed tube cannot follow." % y[lo]
+    else:
+        msg = "ok"
+    pos = y >= 0.0
+    out = LinkageResult(
+        feasible=feasible,
+        message=msg,
+        Y_positions=y.tolist(),
+        joint_x=_nan_to_none(jx),
+        joint_y=_nan_to_none(jy),
+        tip_x=_nan_to_none(tx),
+        tip_y=_nan_to_none(ty),
+        gap_a=_nan_to_none(gap_a),
+        gap_b=_nan_to_none(gap_a[::-1]),
+        anchor_x=xa,
+        anchor_on_top=sgn < 0.0,
+        link_length=l1,
+        pivot_height_y0=h0,
+        wall_x=wall_x,
+        closed_gap=closed_gap,
+        full_open_gap=full_open_gap,
+        y_min=float(y[lo]),
+        y_max=float(y[hi]),
+        sensitivity_y0=float((gap_a[i0 + 1] - gap_a[i0]) / (y[1] - y[0])) if ok[i0] and ok[i0 + 1] else 0.0,
+        pinch_slide=float(abs(ty[hi] - ty[i0])) if ok[i0] else 0.0,
+        max_oversqueeze=float(max(closed_gap - np.nanmin(gap_a[~pos | (y == 0.0)]), 0.0)) if ok[i0] else 0.0,
+    )
+    loaded = _forces(p, out, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap_a, closed_gap, half, phi)
+    # What the air sees: the gap once the tube has pushed the pin back, when that is solved.
+    out.contact_solved = bool(p.contact_deformation and loaded is not None)
+    gap_air = np.where(ok, loaded, np.nan) if out.contact_solved else gap_a
+    out.gap_loaded_a, out.gap_loaded_b = _nan_to_none(gap_air), _nan_to_none(gap_air[::-1])
+
+    area_a = np.where(ok, _area_mm2(p, np.nan_to_num(gap_air, nan=0.0), closed_gap), 0.0)
     area_b = area_a[::-1]
     p_up = P_ATM + p.input_pressure_psi * 6894.76
     # Static model: downstream at atmosphere, so flow is linear in area (same convention as the cam tab).
@@ -495,64 +612,18 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
     target_gap = closed_gap + (full_open_gap - closed_gap) * u ** p.target_exponent
     flow_target = np.where(y >= 0.0, q_max * u ** p.target_exponent, np.nan)
 
-    pos = y >= 0.0
-    i0 = N_SAMPLES // 2
-    lo = hi = i0
-    while lo > 0 and ok[lo - 1]:
-        lo -= 1
-    while hi < N_SAMPLES - 1 and ok[hi + 1]:
-        hi += 1
     with np.errstate(invalid="ignore", divide="ignore"):
-        y_open = float(_crossing(y[pos], gap_a[pos][None, :], closed_gap)[0])
-        y_full = float(_crossing(y[pos], gap_a[pos][None, :], full_open_gap)[0])
+        y_open = float(_crossing(y[pos], gap_air[pos][None, :], closed_gap)[0])
+        y_full = float(_crossing(y[pos], gap_air[pos][None, :], full_open_gap)[0])
     speed = p.motor_speed * p.speed_factor * p.lead_screw_pitch / 60.0
-    feasible = bool(np.all(ok))
-    sens = float((gap_a[i0 + 1] - gap_a[i0]) / (y[1] - y[0])) if ok[i0] and ok[i0 + 1] else 0.0
-    rms = None
     if bool(np.all(ok[pos])):
-        rms = float(np.sqrt(np.mean(((np.minimum(gap_a[pos], full_open_gap) - target_gap[pos]) / (full_open_gap - closed_gap)) ** 2)))
-
-    if not ok[i0]:
-        msg = "Linkage cannot be assembled at Y = 0."
-    elif hi < N_SAMPLES - 1:
-        msg = "Bars reach full extension at Y = %.2f mm, before the end of the stroke." % y[hi]
-    elif lo > 0:
-        msg = "The linkage locks at Y = %.2f mm (hinged bar at dead centre) before -stroke: the closed tube cannot follow." % y[lo]
-    else:
-        msg = "ok"
-
-    out = LinkageResult(
-        feasible=feasible,
-        message=msg,
-        Y_positions=y.tolist(),
-        joint_x=_nan_to_none(jx),
-        joint_y=_nan_to_none(jy),
-        tip_x=_nan_to_none(tx),
-        tip_y=_nan_to_none(ty),
-        gap_a=_nan_to_none(gap_a),
-        gap_b=_nan_to_none(gap_b),
-        flow_a=_nan_to_none(flow_a),
-        flow_b=_nan_to_none(flow_a[::-1]),
-        flow_target=_nan_to_none(flow_target),
-        anchor_x=xa,
-        anchor_on_top=sgn < 0.0,
-        link_length=l1,
-        pivot_height_y0=h0,
-        wall_x=wall_x,
-        closed_gap=closed_gap,
-        full_open_gap=full_open_gap,
-        y_min=float(y[lo]),
-        y_max=float(y[hi]),
-        y_full_open=y_full if np.isfinite(y_full) else None,
-        y_open=y_open if np.isfinite(y_open) else None,
-        response_time_ms=y_full / speed * 1000.0 if np.isfinite(y_full) and speed > 0 else None,
-        sensitivity_y0=sens,
-        pinch_slide=float(abs(ty[hi] - ty[i0])) if ok[i0] else 0.0,
-        max_oversqueeze=float(max(closed_gap - np.nanmin(gap_a[~pos | (y == 0.0)]), 0.0)) if ok[i0] else 0.0,
-        max_flow_l_min=q_max,
-        rms_error=rms,
-    )
-    _forces(p, out, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap_a, closed_gap, half, phi)
+        out.rms_error = float(np.sqrt(np.mean(((np.minimum(gap_air[pos], full_open_gap) - target_gap[pos]) / (full_open_gap - closed_gap)) ** 2)))
+    out.flow_a, out.flow_b = _nan_to_none(flow_a), _nan_to_none(flow_a[::-1])
+    out.flow_target = _nan_to_none(flow_target)
+    out.y_full_open = y_full if np.isfinite(y_full) else None
+    out.y_open = y_open if np.isfinite(y_open) else None
+    out.response_time_ms = y_full / speed * 1000.0 if np.isfinite(y_full) and speed > 0 else None
+    out.max_flow_l_min = q_max
     if feasible:
         cycle = _chamber_cycle(p, y, area_a, area_b)
         if cycle is not None:

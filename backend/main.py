@@ -21,6 +21,7 @@ from simulation import SimulationParams, compute_simulation, SolverParams, Solve
 from storage import LINKAGE_KINDS, BuilderExperienceStorage, LinkageProfileStorage, SimulationStorage, default_db_path
 
 import onshape_export
+import onshape_variables
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
 
 
@@ -660,6 +661,8 @@ class LinkageRequest(BaseModel):
     member_modulus_mpa: float = Field(2500.0, ge=0, le=1e6)
     member_width: float = Field(2.0, ge=0, le=100)
     member_thickness: float = Field(3.0, ge=0, le=100)
+    contact_deformation: bool = True
+    link_curved: bool = False
 
 
 class LinkageOptimizeRequest(LinkageRequest):
@@ -706,6 +709,36 @@ def linkage_optimize(req: LinkageOptimizeRequest):
         "params": dataclasses.asdict(best),
         "result": dataclasses.asdict(compute_linkage(best)),
     }
+
+
+# ─── Linkage dimensions to the Onshape variable table ────────────
+
+class LinkageOnshapeApplyRequest(LinkageRequest):
+    names: list[str] = Field(default_factory=list, max_length=100)
+    create_missing: bool = False
+
+
+def _onshape_variables(call):
+    try:
+        return call()
+    except onshape_variables.LinkageOnshapeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except onshape_export.OnshapeConfigError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except onshape_export.OnshapeAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Onshape refused the request: {exc}")
+
+
+@app.post("/api/linkage/onshape/preview")
+def linkage_onshape_preview(req: LinkageRequest):
+    """What writing this design to Onshape would change. Reads only."""
+    return _onshape_variables(lambda: onshape_variables.preview(_linkage_params(req)))
+
+
+@app.post("/api/linkage/onshape/apply")
+def linkage_onshape_apply(req: LinkageOnshapeApplyRequest):
+    """Overwrite the named Onshape variables with this design's values."""
+    return _onshape_variables(lambda: onshape_variables.apply(_linkage_params(req), req.names, req.create_missing))
 
 
 # ─── Saved linkage profiles ──────────────────────────────────────

@@ -178,3 +178,40 @@ Click **Export STL** in the header. `StlExportModal` is a kit `Modal`
   concurrent jobs). Beyond that, the user must re-export.
 - **Closure ramp profiles cannot be exported** until the Onshape sketch
   reproduces the ramp; the API refuses those jobs with 422.
+
+## Linkage tabs: write the dimensions to the Onshape variable table
+
+The Bar, Lever and Pendulum linkage tabs have a **Write to Onshape variables** button
+(`OnshapeVariablesModal` in `frontend/src/LinkageExplorer.tsx`, `backend/onshape_variables.py`).
+It does not export anything: it overwrites variable expressions, matched by name.
+
+1. Opening the window reads the tables (`POST /api/linkage/onshape/preview`, 1 or 2 API calls)
+   and lists, for each variable, what Onshape holds now and what the simulator would write.
+2. **Overwrite N variables in Onshape** writes the ticked rows (`POST /api/linkage/onshape/apply`).
+   The tables are read again first, so the write merges into fresh data.
+
+Two places are looked at, the Part Studio first:
+
+| Where | Env | How it is written |
+|-------|-----|-------------------|
+| `assignVariable` features of a Part Studio (`#L1`, `#L2`…) | `ONSHAPE_LINKAGE_PART_STUDIO_ID` | one POST per variable, same call as the STL export |
+| a Variable Studio | `ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID` | one POST of the whole list: the variables this app does not know go back exactly as read |
+
+A name found nowhere is left alone, unless **Also create the variables Onshape does not have yet**
+is ticked: they are then added to the Variable Studio (never to a Part Studio).
+
+Default names are in `DEFAULT_MAPPING` (`backend/onshape_variables.py`): `pend_*` for the pendulum,
+`lever_*` for the lever, `L1` / `L2` and `elbow_*` for the bar linkage, plus `pinch_tube_OD` and
+`pinch_tube_ID` for all three. In the CAD sketch `L1` starts at the fixed anchor, which is the
+simulator's bar 2, so `L1` receives bar 2 and `L2` receives bar 1. To use other names, set
+`ONSHAPE_LINKAGE_MAPPING` to a JSON object `{"pendulum": {"my_onshape_name": "bar2_length", …}}`;
+the value keys are listed in `VALUES` in the same file. Derived values can be sent too:
+`link_length`, `total_height`, `pivot_height_y0`, `link_arc_radius`.
+
+A Variable Studio has no configuration to isolate the write in, unlike the `automation`
+configuration of the STL export: what is written is what every Part Studio using that
+variable sees.
+
+API calls: 1 or 2 to open the window, then 1 or 2 reads, 1 write for the Variable Studio and
+1 per Part Studio variable changed. These calls are made from the container and are not in
+`~/automation/state/onshape-appels.jsonl`.
