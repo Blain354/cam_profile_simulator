@@ -5,6 +5,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -110,6 +111,33 @@ class ProfileMigrationTests(unittest.TestCase):
         with sqlite3.connect(self.path) as conn:
             dupes = conn.execute("SELECT COUNT(*) FROM profiles GROUP BY type, name HAVING COUNT(*) > 1").fetchall()
         self.assertEqual(dupes, [])
+
+    def test_concurrent_creates_get_distinct_names(self):
+        store = ProfileStorage(self.path)
+        names = []
+        lock = threading.Lock()
+
+        def create():
+            name = ProfileStorage(self.path).create("cam", {"height": 1.0})
+            with lock:
+                names.append(name)
+
+        threads = [threading.Thread(target=create) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(set(names)), 8)
+        self.assertEqual(len(store.list("cam")), 2 + 8)
+
+    def test_bad_builder_row_stops_the_copy_without_a_trace(self):
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("UPDATE builder_experiences SET solver_result_json = '{broken' WHERE note = 'without request'")
+        with self.assertRaises(RuntimeError):
+            ProfileStorage(self.path)
+        with sqlite3.connect(self.path) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0], 0)
+            self.assertIsNone(conn.execute("SELECT 1 FROM app_meta WHERE key = 'profiles_migrated_v1'").fetchone())
 
     def test_default_none_is_not_migrated(self):
         SimulationStorage(self.path).set_default_config("none")
@@ -293,6 +321,10 @@ class ProfileRouteTests(unittest.TestCase):
         self.assertEqual(c.put("/api/profiles/lever/x", json={"payload": [1, 2]}).status_code, 422)
         big = {"blob": "x" * (2 * 1024 * 1024 + 1)}
         self.assertEqual(c.put("/api/profiles/lever/x", json={"payload": big}).status_code, 413)
+        self.assertEqual(c.post("/api/profiles/lever", json={"payload": {}, "note": big["blob"]}).status_code, 413)
+        self.assertEqual(c.put("/api/profiles/lever/default", json={"payload": {}}).status_code, 400)
+        self.assertEqual(c.put("/api/profiles/lever/%20default%20", json={"payload": {}}).status_code, 400)
+        self.assertIsNone(self.main.profiles.get("lever", "x"))
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
+import contextlib
 import datetime
 import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 
 def _utc_now_iso() -> str:
@@ -524,10 +525,16 @@ class ProfileStorage:
             conn.commit()
         self.migrate_from_old_tables()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """One connection per call: committed on success, rolled back on error, always closed."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     # Migration -----------------------------------------------------------
 
@@ -561,10 +568,17 @@ class ProfileStorage:
                 if has_last:
                     cols += ", last_solve_request_json"
                 for r in conn.execute(f"SELECT {cols} FROM builder_experiences"):
-                    payload: Dict[str, Any] = {
-                        "builder_params": json.loads(r["builder_params_json"]),
-                        "solver_result": json.loads(r["solver_result_json"]),
-                    }
+                    try:
+                        payload: Dict[str, Any] = {
+                            "builder_params": json.loads(r["builder_params_json"]),
+                            "solver_result": json.loads(r["solver_result_json"]),
+                        }
+                    except json.JSONDecodeError as exc:
+                        # Fail loud: the whole copy rolls back and the app does not start
+                        # on a half-filled store. Fix the row, then restart.
+                        raise RuntimeError(
+                            f"profiles migration stopped, nothing copied: builder_experiences row {r['name']!r} is not valid JSON"
+                        ) from exc
                     raw_last = r["last_solve_request_json"] if has_last else None
                     if raw_last is not None and str(raw_last).strip():
                         try:

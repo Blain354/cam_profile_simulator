@@ -364,8 +364,8 @@ def _profile_name(profile_type: str, name: str) -> str:
     return name
 
 
-def _check_payload_size(payload: dict) -> None:
-    if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > _PROFILE_MAX_BYTES:
+def _check_payload_size(body: ProfileBody) -> None:
+    if len(json.dumps([body.payload, body.note], ensure_ascii=False).encode("utf-8")) > _PROFILE_MAX_BYTES:
         raise HTTPException(status_code=413, detail="Profile payload is larger than 2 MB")
 
 
@@ -378,7 +378,7 @@ def profiles_list(type: str):
 @app.post("/api/profiles/{type}")
 def profiles_create(type: str, body: ProfileBody):
     profile_type = _profile_type(type)
-    _check_payload_size(body.payload)
+    _check_payload_size(body)
     return {"status": "saved", "name": profiles.create(profile_type, body.payload, body.note)}
 
 
@@ -411,7 +411,7 @@ def profiles_save(type: str, name: str, body: ProfileBody):
     name = _profile_name(profile_type, name)
     if name == "default":
         raise HTTPException(status_code=400, detail='"default" is reserved')
-    _check_payload_size(body.payload)
+    _check_payload_size(body)
     existed = profiles.save(profile_type, name, body.payload, body.note)
     return {"status": "updated" if existed else "saved", "name": name}
 
