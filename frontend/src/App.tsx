@@ -7,7 +7,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
 import {
-  Settings, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Box, Waypoints, Spline, Anchor
+  Settings, Import, Download, RefreshCw, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -22,6 +22,8 @@ import { chartDomain } from './lib/chartDomain';
 import type { ChartCardView } from './ChartCard';
 import ProfileBuilder from './ProfileBuilder';
 import LinkageExplorer from './LinkageExplorer';
+import { SubTabs } from './SubTabs';
+import type { SubTab } from './SubTabs';
 import {
   explorerMotorSpeed,
   explorerDefaultDist,
@@ -37,6 +39,27 @@ import {
 } from './parameterTooltips';
 
 type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime';
+
+// Memoised: it stays mounted behind the other tabs and should not follow every App render.
+const KeptProfileBuilder = React.memo(ProfileBuilder);
+
+type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum';
+const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum'];
+const TABS_KEY = 'cam-sim.tabs.v1';
+const SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Finder' }];
+const DEFAULT_SUB_TABS: Record<TopTab, SubTab> = { cam: 'explorer', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer' };
+
+function loadTabs(): { tab: TopTab; sub: Record<TopTab, SubTab> } {
+  const sub = { ...DEFAULT_SUB_TABS };
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) ?? 'null');
+    if (raw && typeof raw === 'object') {
+      for (const t of TOP_TABS) if (raw.sub?.[t] === 'explorer' || raw.sub?.[t] === 'finder') sub[t] = raw.sub[t];
+      if (TOP_TABS.includes(raw.tab)) return { tab: raw.tab, sub };
+    }
+  } catch { /* storage unavailable or corrupt: defaults */ }
+  return { tab: 'cam', sub };
+}
 
 function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | null {
   const n = ys.length;
@@ -64,7 +87,19 @@ function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | 
 
 export default function App() {
   const { theme, setTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'explorer' | 'builder' | 'linkage' | 'lever' | 'pendulum'>('explorer');
+  const [initialTabs] = useState(loadTabs);
+  const [activeTab, setActiveTab] = useState<TopTab>(initialTabs.tab);
+  const [subTabs, setSubTabs] = useState<Record<TopTab, SubTab>>(initialTabs.sub);
+  const subTab = subTabs[activeTab];
+  const setSubTab = useCallback((tab: TopTab, sub: SubTab) => setSubTabs((s) => ({ ...s, [tab]: sub })), []);
+  const camExplorer = activeTab === 'cam' && subTab === 'explorer';
+  const camFinder = activeTab === 'cam' && subTab === 'finder';
+  // Mounted on the first visit, then only hidden, so a solve in progress survives switching tabs.
+  const [builderMounted, setBuilderMounted] = useState(camFinder);
+  useEffect(() => { if (camFinder) setBuilderMounted(true); }, [camFinder]);
+  useEffect(() => {
+    try { localStorage.setItem(TABS_KEY, JSON.stringify({ tab: activeTab, sub: subTabs })); } catch { /* ignore */ }
+  }, [activeTab, subTabs]);
   const [params, setParams] = useState<SimulationParams>(defaultParams);
   const [savedParams, setSavedParams] = useState<SimulationParams | null>(null);
   const [data, setData] = useState<SimulationResult | null>(null);
@@ -141,13 +176,16 @@ export default function App() {
   };
 
   // Cross-tab: apply params from Profile Builder
-  const handleApplyFromBuilder = (builderParams: SimulationParams) => {
+  // Stable, so the kept-alive builder does not re-render while hidden.
+  const handleApplyFromBuilder = useCallback((builderParams: SimulationParams) => {
     setParams(builderParams);
     setSavedParams(null);
     setActiveConfigName('Builder');
-    setActiveTab('explorer');
-    showToast('Profile applied from Builder');
-  };
+    setActiveTab('cam');
+    setSubTab('cam', 'explorer');
+    setToast({ message: 'Profile applied from Builder', visible: true });
+    setTimeout(() => setToast({ message: '', visible: false }), 3000);
+  }, [setSubTab]);
 
   const fetchConfigs = async () => {
     try {
@@ -531,8 +569,8 @@ export default function App() {
       <BlueprintBackground />
       {/* Shared chrome; simulation controls stay in the tool. */}
       <Header variant="full-width" className="cam-kit-header">
-        <div className="flex items-center gap-6">
-          <div>
+        <div className="flex items-center gap-4">
+          <div className="shrink-0">
             <h1 className="text-2xl font-bold text-neutral-100 leading-tight hidden lg:block">
               Cam Profile Simulator
             </h1>
@@ -540,32 +578,26 @@ export default function App() {
           </div>
 
           {/* Tab Bar */}
-          <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
-            <Button variant="ghost" onClick={() => setActiveTab('explorer')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'explorer' ? 'bg-blue-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
-              <Search className="w-3.5 h-3.5" /> Explorer
-            </Button>
-            <Button variant="ghost" onClick={() => setActiveTab('builder')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
-              <FlaskConical className="w-3.5 h-3.5" /> Profile Builder
-            </Button>
-            <Button variant="ghost" onClick={() => setActiveTab('linkage')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'linkage' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
-              <Waypoints className="w-3.5 h-3.5" /> Bar Linkage
-            </Button>
-            <Button variant="ghost" onClick={() => setActiveTab('lever')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'lever' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
-              <Spline className="w-3.5 h-3.5" /> Lever Linkage
-            </Button>
-            <Button variant="ghost" onClick={() => setActiveTab('pendulum')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'pendulum' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
-              <Anchor className="w-3.5 h-3.5" /> Pendulum Linkage
-            </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
+              {([
+                ['cam', 'Cam', Disc3],
+                ['linkage', 'Bar Linkage', Waypoints],
+                ['lever', 'Lever Linkage', Spline],
+                ['pendulum', 'Pendulum Linkage', Anchor],
+              ] as const).map(([tab, label, Icon]) => (
+                <Button key={tab} variant="ghost" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === tab ? (tab === 'cam' ? 'bg-blue-600 text-white' : 'bg-amber-600 text-white') : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+                  <Icon className="w-3.5 h-3.5" /> {label}
+                </Button>
+              ))}
+            </div>
+            <SubTabs label="Mode" value={subTab} options={SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
           </div>
 
           {/* Context pill (tab-specific) */}
-          {activeTab === 'explorer' && (
-            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+          {camExplorer && (
+            <div className="flex items-center gap-2.5 flex-wrap min-[1440px]:flex-nowrap min-w-0">
               <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-1 shadow-sm transition-colors ${hasChanges ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={activeConfigName}>
                 <div className={`flex min-w-0 max-w-[min(100vw-8rem,18rem)] sm:max-w-[22rem] items-center gap-2 rounded-lg px-2.5 py-1.5 ${hasChanges ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
                   <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
@@ -595,8 +627,8 @@ export default function App() {
               </AnimatePresence>
             </div>
           )}
-          {activeTab === 'builder' && (
-            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+          {camFinder && (
+            <div className="flex items-center gap-2.5 flex-wrap min-[1440px]:flex-nowrap min-w-0">
               <div
                 className="inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border border-neutral-700/80 bg-neutral-800/50 p-1 shadow-sm transition-colors"
                 title={activeBuilderExperienceName}
@@ -643,7 +675,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2">
           <Button variant="ghost"
             type="button"
             onClick={() => setShowStlExport(true)}
@@ -668,8 +700,9 @@ export default function App() {
             <CircleHelp className="w-3.5 h-3.5" />
             Guidance
           </Button>
-          <span className={`flex h-3 w-3 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} />
-          <span className="text-sm text-neutral-400">{data ? 'Connected' : 'Disconnected'}</span>
+          <span className={`flex h-3 w-3 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} title={data ? 'Connected' : 'Disconnected'} />
+          {/* Spelled out on very wide screens only, so the header keeps one row; the dot carries it otherwise. */}
+          <span className="sr-only min-[1700px]:not-sr-only text-sm text-neutral-400">{data ? 'Connected' : 'Disconnected'}</span>
         </div>
       <ThemeToggle theme={theme} onThemeChange={setTheme} />
       </Header>
@@ -679,7 +712,7 @@ export default function App() {
       )}
 
       {/* ─── TAB CONTENT ─── */}
-      {activeTab === 'explorer' ? (
+      {camExplorer ? (
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
 
           {/* Panel 1: Parameters */}
@@ -807,10 +840,12 @@ export default function App() {
             </div>
           </motion.div>
         </div>
-      ) : activeTab === 'linkage' || activeTab === 'lever' || activeTab === 'pendulum' ? (
+      ) : activeTab !== 'cam' ? (
         <LinkageExplorer
           key={activeTab}
           kind={activeTab === 'linkage' ? 'elbow' : activeTab}
+          mode={subTab}
+          onOpenExplorer={() => setSubTab(activeTab, 'explorer')}
           shared={{
             tube_id: params.tube_id,
             tube_od: params.tube_od,
@@ -820,16 +855,19 @@ export default function App() {
             lead_screw_pitch: params.lead_screw_pitch,
           }}
         />
-      ) : (
-        <ProfileBuilder
-          onApplyToExplorer={handleApplyFromBuilder}
-          explorerCompliance={params.compliance}
-          guidanceEnabled={guidanceMode}
-          onActiveExperienceNameChange={setActiveBuilderExperienceName}
-          openExperienceBrowserSignal={openBuilderExperienceSignal}
-          onDirtyStateChange={setBuilderSaveExperienceVisible}
-          saveExperienceSignal={saveBuilderExperienceSignal}
-        />
+      ) : null}
+      {(builderMounted || camFinder) && (
+        <div className={camFinder ? 'cam-keepalive contents' : 'hidden'}>
+          <KeptProfileBuilder
+            onApplyToExplorer={handleApplyFromBuilder}
+            explorerCompliance={params.compliance}
+            guidanceEnabled={guidanceMode}
+            onActiveExperienceNameChange={setActiveBuilderExperienceName}
+            openExperienceBrowserSignal={openBuilderExperienceSignal}
+            onDirtyStateChange={setBuilderSaveExperienceVisible}
+            saveExperienceSignal={saveBuilderExperienceSignal}
+          />
+        </div>
       )}
 
       {/* Modals & Overlays */}

@@ -18,10 +18,14 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; background: transparent; }
 .cam-kit-header { flex-wrap: wrap; }
 .cam-kit-header > div { min-width: 0; flex-wrap: wrap; }
+/* Wide screens keep the header on one row: the context pill truncates instead of wrapping. */
+@media (min-width: 1440px) {
+  .cam-kit-header, .cam-kit-header > div { flex-wrap: nowrap; }
+}
 @media (max-width: 640px) {
   .cam-workspace { overflow-y: auto; }
-  .cam-workspace > .flex-1 { flex: none; flex-direction: column; overflow: visible; }
-  .cam-workspace > .flex-1 > div { width: 100%; min-width: 0; }
+  .cam-workspace > .flex-1, .cam-workspace > .cam-keepalive > .flex-1 { flex: none; flex-direction: column; overflow: visible; }
+  .cam-workspace > .flex-1 > div, .cam-workspace > .cam-keepalive > .flex-1 > div { width: 100%; min-width: 0; }
   .cam-kit-header { gap: 8px; }
   .cam-kit-header > div { gap: 8px; max-width: 100%; }
 }
