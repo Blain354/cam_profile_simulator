@@ -2,7 +2,7 @@ import { Textarea } from '@blain-projects/ui';
 import { Button, Input, LoadingState, Modal } from '@blain-projects/ui';
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import { Crosshair, ArrowRight, OctagonX, Trash2, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -17,6 +17,7 @@ import {
   apiFetch,
   defaultParams,
   DelayedHoverHint,
+  interpAt,
 } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
@@ -46,6 +47,7 @@ import {
   builderCandidateRankFlowYPosition,
 } from './parameterTooltips';
 import SearchGridAxisControls from './SearchGridAxisControls';
+import { CamSchematicCard, useCamTravel } from './CamSchematic';
 
 /** Must match backend `candidate_rank_by` strings. */
 export const CANDIDATE_RANK_BY_VALUES = ['equalization_rel_time', 'flow_rise_20_80', 'flow_exp', 'flow_at_y'] as const;
@@ -1746,8 +1748,13 @@ export default function ProfileBuilder({
     settings: builderChartSettings[key],
     onSettingsChange: (next: ChartDomainSettings) => setBuilderChartSettings((prev) => ({ ...prev, [key]: next })),
     settingsTitle: `${key} domain settings`,
-    layout: true,
   });
+
+  const travel = useCamTravel(chartSim);
+  const [schematicDetails, setSchematicDetails] = useState(true);
+  const carriageTimeSec = chartSim && chartSim.linear_speed_mm_s > 0
+    ? (interpAt(travel.y, chartSim.Y_positions, chartSim.time_axis_ms) - y0TimeMs) / 1000
+    : null;
 
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
@@ -1771,7 +1778,18 @@ export default function ProfileBuilder({
             </div>
           </DelayedHoverHint>
 
-          <Accordion title="System Parameters">
+          <Accordion title="Target">
+            <div className="space-y-5 pt-2">
+              <ParameterSlider label="Chamber Volume (mL)" value={chamberVolume} min={0.1} max={100} step={0.5} onChange={setChamberVolume} description={builderChamberVolume} />
+              <p className="text-[10px] text-neutral-500 leading-snug -mt-2">
+                Displayed target is <span className="text-neutral-300">absolute free-air equivalent at final pressure ≈ {pressurizationAbsoluteMl.toFixed(2)} mL</span>.
+                {' '}Solver internals still match the added amount from atmosphere (
+                <span className="text-neutral-400">≈ {pressurizationDeltaMl.toFixed(2)} mL</span>).
+              </p>
+            </div>
+          </Accordion>
+
+          <Accordion title="System parameters">
             <div className="space-y-5 pt-2">
               <ParameterSlider label="Motor Speed (RPM)" value={motorSpeed} min={10} max={1000} step={10} onChange={setMotorSpeed} description={builderMotorSpeed} />
               <ParameterSlider label="Tube ID (mm)" value={tubeId} min={1.0} max={12.0} step={0.1} onChange={setTubeId} description={builderTubeId} />
@@ -1784,18 +1802,7 @@ export default function ProfileBuilder({
             </div>
           </Accordion>
 
-          <Accordion title="Target">
-            <div className="space-y-5 pt-2">
-              <ParameterSlider label="Chamber Volume (mL)" value={chamberVolume} min={0.1} max={100} step={0.5} onChange={setChamberVolume} description={builderChamberVolume} />
-              <p className="text-[10px] text-neutral-500 leading-snug -mt-2">
-                Displayed target is <span className="text-neutral-300">absolute free-air equivalent at final pressure ≈ {pressurizationAbsoluteMl.toFixed(2)} mL</span>.
-                {' '}Solver internals still match the added amount from atmosphere (
-                <span className="text-neutral-400">≈ {pressurizationDeltaMl.toFixed(2)} mL</span>).
-              </p>
-            </div>
-          </Accordion>
-
-          <Accordion title="Gap @ Y=0 margin & search grid" defaultOpen={false} showBottomBorder={false}>
+          <Accordion title="Search grid" defaultOpen={false} showBottomBorder={false}>
             <div className="space-y-5 pt-2">
               <ParameterSlider
                 label="Gap @ Y=0 margin (mm)"
@@ -2000,62 +2007,6 @@ export default function ProfileBuilder({
         </div>
 
         <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-4">
-          <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
-          <Button variant="ghost"
-            type="button"
-            onClick={() => setShowInfoPanel((v) => !v)}
-            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors ${
- showInfoPanel
- ? 'text-neutral-200 bg-neutral-800/60 border-b border-neutral-700/70'
- : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
- }`}
-            title={showInfoPanel ? 'Hide context details' : 'Show context details'}
-          >
-            <span>Context & Metrics</span>
-            {showInfoPanel ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          </Button>
-
-          {showInfoPanel && (
-            <div className="space-y-3 p-3">
-              <DelayedHoverHint content={builderTheoreticalGapStat}>
-                <div>
-                  <StatRow
-                    label="Theoretical opening gap"
-                    value={<span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-neutral-300'}>{theoreticalGapMm.toFixed(3)} mm</span>}
-                    highlight={theoreticalGapMm <= 0}
-                  />
-                </div>
-              </DelayedHoverHint>
-
-              <DelayedHoverHint content={builderAcceptableGapStat}>
-                <div>
-                  <StatRow
-                    label="Acceptable gap@Y=0"
-                    value={
-                      <span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-cyan-400'}>
-                        {gapAcceptBand.lo.toFixed(3)} – {gapAcceptBand.hi.toFixed(3)} mm
-                      </span>
-                    }
-                    highlight={theoreticalGapMm <= 0}
-                  />
-                </div>
-              </DelayedHoverHint>
-
-              <DelayedHoverHint content={builderPressurizationTargetStat}>
-                <div>
-          <StatRow label="Pressurization target (absolute)" value={`≈ ${pressurizationAbsoluteMl.toFixed(2)} mL (equiv. @ amb.)`} />
-                </div>
-              </DelayedHoverHint>
-
-              <DelayedHoverHint content={builderLinearSpeedStat}>
-                <div>
-                  <StatRow label="Linear Speed" value={`${(motorSpeed * 0.5 / 60).toFixed(2)} mm/s`} />
-                </div>
-              </DelayedHoverHint>
-            </div>
-          )}
-          </div>
-
           <div className="relative space-y-2.5 pt-1">
             <Button variant="ghost"
               type="button"
@@ -2142,6 +2093,62 @@ export default function ProfileBuilder({
           {theoreticalGapMm <= 0 && (
             <p className="text-[10px] text-red-400 text-center">Theoretical gap ≤ 0. Adjust tube dimensions, pressure, or compliance.</p>
           )}
+          <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
+          <Button variant="ghost"
+            type="button"
+            onClick={() => setShowInfoPanel((v) => !v)}
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold transition-colors ${
+ showInfoPanel
+ ? 'text-neutral-200 bg-neutral-800/60 border-b border-neutral-700/70'
+ : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+ }`}
+            title={showInfoPanel ? 'Hide context details' : 'Show context details'}
+          >
+            <span>Context & Metrics</span>
+            {showInfoPanel ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </Button>
+
+          {showInfoPanel && (
+            <div className="space-y-3 p-3">
+              <DelayedHoverHint content={builderTheoreticalGapStat}>
+                <div>
+                  <StatRow
+                    label="Theoretical opening gap"
+                    value={<span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-neutral-300'}>{theoreticalGapMm.toFixed(3)} mm</span>}
+                    highlight={theoreticalGapMm <= 0}
+                  />
+                </div>
+              </DelayedHoverHint>
+
+              <DelayedHoverHint content={builderAcceptableGapStat}>
+                <div>
+                  <StatRow
+                    label="Acceptable gap@Y=0"
+                    value={
+                      <span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-cyan-400'}>
+                        {gapAcceptBand.lo.toFixed(3)} – {gapAcceptBand.hi.toFixed(3)} mm
+                      </span>
+                    }
+                    highlight={theoreticalGapMm <= 0}
+                  />
+                </div>
+              </DelayedHoverHint>
+
+              <DelayedHoverHint content={builderPressurizationTargetStat}>
+                <div>
+          <StatRow label="Pressurization target (absolute)" value={`≈ ${pressurizationAbsoluteMl.toFixed(2)} mL (equiv. @ amb.)`} />
+                </div>
+              </DelayedHoverHint>
+
+              <DelayedHoverHint content={builderLinearSpeedStat}>
+                <div>
+                  <StatRow label="Linear Speed" value={`${(motorSpeed * 0.5 / 60).toFixed(2)} mm/s`} />
+                </div>
+              </DelayedHoverHint>
+            </div>
+          )}
+          </div>
+
         </div>
       </div>
 
@@ -2348,48 +2355,52 @@ export default function ProfileBuilder({
                 )}
               </div>
 
-              {/* Charts — same layout / semi-fullscreen as Explorer */}
+              {/* Schematic and charts: the same columns as the other tabs */}
               {chartSim && builderViewParams && (
-                <div className="relative min-h-0 flex-1 grid grid-rows-3 gap-4">
-                  <ChartCard title="Flow vs Y" {...builderCard('flowY')} className="row-span-2">
-                    {({ maximized, settings: c }) => (
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={maximized ? 320 : 260}>
-                        <LineChart data={pneumaticData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                          <XAxis
-                            dataKey="y"
-                            type="number"
-                            stroke="#888"
-                            label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }}
-                            tickFormatter={(v) => v.toFixed(3)}
-                            domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
-                            allowDataOverflow
-                          />
-                          <YAxis
-                            type="number"
-                            stroke="#888"
-                            label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                            domain={chartDomain(c, 'y', ['dataMin', 'dataMax'])}
-                            allowDataOverflow={!c.autoY}
-                            tickFormatter={(v) => v.toFixed(3)}
-                          />
-                          <FlowVsYTooltipLikeExplorer />
-                          <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
-                          <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-                            {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
-                          </ReferenceLine>
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </ChartCard>
-
-                  <div className="row-span-1 flex min-h-0 flex-col gap-4 lg:flex-row">
-                    <ChartCard title="Chamber Pressure" maximizedTitle="Chamber Pressure vs Time" compact {...builderCard('pressure')} className="min-w-0 flex-1">
+                <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-9 gap-4">
+                  <CamSchematicCard id="finder" data={chartSim} params={builderViewParams} travel={travel} details={schematicDetails} setDetails={setSchematicDetails}
+                    speedNote={`${motorSpeed} RPM × ${builderViewParams.lead_screw_pitch} mm pitch`}
+                    domain={builderChartSettings.vertical} onDomainChange={(next) => setBuilderChartSettings((prev) => ({ ...prev, vertical: next }))} />
+                  <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
+                    <ChartCard title="Flow vs Y" {...builderCard('flowY')}>
+                      {({ maximized, settings: c }) => (
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={maximized ? 320 : 158}>
+                          <LineChart data={pneumaticData} margin={{ top: 6, right: 16, bottom: 18, left: 16 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                            <XAxis
+                              dataKey="y"
+                              type="number"
+                              stroke="#888"
+                              label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888', offset: 0 }}
+                              tickFormatter={(v) => v.toFixed(3)}
+                              domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
+                              allowDataOverflow
+                            />
+                            <YAxis
+                              type="number"
+                              stroke="#888"
+                              label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+                              domain={chartDomain(c, 'y', ['dataMin', 'dataMax'])}
+                              allowDataOverflow={!c.autoY}
+                              tickFormatter={(v) => v.toFixed(3)}
+                            />
+                            <FlowVsYTooltipLikeExplorer />
+                            {builderHasDynamicModel && <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />}
+                            <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
+                            <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
+                              {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+                            </ReferenceLine>
+                            <ReferenceLine x={travel.y} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={2} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </ChartCard>
+                    <ChartCard title="Chamber Pressure" maximizedTitle="Chamber Pressure vs Time" {...builderCard('pressure')}>
                       {({ maximized, settings: c }) => {
                         const font = maximized ? 12 : 11;
                         return (
-                          <ResponsiveContainer width="100%" height="100%" minHeight={maximized ? 320 : 160}>
-                            <LineChart data={pressureData} margin={maximized ? { top: 16, right: 20, bottom: 24, left: 20 } : { top: 10, right: 15, bottom: 20, left: 15 }}>
+                          <ResponsiveContainer width="100%" height="100%" minHeight={maximized ? 320 : 158}>
+                            <LineChart data={pressureData} margin={maximized ? { top: 16, right: 20, bottom: 24, left: 20 } : { top: 6, right: 16, bottom: 18, left: 16 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                               <XAxis
                                 dataKey="timeSec"
@@ -2419,6 +2430,7 @@ export default function ProfileBuilder({
                                 {maximized && <Label value="Supply (gauge)" position="insideRight" fill="#22d3ee" fontSize={10} />}
                               </ReferenceLine>
                               <Line type="monotone" dataKey="pressureGaugeKpa" name="Chamber" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
+                              {carriageTimeSec != null && <ReferenceLine x={carriageTimeSec} stroke="#22d3ee" strokeDasharray="5 5" strokeWidth={2} />}
                               {equalizationTimeRelSec >= 0 && (
                                 <ReferenceLine x={equalizationTimeRelSec} stroke="#d946ef" strokeDasharray="5 5" strokeWidth={2}>
                                   <Label value="Equalized" position="insideTopRight" fill="#d946ef" fontSize={font} />
@@ -2427,24 +2439,6 @@ export default function ProfileBuilder({
                             </LineChart>
                           </ResponsiveContainer>
                         );
-                      }}
-                    </ChartCard>
-
-                    <ChartCard title="Cam Profile" maximizedTitle="Vertical System" compact maximizeLabel="Expand view" {...builderCard('vertical')}
-                      className="min-w-0 flex-1" bodyClassName="overflow-hidden">
-                      {({ maximized, settings: c }) => {
-                        const view = (
-                          <VerticalSystemView
-                            data={chartSim}
-                            params={builderViewParams}
-                            details={true}
-                            setDetails={() => {}}
-                            isPreview={true}
-                            allowInteractInPreview={maximized}
-                            domainOverride={c}
-                          />
-                        );
-                        return maximized ? <div className="h-full min-h-[320px] w-full">{view}</div> : view;
                       }}
                     </ChartCard>
                   </div>

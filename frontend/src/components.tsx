@@ -455,6 +455,7 @@ export function VerticalSystemSvgDiagram({
   isPreview = false,
   allowInteractInPreview = false,
   domainOverride,
+  y,
 }: {
   data: SimulationResult;
   params: SimulationParams;
@@ -462,7 +463,10 @@ export function VerticalSystemSvgDiagram({
   isPreview?: boolean;
   allowInteractInPreview?: boolean;
   domainOverride?: ChartDomainSettings;
+  /** Bushing position along the cam (mm). Given, the cam is drawn shifted by -y with the pinched tube; omitted, the static drawing at Y = 0. */
+  y?: number;
 }) {
+  const live = y !== undefined;
   const r = params.bushing_diameter / 2;
   const flatCamX = r + params.default_distance;
   const maxCamX = Math.max(...data.cam_X);
@@ -543,6 +547,34 @@ export function VerticalSystemSvgDiagram({
     panRef.current = { id: null, last: null };
   }, []);
 
+  // Dimension lines in cam coordinates: in the live view they move with the cam.
+  const camDimensions = (
+    <>
+      <line x1={flatCamX - 0.2} y1={-params.deadband / 2} x2={flatCamX - 0.2} y2={params.deadband / 2} stroke="#ef4444" strokeWidth="0.03" />
+      <line x1={flatCamX - 0.4} y1={-params.deadband / 2} x2={flatCamX} y2={-params.deadband / 2} stroke="#ef4444" strokeWidth="0.05" />
+      <line x1={flatCamX - 0.4} y1={params.deadband / 2} x2={flatCamX} y2={params.deadband / 2} stroke="#ef4444" strokeWidth="0.05" />
+      <g transform="scale(1,-1)">
+        <text x={flatCamX - 0.4} y={-(params.deadband / 2 + 0.2)} fill="#ef4444" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="auto">Deadband {params.deadband.toFixed(2)}mm</text>
+      </g>
+
+      <line x1={maxCamX + 0.6} y1={-params.deadband / 2} x2={maxCamX + 0.6} y2={-params.deadband / 2 + params.height} stroke="#10b981" strokeWidth="0.03" />
+      <line x1={maxCamX + 0.4} y1={-params.deadband / 2} x2={maxCamX + 0.8} y2={-params.deadband / 2} stroke="#10b981" strokeWidth="0.05" />
+      <line x1={maxCamX + 0.4} y1={-params.deadband / 2 + params.height} x2={maxCamX + 0.8} y2={-params.deadband / 2 + params.height} stroke="#10b981" strokeWidth="0.05" />
+      <g transform="scale(1,-1)">
+        <text x={maxCamX + 0.8} y={-(-params.deadband / 2 - 0.2)} fill="#10b981" fontSize="0.22" fontWeight="bold" textAnchor="end" dominantBaseline="hanging">Height {params.height.toFixed(2)}mm</text>
+      </g>
+
+      <line x1={r} y1={data.ramp_join_Y ?? minY + 0.5} x2={flatCamX} y2={data.ramp_join_Y ?? minY + 0.5} stroke="#f59e0b" strokeWidth="0.03" />
+      <line x1={r} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={r} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
+      <line x1={flatCamX} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={flatCamX} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
+      <g transform="scale(1,-1)">
+        <text x={flatCamX + 0.3} y={-(data.ramp_join_Y ?? minY + 0.5)} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">Def. Dist {params.default_distance.toFixed(3)}mm</text>
+        <text x={flatCamX + 0.3} y={-(minY + 0.85)} fill="#60a5fa" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">K {params.K.toFixed(3)}</text>
+        {data.ramp_enabled && data.ramp_closed_Y != null && <text x={r + 0.3} y={-data.ramp_closed_Y} fill="#10b981" fontSize="0.22" fontWeight="bold" dominantBaseline="middle">Ramp end: 0 mm offset</text>}
+      </g>
+    </>
+  );
+
   return (
     <>
       {canInteract && (
@@ -560,33 +592,24 @@ export function VerticalSystemSvgDiagram({
         <motion.path initial={false} animate={{ d: `M ${minX} ${0} L ${maxX} ${0}` }} transition={{ duration: 0.25, ease: 'easeOut' }} stroke="#374151" strokeWidth="0.05" strokeDasharray="0.1 0.1" />
         <motion.path initial={false} animate={{ d: `M ${0} ${minY} L ${0} ${maxY}` }} transition={{ duration: 0.25, ease: 'easeOut' }} stroke="#374151" strokeWidth="0.05" strokeDasharray="0.1 0.1" />
 
-        <polyline points={camPoints} fill="none" stroke="#10b981" strokeWidth="0.08" strokeLinejoin="round" />
-        <circle cx={cx} cy={cy} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
+        {live ? (
+          <>
+            <g transform={`translate(0 ${-y})`}>
+              <polyline points={camPoints} fill="none" stroke="#10b981" strokeWidth="0.08" strokeLinejoin="round" />
+              {details && camDimensions}
+            </g>
+            <LiveTubeAndGap data={data} params={params} y={y} details={details} />
+          </>
+        ) : (
+          <>
+            <polyline points={camPoints} fill="none" stroke="#10b981" strokeWidth="0.08" strokeLinejoin="round" />
+            <circle cx={cx} cy={cy} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
+          </>
+        )}
 
-        {details && (
+        {details && !live && (
           <g>
-            <line x1={flatCamX - 0.2} y1={-params.deadband / 2} x2={flatCamX - 0.2} y2={params.deadband / 2} stroke="#ef4444" strokeWidth="0.03" />
-            <line x1={flatCamX - 0.4} y1={-params.deadband / 2} x2={flatCamX} y2={-params.deadband / 2} stroke="#ef4444" strokeWidth="0.05" />
-            <line x1={flatCamX - 0.4} y1={params.deadband / 2} x2={flatCamX} y2={params.deadband / 2} stroke="#ef4444" strokeWidth="0.05" />
-            <g transform="scale(1,-1)">
-              <text x={flatCamX - 0.4} y={-(params.deadband / 2 + 0.2)} fill="#ef4444" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="auto">Deadband {params.deadband.toFixed(2)}mm</text>
-            </g>
-
-            <line x1={maxCamX + 0.6} y1={-params.deadband / 2} x2={maxCamX + 0.6} y2={-params.deadband / 2 + params.height} stroke="#10b981" strokeWidth="0.03" />
-            <line x1={maxCamX + 0.4} y1={-params.deadband / 2} x2={maxCamX + 0.8} y2={-params.deadband / 2} stroke="#10b981" strokeWidth="0.05" />
-            <line x1={maxCamX + 0.4} y1={-params.deadband / 2 + params.height} x2={maxCamX + 0.8} y2={-params.deadband / 2 + params.height} stroke="#10b981" strokeWidth="0.05" />
-            <g transform="scale(1,-1)">
-              <text x={maxCamX + 0.8} y={-(-params.deadband / 2 - 0.2)} fill="#10b981" fontSize="0.22" fontWeight="bold" textAnchor="end" dominantBaseline="hanging">Height {params.height.toFixed(2)}mm</text>
-            </g>
-
-            <line x1={r} y1={data.ramp_join_Y ?? minY + 0.5} x2={flatCamX} y2={data.ramp_join_Y ?? minY + 0.5} stroke="#f59e0b" strokeWidth="0.03" />
-            <line x1={r} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={r} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
-            <line x1={flatCamX} y1={(data.ramp_join_Y ?? minY + 0.5) - 0.2} x2={flatCamX} y2={(data.ramp_join_Y ?? minY + 0.5) + 0.2} stroke="#f59e0b" strokeWidth="0.05" />
-            <g transform="scale(1,-1)">
-              <text x={flatCamX + 0.3} y={-(data.ramp_join_Y ?? minY + 0.5)} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">Def. Dist {params.default_distance.toFixed(3)}mm</text>
-              <text x={flatCamX + 0.3} y={-(minY + 0.85)} fill="#60a5fa" fontSize="0.22" fontWeight="bold" textAnchor="start" dominantBaseline="middle">K {params.K.toFixed(3)}</text>
-              {data.ramp_enabled && data.ramp_closed_Y != null && <text x={r + 0.3} y={-data.ramp_closed_Y} fill="#10b981" fontSize="0.22" fontWeight="bold" dominantBaseline="middle">Ramp end: 0 mm offset</text>}
-            </g>
+            {camDimensions}
 
             {(() => {
               let minDist = Infinity;
@@ -622,6 +645,88 @@ export function VerticalSystemSvgDiagram({
         )}
       </svg>
     </>
+  );
+}
+
+/** Linear interpolation of `vals` at `y` on the increasing grid `ys`, clamped to its ends. */
+export function interpAt(y: number, ys: number[], vals: number[]): number {
+  const n = Math.min(ys.length, vals.length);
+  if (n === 0) return 0;
+  if (y <= ys[0]) return vals[0];
+  if (y >= ys[n - 1]) return vals[n - 1];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (ys[mid] <= y) lo = mid; else hi = mid;
+  }
+  const span = ys[hi] - ys[lo];
+  return span > 0 ? vals[lo] + (vals[hi] - vals[lo]) * (y - ys[lo]) / span : vals[lo];
+}
+
+/**
+ * The bushing, the tube and the gap at carriage position `y`, drawn from the simulation's arrays:
+ * the gap is `min_gaps` and the bore is the one whose area is `flow_area`. Only the direction of
+ * the pinch comes from the drawn cam (its nearest point to the screw axis).
+ */
+function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; params: SimulationParams; y: number; details: boolean }) {
+  const r = params.bushing_diameter / 2;
+  const gap = interpAt(y, data.Y_positions, data.min_gaps);
+  const area = interpAt(y, data.Y_positions, data.flow_area);
+  const flow = interpAt(y, data.Y_positions, data.flow_l_min);
+  const maxFlow = Math.max(0, ...data.flow_l_min);
+
+  // Nearest point of the shifted cam profile to the screw axis (segment projection).
+  let best = Infinity, px = r + params.default_distance, py = 0;
+  for (let i = 0; i + 1 < data.cam_X.length; i++) {
+    const ax = data.cam_X[i], ay = data.cam_Y[i] - y;
+    const dx = data.cam_X[i + 1] - ax, dy = data.cam_Y[i + 1] - y - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.min(Math.max(-(ax * dx + ay * dy) / l2, 0), 1) : 0;
+    const qx = ax + t * dx, qy = ay + t * dy;
+    const d = qx * qx + qy * qy;
+    if (d < best) { best = d; px = qx; py = qy; }
+  }
+  const dist = Math.sqrt(best) || 1;
+  const nx = px / dist, ny = py / dist;
+  // The bushing sits one gap from the cam: its radial play is taken up away from the cam.
+  const bx = px - nx * (gap + r), by = py - ny * (gap + r);
+
+  // Tube section: flattened to the gap; the bore has the simulated flow area (a stadium of the tube's perimeter).
+  const od = params.tube_od, id = params.tube_id;
+  const ho = Math.min(Math.max(gap, 0.02), od);
+  const hi = Math.min(id - Math.sqrt(Math.max(id * id - 4 * area / Math.PI, 0)), ho * 0.98);
+  const lo = Math.PI * (od - ho) / 2 + ho;
+  const li = Math.PI * (id - hi) / 2 + hi;
+  const tx = px - nx * gap / 2, ty = py - ny * gap / 2;
+  const angle = Math.atan2(ny, nx) * 180 / Math.PI;
+  const frac = maxFlow > 0 ? Math.min(flow / maxFlow, 1) : 0;
+  // Label just past the tube's end, along the cam.
+  const lx = tx - ny * (lo / 2 + 0.3), ly = ty + nx * (lo / 2 + 0.3);
+
+  return (
+    <g>
+      <g transform={`translate(${tx} ${ty}) rotate(${angle})`}>
+        <rect x={-ho / 2} y={-lo / 2} width={ho} height={lo} rx={ho / 2} fill="#d4d4d4" fillOpacity={0.16} stroke="#d4d4d4" strokeWidth={0.03} />
+        {hi > 0.005
+          ? <rect x={-hi / 2} y={-li / 2} width={hi} height={li} rx={hi / 2} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
+          : <line x1={0} y1={-li / 2} x2={0} y2={li / 2} stroke="#ef4444" strokeWidth={0.04} />}
+      </g>
+      <circle cx={bx} cy={by} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
+      <line x1={-0.12} y1={0} x2={0.12} y2={0} stroke="#a3a3a3" strokeWidth={0.03} />
+      <line x1={0} y1={-0.12} x2={0} y2={0.12} stroke="#a3a3a3" strokeWidth={0.03} />
+      {details && (
+        <g>
+          <circle cx={0} cy={0} r={r} fill="none" stroke="#f59e0b" strokeWidth="0.02" strokeDasharray="0.1 0.1" />
+          <line x1={bx + nx * r} y1={by + ny * r} x2={px} y2={py} stroke="#f59e0b" strokeWidth="0.04" strokeDasharray="0.05 0.05" />
+          <circle cx={bx + nx * r} cy={by + ny * r} r="0.03" fill="#f59e0b" />
+          <circle cx={px} cy={py} r="0.03" fill="#f59e0b" />
+        </g>
+      )}
+      <g transform={`translate(${lx} ${ly}) scale(1,-1)`}>
+        <text x={0} y={0} fill="#f59e0b" fontSize="0.22" fontWeight="bold" textAnchor="middle" dominantBaseline="middle"
+          stroke="#171717" strokeWidth={0.06} paintOrder="stroke">Gap {gap.toFixed(3)} mm</text>
+      </g>
+    </g>
   );
 }
 
