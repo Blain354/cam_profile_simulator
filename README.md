@@ -19,6 +19,7 @@ Ce projet sert a:
 
 - `backend/main.py`: API FastAPI (`/api/simulate`, gestion des configs, healthcheck).
 - `backend/simulation.py`: logique numerique de simulation.
+- `backend/linkage.py`: mecanisme a deux barres (onglet Bar Linkage) : cinematique du point de pincement, debit statique, recherche de L1 / L2 / distance d'ancrage (`/api/linkage/simulate`, `/api/linkage/optimize`).
 - `frontend/`: interface utilisateur React + Recharts.
 - `simulation_came.py`: script standalone (visualisation matplotlib) pour test local rapide.
 - `backend/data/simulator.db`: base de donnees de persistance (configs + extension future solver/profile builder).

@@ -21,6 +21,7 @@ from simulation import SimulationParams, compute_simulation, SolverParams, Solve
 from storage import BuilderExperienceStorage, SimulationStorage, default_db_path
 
 import onshape_export
+from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
 
 
 app = FastAPI(title="Cam Profile Simulation API")
@@ -624,3 +625,60 @@ def delete_builder_experience(name: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Experience not found")
     return {"status": "deleted"}
+
+
+# ─── Bar linkage pinch valve ─────────────────────────────────────
+
+class LinkageRequest(BaseModel):
+    bar1_length: float = 13.0
+    bar2_length: float = 7.8
+    anchor_distance: float = 2.33
+    pivot_offset: float = 3.9
+    tube_center_x: float = 8.0
+    pin_diameter: float = 1.0
+    preload: float = 0.1
+    stroke: float = Field(3.0, gt=0, le=50)
+    mirror_mode: str = "symmetric"
+    target_exponent: float = Field(1.0, gt=0, le=10)
+    tube_id: float = 2.0
+    tube_od: float = 3.0
+    input_pressure_psi: float = 15.0
+    compliance: float = 0.7
+
+
+class LinkageOptimizeRequest(LinkageRequest):
+    bar1_min: float = 6.0
+    bar1_max: float = 20.0
+    bar2_min: float = 3.0
+    bar2_max: float = 14.0
+    anchor_min: float = 0.0
+    anchor_max: float = 6.0
+    min_pivot_height: float = 3.0
+    max_pivot_height: float = 16.0
+    max_oversqueeze: float = 0.5
+
+
+def _linkage_params(req: LinkageRequest) -> LinkageParams:
+    names = [f.name for f in dataclasses.fields(LinkageParams)]
+    return LinkageParams(**{n: getattr(req, n) for n in names})
+
+
+@app.post("/api/linkage/simulate")
+def linkage_simulate(req: LinkageRequest):
+    return dataclasses.asdict(compute_linkage(_linkage_params(req)))
+
+
+@app.post("/api/linkage/optimize")
+def linkage_optimize(req: LinkageOptimizeRequest):
+    params = _linkage_params(req)
+    names = [f.name for f in dataclasses.fields(LinkageSearch) if f.name != "grid"]
+    best, feasible, tested = optimize_linkage(params, LinkageSearch(**{n: getattr(req, n) for n in names}))
+    if best is None:
+        return {"found": False, "feasible": 0, "tested": tested}
+    return {
+        "found": True,
+        "feasible": feasible,
+        "tested": tested,
+        "params": dataclasses.asdict(best),
+        "result": dataclasses.asdict(compute_linkage(best)),
+    }

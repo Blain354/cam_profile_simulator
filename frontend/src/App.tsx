@@ -7,7 +7,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
 import {
-  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box
+  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box, Waypoints
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -18,6 +18,7 @@ import {
 } from './components';
 import type { ChartDomainSettings } from './components';
 import ProfileBuilder from './ProfileBuilder';
+import LinkageExplorer from './LinkageExplorer';
 import {
   explorerMotorSpeed,
   explorerDefaultDist,
@@ -62,7 +63,7 @@ function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | 
 
 export default function App() {
   const { theme, setTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'explorer' | 'builder'>('explorer');
+  const [activeTab, setActiveTab] = useState<'explorer' | 'builder' | 'linkage'>('explorer');
   const [params, setParams] = useState<SimulationParams>(defaultParams);
   const [savedParams, setSavedParams] = useState<SimulationParams | null>(null);
   const [data, setData] = useState<SimulationResult | null>(null);
@@ -551,6 +552,10 @@ export default function App() {
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'builder' ? 'bg-emerald-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <FlaskConical className="w-3.5 h-3.5" /> Profile Builder
             </Button>
+            <Button variant="ghost" onClick={() => setActiveTab('linkage')}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'linkage' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              <Waypoints className="w-3.5 h-3.5" /> Bar Linkage
+            </Button>
           </div>
 
           {/* Context pill (tab-specific) */}
@@ -868,6 +873,15 @@ export default function App() {
             </div>
           </motion.div>
         </div>
+      ) : activeTab === 'linkage' ? (
+        <LinkageExplorer
+          initialPneumatic={{
+            tube_id: params.tube_id,
+            tube_od: params.tube_od,
+            input_pressure_psi: params.input_pressure_psi,
+            compliance: params.compliance,
+          }}
+        />
       ) : (
         <ProfileBuilder
           onApplyToExplorer={handleApplyFromBuilder}
