@@ -130,6 +130,8 @@ Image generee: `simulation_came_profile.png`
 
 Profils : une seule table SQLite `profiles` (type `cam`, `cam-finder`, `elbow`, `lever`, `pendulum`, un profil par defaut par type), servie par `/api/profiles?type=`, `/api/profiles/{type}/{name}`, `POST /api/profiles/{type}` et `/api/profiles/{type}/default`. Les routes `/api/configs`, `/api/save-config`, `/api/builder-experiences` et `/api/linkage/profiles` lisent et ecrivent la meme table. Au premier demarrage, les anciennes tables `simulation_configs`, `builder_experiences` et `linkage_profiles` y sont copiees une fois, puis laissees telles quelles ; les materiaux personnalises restent dans `linkage_profiles`.
 
+La pression d'alimentation est en kPa, au-dessus de l'atmosphere (`input_pressure_kpa` pour la came, le solveur, l'export STL et les mecanismes ; `pressureKpa` dans l'etat du Profile Builder ; `seal_pressure_y0_kpa` pour la pression que le scellement tient encore a Y = 0). Un corps de requete ou un profil lu en base qui porte encore `input_pressure_psi`, `seal_pressure_y0_psi` ou `pressurePsi` est converti par `backend/legacy_units.py` ; si l'ancien champ et le nouveau sont tous les deux la, le kPa est garde. Cette lecture ne reecrit pas la ligne : l'enregistrement suivant stocke des kPa. L'import des `configs/*.json` convertit avant d'inserer un profil absent, sans modifier le fichier ni un profil deja present. Dans le navigateur (`frontend/src/lib/pressure.ts`), l'etat de linkage est converti au chargement puis reecrit, et un fichier de config de came ouvert depuis le disque est converti sans modifier le fichier.
+
 ## Export STL via Onshape
 
 Bouton **Export STL** dans le header → `StlExportModal` qui suit en direct
