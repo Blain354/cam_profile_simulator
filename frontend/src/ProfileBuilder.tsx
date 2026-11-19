@@ -1244,9 +1244,12 @@ export default function ProfileBuilder({
     onDirtyStateChange?.(showBuilderSaveExperienceButton);
   }, [showBuilderSaveExperienceButton, onDirtyStateChange]);
 
+  // One save per header click: a later solve that makes saving possible again must not save on its own.
+  const handledSaveSignalRef = useRef(saveExperienceSignal ?? 0);
   useEffect(() => {
-    if (!saveExperienceSignal) return;
+    if (!saveExperienceSignal || saveExperienceSignal === handledSaveSignalRef.current) return;
     if (!canSaveExperience) return;
+    handledSaveSignalRef.current = saveExperienceSignal;
     void handleSaveExperience();
   }, [saveExperienceSignal, canSaveExperience]);
 
