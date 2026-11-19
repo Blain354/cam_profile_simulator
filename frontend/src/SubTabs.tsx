@@ -1,10 +1,12 @@
-import { Button } from '@blain-projects/ui';
 import { useRef } from 'react';
 import type { KeyboardEvent } from 'react';
 
 export type SubTab = 'explorer' | 'finder';
 
-/** A small segmented tab list. Arrow keys, Home and End move the selection, as in the ARIA tabs pattern. */
+/**
+ * A small segmented tab list. Arrow keys, Home and End move the selection, as in the ARIA tabs pattern.
+ * Plain buttons with the kit's tab classes: a kit ghost Button would hide the selected state under its own background.
+ */
 export function SubTabs<T extends string>({ label, value, options, onChange }: {
   label: string;
   value: T;
@@ -25,16 +27,16 @@ export function SubTabs<T extends string>({ label, value, options, onChange }: {
     refs.current[next]?.focus();
   };
   return (
-    <div role="tablist" aria-label={label} className="flex shrink-0 items-center gap-0.5 rounded-lg border border-neutral-700/60 bg-neutral-900/50 p-0.5">
+    <div role="tablist" aria-label={label} className="bui-tablist flex shrink-0 items-center">
       {options.map((o, i) => {
         const selected = o.value === value;
         return (
-          <Button variant="ghost" key={o.value} ref={(el) => { refs.current[i] = el; }} type="button" role="tab"
+          <button key={o.value} ref={(el) => { refs.current[i] = el; }} type="button" role="tab"
             aria-selected={selected} tabIndex={selected ? 0 : -1}
             onClick={() => onChange(o.value)} onKeyDown={(e) => onKeyDown(e, i)}
-            className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${selected ? 'bg-neutral-200 text-neutral-900' : 'text-neutral-400 hover:text-neutral-100'}`}>
+            className={`bui-tab px-2.5 py-1 text-xs${selected ? ' bui-tab--active' : ''}`}>
             {o.label}
-          </Button>
+          </button>
         );
       })}
     </div>

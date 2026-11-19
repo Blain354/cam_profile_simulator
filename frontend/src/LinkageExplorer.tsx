@@ -1051,7 +1051,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
     ? { lever: 'Lever, L', bar2: 'Attach point, c', bar1: 'Link, r', anchor: 'Anchor, a', foot: 'Foot, f', foot_angle: 'Foot angle' }
     : { bar1: 'Bar 1, L1', bar2: 'Bar 2, L2', anchor: 'Anchor, a', lever: 'Lever, L', foot: 'Foot, f', foot_angle: 'Foot angle' };
   const varUnit = (v: SearchVar) => (v === 'foot_angle' ? '°' : 'mm');
-  const toggleFixed = (v: SearchVar, on: boolean) => setSearch((s) => ({ ...s, fixed: on ? [...s.fixed.filter((f) => f !== v), v] : s.fixed.filter((f) => f !== v) }));
+  const toggleFixed = (v: SearchVar, on: boolean) => setSearch((s) => ({ ...s, fixed: SEARCH_VARS.filter((f) => (f === v ? on : s.fixed.includes(f))) }));
 
   // ─── Control groups shared by both menus: one state, two places ───
 
@@ -1203,7 +1203,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
       <Accordion title="Motor and screw" defaultOpen={false}>
         <div className="space-y-5 pt-2">
           <p className="text-[10px] leading-snug text-neutral-400">
-            Assumed defaults: set them to the real motor and screw.
+            Forces are for the pressure set under Pneumatic system, taken as the maximum the seal must hold. The defaults here are assumed: set them to the real motor and screw.
           </p>
           <ParameterSlider label="Motor torque (mN·m)" value={params.motor_torque_mnm} min={1} max={300} step={1} onChange={(v) => set('motor_torque_mnm', v)}
             secondaryValue={`${(params.motor_torque_mnm / 98.0665).toFixed(2)} kg·cm`}
@@ -1299,7 +1299,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
                       {`${data.carriage_bearing_mpa.toFixed(1)} MPa`}
                     </span>} />
                   {data.carriage_pin_bending_mpa != null && <StatRow label="Rod bending at the carriage face" value={
-                    <span className={data.carriage_pin_bending_mpa > params.carriage_pin_strength_mpa ? 'text-red-400' : undefined}>
+                    <span className={params.carriage_pin_strength_mpa > 0 && data.carriage_pin_bending_mpa > params.carriage_pin_strength_mpa ? 'text-red-400' : undefined}>
                       {`${data.carriage_pin_bending_mpa.toFixed(0)} MPa`}
                     </span>} />}
                 </>
@@ -1498,7 +1498,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
         {optMessage && (
           <p className={`text-xs leading-snug ${optMessage.ok ? 'text-emerald-400' : 'text-red-400'}`} role="status">{optMessage.text}</p>
         )}
-        {report && typeof report.passed === 'number' && typeof report.shortlist === 'number' && (
+        {report?.model === 'one-piece' && typeof report.passed === 'number' && typeof report.shortlist === 'number' && report.shortlist > 0 && (
           <p className="text-xs text-neutral-300">{`${report.passed} of ${report.shortlist} shortlisted designs passed the limits.`}</p>
         )}
         {optOut?.found && onePiece && !report && (

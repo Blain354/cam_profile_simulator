@@ -85,3 +85,11 @@ test('a search the limits rejected says why and keeps the design', async () => {
   await findByText('Rejected for: part stress 7, screw thrust 5.')
   await findByText('No design passed the limits. The design on screen was kept.')
 })
+
+test('a rigid search does not print an empty shortlist count', async () => {
+  stubLinkage({ found: true, feasible: 3, tested: 30, search_report: { model: 'rigid', shortlist: 0, passed: 0, rejected: { stress: 0, thrust: 0, eye: 0, rod: 0, no_flow: 0 } }, params: { bar2_length: 12, stroke: 1.5 }, result: minimalResult })
+  const { getByRole, findByText, queryByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
+  await findByText('Found dimensions')
+  expect(queryByText(/shortlisted designs passed/)).toBeNull()
+})

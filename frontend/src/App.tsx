@@ -40,6 +40,9 @@ import {
 
 type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime';
 
+// Memoised: it stays mounted behind the other tabs and should not follow every App render.
+const KeptProfileBuilder = React.memo(ProfileBuilder);
+
 type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum';
 const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum'];
 const TABS_KEY = 'cam-sim.tabs.v1';
@@ -173,14 +176,16 @@ export default function App() {
   };
 
   // Cross-tab: apply params from Profile Builder
-  const handleApplyFromBuilder = (builderParams: SimulationParams) => {
+  // Stable, so the kept-alive builder does not re-render while hidden.
+  const handleApplyFromBuilder = useCallback((builderParams: SimulationParams) => {
     setParams(builderParams);
     setSavedParams(null);
     setActiveConfigName('Builder');
     setActiveTab('cam');
     setSubTab('cam', 'explorer');
-    showToast('Profile applied from Builder');
-  };
+    setToast({ message: 'Profile applied from Builder', visible: true });
+    setTimeout(() => setToast({ message: '', visible: false }), 3000);
+  }, [setSubTab]);
 
   const fetchConfigs = async () => {
     try {
@@ -564,8 +569,8 @@ export default function App() {
       <BlueprintBackground />
       {/* Shared chrome; simulation controls stay in the tool. */}
       <Header variant="full-width" className="cam-kit-header">
-        <div className="flex items-center gap-6">
-          <div>
+        <div className="flex items-center gap-4">
+          <div className="shrink-0">
             <h1 className="text-2xl font-bold text-neutral-100 leading-tight hidden lg:block">
               Cam Profile Simulator
             </h1>
@@ -573,7 +578,7 @@ export default function App() {
           </div>
 
           {/* Tab Bar */}
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <div className="flex items-center bg-neutral-800/60 rounded-xl border border-neutral-700/50 p-1 gap-1">
               {([
                 ['cam', 'Cam', Disc3],
@@ -582,7 +587,7 @@ export default function App() {
                 ['pendulum', 'Pendulum Linkage', Anchor],
               ] as const).map(([tab, label, Icon]) => (
                 <Button key={tab} variant="ghost" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}
-                  className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === tab ? (tab === 'cam' ? 'bg-blue-600 text-white' : 'bg-amber-600 text-white') : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === tab ? (tab === 'cam' ? 'bg-blue-600 text-white' : 'bg-amber-600 text-white') : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
                   <Icon className="w-3.5 h-3.5" /> {label}
                 </Button>
               ))}
@@ -592,7 +597,7 @@ export default function App() {
 
           {/* Context pill (tab-specific) */}
           {camExplorer && (
-            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap min-[1440px]:flex-nowrap min-w-0">
               <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-1 shadow-sm transition-colors ${hasChanges ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={activeConfigName}>
                 <div className={`flex min-w-0 max-w-[min(100vw-8rem,18rem)] sm:max-w-[22rem] items-center gap-2 rounded-lg px-2.5 py-1.5 ${hasChanges ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
                   <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
@@ -623,7 +628,7 @@ export default function App() {
             </div>
           )}
           {camFinder && (
-            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap min-[1440px]:flex-nowrap min-w-0">
               <div
                 className="inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border border-neutral-700/80 bg-neutral-800/50 p-1 shadow-sm transition-colors"
                 title={activeBuilderExperienceName}
@@ -670,7 +675,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2">
           <Button variant="ghost"
             type="button"
             onClick={() => setShowStlExport(true)}
@@ -695,8 +700,9 @@ export default function App() {
             <CircleHelp className="w-3.5 h-3.5" />
             Guidance
           </Button>
-          <span className={`flex h-3 w-3 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} />
-          <span className="text-sm text-neutral-400">{data ? 'Connected' : 'Disconnected'}</span>
+          <span className={`flex h-3 w-3 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} title={data ? 'Connected' : 'Disconnected'} />
+          {/* Spelled out on very wide screens only, so the header keeps one row; the dot carries it otherwise. */}
+          <span className="sr-only min-[1700px]:not-sr-only text-sm text-neutral-400">{data ? 'Connected' : 'Disconnected'}</span>
         </div>
       <ThemeToggle theme={theme} onThemeChange={setTheme} />
       </Header>
@@ -850,9 +856,9 @@ export default function App() {
           }}
         />
       ) : null}
-      {builderMounted && (
-        <div className={camFinder ? 'contents' : 'hidden'}>
-          <ProfileBuilder
+      {(builderMounted || camFinder) && (
+        <div className={camFinder ? 'cam-keepalive contents' : 'hidden'}>
+          <KeptProfileBuilder
             onApplyToExplorer={handleApplyFromBuilder}
             explorerCompliance={params.compliance}
             guidanceEnabled={guidanceMode}
