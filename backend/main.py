@@ -833,6 +833,8 @@ class LinkageOnshapeApplyRequest(LinkageOnshapePreviewRequest):
 def _onshape_variables(call):
     try:
         return call()
+    except onshape_variables.TableNameError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except onshape_variables.LinkageOnshapeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except onshape_export.OnshapeConfigError as exc:

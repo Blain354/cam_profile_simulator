@@ -1,6 +1,8 @@
 """Onshape variable table writes, against a fake transport: python -m unittest discover -s backend/tests."""
 
 import copy
+import threading
+import time
 import unittest
 from dataclasses import replace
 from unittest import mock
@@ -32,12 +34,18 @@ class FakeOnshape:
             self.tables[eid] = copy.deepcopy(variables)
         self.calls = []
         self.fail_write = False
+        self.ignore_filter = False   # a listing that returns every element, Part Studios included
+        self.references = {}         # eid -> blocks of referenced Variable Studios in its read
+        self.listing_delay = 0.0
 
-    def __call__(self, method, path, *, query=None, body=None):
+    def __call__(self, method, path, *, query=None, body=None, follow_redirects=True):
+        assert follow_redirects is False, "the linkage write must never follow a redirect"
         self.calls.append((method, path))
         if (method, path) == ("GET", ELEMENTS):
             assert query == {"elementType": "VARIABLESTUDIO"}, query
-            return [e for e in copy.deepcopy(self.elements) if e["elementType"] == "VARIABLESTUDIO"]
+            listing = copy.deepcopy(self.elements)
+            time.sleep(self.listing_delay)
+            return listing if self.ignore_filter else [e for e in listing if e["elementType"] == "VARIABLESTUDIO"]
         if (method, path) == ("POST", "/variables/d/doc/w/ws/variablestudio"):
             eid = f"NEW{len(self.tables)}"
             self.elements.append({"id": eid, "name": body["name"], "elementType": "VARIABLESTUDIO"})
@@ -47,13 +55,17 @@ class FakeOnshape:
         eid = eid_part[: -len("/variables")] if eid_part.endswith("/variables") else None
         if prefix == "" and eid in self.tables:
             if method == "GET":
-                return [{"variableStudioReference": None, "variables": [dict(v, value=None) for v in self.tables[eid]]}]
+                own = {"variableStudioReference": None, "variables": [dict(v, value=None) for v in self.tables[eid]]}
+                return [own] + copy.deepcopy(self.references.get(eid, []))
             if method == "POST":
                 if self.fail_write:
                     raise ov.oe.OnshapeAPIError(400, "bad variable", None)
                 self.tables[eid] = copy.deepcopy(body)
                 return None
         raise AssertionError(f"unexpected Onshape call {method} {path}")
+
+    def created(self):
+        return [m for m, p in self.calls if p.endswith("/variablestudio")]
 
     def table(self, name):
         eids = [e["id"] for e in self.elements if e["name"] == name and e["elementType"] == "VARIABLESTUDIO"]
@@ -195,6 +207,128 @@ class OnshapeVariablesTests(unittest.TestCase):
         self.assertTrue(out["table_created"])
         self.assertTrue(out["table_url"].endswith(out["element_id"]))
         self.assertEqual(self.rows(out)["pend_arm_L"]["status"], "error")
+        self.assertIn("bad variable", out["write_error"])
+        # The retry finds the table just created and writes into it: still one table.
+        fake.fail_write = False
+        again = ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertFalse(again["table_created"])
+        self.assertIsNone(again["write_error"])
+        self.assertEqual(again["element_id"], out["element_id"])
+        self.assertEqual(len(fake.created()), 1)
+        self.assertEqual(fake.expression("cam_sim_pendulum", "pend_arm_L"), "14.43 mm")
+
+    def test_a_network_failure_on_write_is_reported_too(self):
+        fake = self.use(FakeOnshape())
+        real = fake.__call__
+
+        def broken(method, path, **kw):
+            if method == "POST" and path.endswith("/variables"):
+                fake.calls.append((method, path))
+                raise OSError("timed out")
+            return real(method, path, **kw)
+        self.use(broken).calls = fake.calls
+        out = ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertTrue(out["table_created"])
+        self.assertEqual(out["write_error"], "timed out")
+
+    def test_same_name_on_another_element_type_is_not_the_table(self):
+        # The listing ignores the filter: PS1 (a Part Studio called cam_sim_pendulum) comes back too.
+        fake = self.use(FakeOnshape({"T1": ("cam_sim_pendulum", HAND_MADE)}))
+        fake.ignore_filter = True
+        out = ov.preview(PENDULUM, target=TARGET)
+        self.assertEqual(out["element_id"], "T1")                          # not a duplicate of PS1
+        fake = self.use(FakeOnshape())
+        fake.ignore_filter = True
+        out = ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertTrue(out["table_created"])                              # PS1 is not the table
+        self.assertNotEqual(out["element_id"], "PS1")
+        self.untouched_elsewhere()
+
+    def test_name_match_is_exact(self):
+        # Case and spaces on the Onshape side count; the name typed is trimmed.
+        fake = self.use(FakeOnshape({"T1": ("Cam_Sim_Pendulum", HAND_MADE), "T2": ("cam_sim_pendulum ", HAND_MADE),
+                                     "T3": ("cam_sim  pendulum", HAND_MADE)}))
+        self.assertFalse(ov.preview(PENDULUM, target=TARGET)["table_exists"])
+        self.assertEqual(ov.preview(PENDULUM, table_name=" Cam_Sim_Pendulum ", target=TARGET)["element_id"], "T1")
+        self.assertEqual(ov.preview(PENDULUM, table_name="cam_sim  pendulum", target=TARGET)["element_id"], "T3")
+        ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertEqual(len(fake.created()), 1)
+        for eid in ("T1", "T2", "T3"):
+            self.assertEqual(fake.tables[eid], HAND_MADE)
+
+    def test_referenced_studios_are_never_written_back(self):
+        fake = self.use(FakeOnshape({"T1": ("cam_sim_pendulum", HAND_MADE[:2])}))
+        ref = {"variableStudioReference": {"elementId": "VS0"},
+               "variables": [{"name": "pend_arm_L", "type": "LENGTH", "expression": "1 mm", "description": ""}]}
+        fake.references["T1"] = [ref]
+        rows = self.rows(ov.preview(PENDULUM, target=TARGET))
+        self.assertEqual(rows["pend_arm_L"]["status"], "new")              # not in the table's own list
+        self.assertIn("references", rows["pend_arm_L"]["detail"])
+        ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertEqual([v["name"] for v in fake.tables["T1"]], ["pinch_tube_OD", "M3_length", "pend_arm_L"])
+        self.untouched_elsewhere()
+
+    def test_unexpected_replies_stop_before_any_write(self):
+        for listing in ({"items": []}, None):
+            fake = self.use(FakeOnshape())
+
+            def odd_listing(method, path, listing=listing, fake=fake, **kw):
+                fake.calls.append((method, path))
+                return listing if path == ELEMENTS else fake(method, path, **kw)
+            self.use(odd_listing)
+            with self.assertRaises(ov.oe.OnshapeAPIError):
+                ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+            self.assertEqual(fake.calls, [("GET", ELEMENTS)])
+        for read in ([], [{"variableStudioReference": None}], None, [{"variableStudioReference": None, "variables": [{"type": "LENGTH"}]}],
+                     [{"variableStudioReference": None, "variables": []}, {"variableStudioReference": None, "variables": []}]):
+            fake = self.use(FakeOnshape({"T1": ("cam_sim_pendulum", HAND_MADE)}))
+            real = FakeOnshape.__call__
+
+            def odd(method, path, read=read, fake=fake, **kw):
+                if method == "GET" and path.endswith("/e/T1/variables"):
+                    fake.calls.append((method, path))
+                    return read
+                return real(fake, method, path, **kw)
+            self.use(odd)
+            with self.assertRaises(ov.oe.OnshapeAPIError):
+                ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+            self.assertNotIn("POST", [m for m, _ in fake.calls])
+            self.assertEqual(fake.tables["T1"], HAND_MADE)
+
+    def test_odd_element_ids_are_refused(self):
+        fake = self.use(FakeOnshape({"../PS1": ("cam_sim_pendulum", [])}))
+        with self.assertRaises(ov.LinkageOnshapeError):
+            ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertEqual(fake.calls, [("GET", ELEMENTS)])
+        with mock.patch.dict(ov.os.environ, {"ONSHAPE_DOCUMENT_ID": "d/../x", "ONSHAPE_WORKSPACE_ID": "w"}):
+            with self.assertRaises(ov.LinkageOnshapeError):
+                ov.target_from_env()
+
+    def test_written_variables_get_the_type_of_their_unit_and_keep_their_keys(self):
+        old = [{"name": "pend_foot_angle", "type": "LENGTH", "expression": "3 mm"},
+               {"name": "note", "type": "ANY", "expression": "\"x\""}]
+        fake = self.use(FakeOnshape({"T1": ("cam_sim_pendulum", old)}))
+        ov.apply(PENDULUM, ["pend_foot_angle"], target=TARGET)
+        self.assertEqual(fake.tables["T1"], [{"name": "pend_foot_angle", "type": "ANGLE", "expression": "100 deg"}, old[1]])
+
+    def test_expressions_are_plain_numbers(self):
+        self.assertEqual(ov._expression(114.43216, "mm"), "114.4322 mm")
+        self.assertEqual(ov._expression(1234567.0, "mm"), "1234567 mm")
+        self.assertEqual(ov._expression(-0.00001, "mm"), "0 mm")
+        self.assertEqual(ov._expression(-2.5, "deg"), "-2.5 deg")
+        self.assertEqual(ov._expression(3, ""), "3")
+
+    def test_two_clicks_at_once_create_one_table(self):
+        fake = self.use(FakeOnshape())
+        fake.listing_delay = 0.05
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET))) for _ in range(2)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        self.assertEqual(len(fake.created()), 1)
+        self.assertEqual(sorted(o["table_created"] for o in out), [False, True])
 
     def test_elbow_names_follow_the_onshape_sketch(self):
         # In the CAD sketch L1 starts at the fixed anchor: the simulator's bar 2.
@@ -289,12 +423,12 @@ class OnshapeEndpointsTests(unittest.TestCase):
             self.assertIn("/e/", res.json()["table_url"])
             self.assertEqual(fake.expression("cam_sim_pendulum", "pend_arm_L"), "14.43 mm")
 
-    def test_bad_name_and_duplicates_are_409(self):
+    def test_bad_name_is_422_and_duplicates_409(self):
         fake = FakeOnshape({"T1": ("dup", []), "T2": ("dup", [])})
         a, b = self.onshape(fake)
         with a, b:
             res = self.client.post("/api/linkage/onshape/preview", json={"linkage_type": "pendulum", "table_name": "x" * 61})
-            self.assertEqual(res.status_code, 409)
+            self.assertEqual(res.status_code, 422)
             self.assertIn("1 to 60 characters", res.json()["detail"])
             res = self.client.post("/api/linkage/onshape/apply", json={"linkage_type": "pendulum", "table_name": "dup", "names": ["pend_arm_L"]})
             self.assertEqual(res.status_code, 409)

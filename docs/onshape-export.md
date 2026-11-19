@@ -193,6 +193,11 @@ The table is found by name among the document's Variable Studios. The default na
 remembered per linkage kind in the browser. A new name gives a brand-new table. If several
 Variable Studios carry that exact name, the app refuses (HTTP 409) rather than pick one.
 
+The match is exact: the name typed is trimmed, then compared as is with the Onshape names, case
+and spaces included (`Cam_Sim_Pendulum` or `cam_sim_pendulum ` in Onshape is not
+`cam_sim_pendulum`). Only elements of type `VARIABLESTUDIO` count: a Part Studio or a drawing
+with the same name is never the table, nor a duplicate of it.
+
 1. Opening the window, or **Look up** after changing the name, calls
    `POST /api/linkage/onshape/preview` with `table_name`. If the table does not exist the window
    says so and lists every variable as new (1 API call). If it exists, it is read and each
@@ -208,6 +213,30 @@ Variable Studios carry that exact name, the app refuses (HTTP 409) rather than p
    With nothing ticked nothing is created or written (1 call). The reply says whether the table
    was created and gives its element id and `https://cad.onshape.com/documents/{did}/w/{wid}/e/{eid}`,
    shown as **Open the table in Onshape**.
+   A variable written by the simulator gets the type of its unit: `LENGTH` for mm, `ANGLE` for
+   deg, `NUMBER` without a unit; the expression is a plain number with up to 4 decimals and its
+   unit (`14.43 mm`, `100 deg`).
+
+What can go wrong:
+
+- **Created, then the write fails.** The reply has `table_created: true`, the element id and
+  `write_error`, and every ticked row is `error`. The window says the table now exists and that
+  nothing was written. Writing again finds that table by name: no second table is made.
+- **Two clicks at once.** The button is disabled while a request runs, and the backend holds a
+  lock per (document, workspace, table name) around list, create and write, so only one table
+  is created. The lock is in memory: it holds with the single uvicorn worker the image runs.
+- **An odd reply from Onshape.** A listing that is not a list, a read that is not one block of
+  the table's own variables (plus referenced ones), or a variable without a name stops the
+  apply before any write, so a bad read is never written back as an emptier table. Ids that
+  are not plain alphanumeric are refused before they go into a path, and a redirect is never
+  followed (a POST must not become a GET reported as done).
+- **The table references another Variable Studio.** The read then has one block per referenced
+  studio. Only the table's own block is merged and written back; referenced variables are not
+  copied into it. A ticked name that only a referenced studio defines is added to the table's
+  own list, and its row says so.
+- **Many elements.** The listing is read as one array; the app does not page it. A document
+  with very many tabs is not expected here, but if Onshape ever paged that reply, a table
+  beyond the first page would be missed and a second one created.
 
 The table is a tab of the Onshape document. A Part Studio uses its values only once it
 references the table (**Insert > Variable Studio reference**), which the owner does once by hand.
@@ -225,7 +254,7 @@ Request and reply:
 { "rows": [{ "name": "pend_arm_L", "key": "bar2_length", "label": "...", "new_expression": "14.43 mm",
              "current_expression": "10 mm", "status": "update", "detail": "" }],
   "api_calls": 2, "table_name": "cam_sim_pendulum", "table_exists": true, "table_created": false,
-  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…" }
+  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null }
 ```
 
 Row status: preview gives `update`, `same` or `new`; apply turns them into `written`, `created`,
@@ -252,5 +281,5 @@ The value keys are listed in `VALUES` in the same file. Derived values can be se
 `link_arc_radius`, so that name is left out of the list.
 
 These calls are made from the container and are not in `~/automation/state/onshape-appels.jsonl`.
-A bad table name, duplicate table names, missing keys, an unusable target, or a geometry that
-cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
+A bad table name comes back as HTTP 422 with the rule. Duplicate table names, missing keys, an
+unusable target, or a geometry that cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.

@@ -629,7 +629,7 @@ interface OnshapeRow {
 }
 interface OnshapeTable {
   rows: OnshapeRow[]; api_calls: number; table_name: string; table_exists: boolean; table_created: boolean;
-  element_id: string | null; table_url: string | null;
+  element_id: string | null; table_url: string | null; write_error?: string | null;
 }
 
 async function onshapeCall(path: string, body: unknown): Promise<OnshapeTable> {
@@ -662,6 +662,7 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const staleRef = useRef(0);
+  const writingRef = useRef(false);   // busy state lags a render: this stops a double click sending two writes
 
   const name = nameInput.trim();
   const nameOk = TABLE_NAME.test(name);
@@ -691,21 +692,28 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
   }, [open]);
 
   const checkName = () => { if (nameOk && busy == null && name !== table?.table_name) read(name); };
-  const canPick = (r: OnshapeRow) => r.status === 'update' || r.status === 'new';
+  const canPick = (r: OnshapeRow) => r.status === 'update' || r.status === 'new' || r.status === 'error';
   // The write goes to the table that was read: a name edited since must be checked first.
   const current = table != null && name === table.table_name;
   const chosen = table && current ? table.rows.filter((r) => canPick(r) && picked.has(r.name)) : [];
   const toggle = (n: string) => setPicked((p) => { const s = new Set(p); if (s.has(n)) s.delete(n); else s.add(n); return s; });
 
   const write = async () => {
-    if (!table) return;
+    if (!table || writingRef.current) return;
+    writingRef.current = true;
     setBusy('write'); setError(null);
     try {
-      setTable(await onshapeCall('/api/linkage/onshape/apply', { ...params, table_name: table.table_name, names: chosen.map((r) => r.name) }));
-      setDone(true);
+      const t = await onshapeCall('/api/linkage/onshape/apply', { ...params, table_name: table.table_name, names: chosen.map((r) => r.name) });
+      setTable(t);
+      if (t.write_error) {
+        setError(`${t.table_created ? `The table ${t.table_name} was created and now exists, but nothing` : 'Nothing'} was written: ${t.write_error}. Writing again uses the same table.`);
+      } else {
+        setDone(true);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The write to Onshape failed.');
     } finally {
+      writingRef.current = false;
       setBusy(null);
     }
   };
@@ -775,7 +783,7 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
             </div>
             <div className="flex items-center justify-between gap-3">
               {table.table_url
-                ? <a href={table.table_url} target="_blank" rel="noreferrer" className="text-xs text-amber-300 underline">Open the table in Onshape</a>
+                ? <a href={table.table_url} target="_blank" rel="noopener noreferrer" className="text-xs text-amber-300 underline">Open the table in Onshape</a>
                 : <span />}
               <div className="flex gap-2">
                 <Button variant="ghost" type="button" onClick={onClose} disabled={busy != null} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-bold text-neutral-300">
