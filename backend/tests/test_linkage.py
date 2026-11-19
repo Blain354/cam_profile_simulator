@@ -281,7 +281,9 @@ class LinkageTests(unittest.TestCase):
         np.testing.assert_allclose(reactions[0], [0.0, -1.0, -length], atol=1e-6)
 
     def test_one_piece_flexure_bends_instead_of_pivoting(self):
-        p = replace(PENDULUM, pad_length=1.0, stroke=0.6, compliant=True, link_curved=True)
+        # The default is the real part: the carriage end turns on a steel rod.
+        self.assertFalse(PENDULUM.carriage_clamped)
+        p = replace(PENDULUM, pad_length=1.0, stroke=0.6, compliant=True, link_curved=True, carriage_clamped=True)
         r = compute_linkage(p)
         self.assertTrue(r.feasible, r.message)
         import json
@@ -334,6 +336,14 @@ class LinkageTests(unittest.TestCase):
         # Letting the carriage end pivot frees the link: softer still.
         pivot = compute_linkage(replace(p, carriage_clamped=False))
         self.assertLess(pivot.spring_rate, r.spring_rate)
+        # The rod carries what the carriage gives the part; the eye and the rod are checked on it.
+        self.assertGreater(pivot.carriage_load, 0.0)
+        self.assertGreaterEqual(pivot.carriage_load, pivot.max_side_load)
+        self.assertAlmostEqual(pivot.carriage_bearing_mpa, pivot.carriage_load / (1.5 * p.member_thickness), places=9)
+        self.assertAlmostEqual(pivot.carriage_pin_bending_mpa, 32 * pivot.carriage_load * 8.0 / 4 / (np.pi * 1.5 ** 3), places=9)
+        self.assertIsNone(r.carriage_bearing_mpa)       # clamped: no rod
+        thick_rod = compute_linkage(replace(p, carriage_clamped=False, carriage_pin_diameter=3.0))
+        self.assertAlmostEqual(thick_rod.carriage_bearing_mpa, pivot.carriage_bearing_mpa / 2.0, places=9)
         # Past the strength the travel where it happens is reported.
         weak = compute_linkage(replace(p, member_strength_mpa=r.max_stress_mpa / 2.0))
         self.assertIsNotNone(weak.stress_limit_y)

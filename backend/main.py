@@ -664,7 +664,9 @@ class LinkageRequest(BaseModel):
     contact_deformation: bool = True
     link_curved: bool = False
     compliant: bool = False
-    carriage_clamped: bool = True
+    carriage_clamped: bool = False
+    carriage_pin_diameter: float = Field(1.5, ge=0, le=100)
+    carriage_pin_length: float = Field(8.0, ge=0, le=1000)
     member_strength_mpa: float = Field(40.0, ge=0, le=1e5)
 
 

@@ -91,7 +91,9 @@ class LinkageParams:
     # One-piece flexure (pendulum only): arm, foot and link are a single part built into the
     # outer shell at the anchor. Nothing pivots; the part bends. See _Flexure.
     compliant: bool = False
-    carriage_clamped: bool = True    # the link's carriage end is held in angle too (False: it pivots there)
+    carriage_clamped: bool = False   # True: the link's carriage end is held in angle. False: it turns on the pivot rod
+    carriage_pin_diameter: float = 1.5  # mm, steel rod the link turns on at the carriage
+    carriage_pin_length: float = 8.0    # mm, that rod's length
     member_strength_mpa: float = 40.0   # MPa, stress the material may see (assumed: about printed PETG at yield)
 
 
@@ -127,6 +129,10 @@ class LinkageResult:
     stress_limit_y: Optional[float] = None         # mm of travel where the stress passes the strength
     spring_rate: Optional[float] = None            # N of screw thrust per mm of travel, bending the two parts, no tube
     max_rotation_deg: Optional[float] = None       # largest rotation along the part over the stroke
+    # Pivot rod at the carriage (one-piece part, carriage end free to turn).
+    carriage_load: Optional[float] = None          # N, worst load one part puts on the rod
+    carriage_bearing_mpa: Optional[float] = None   # that load over rod diameter x part thickness: pressure in the eye
+    carriage_pin_bending_mpa: Optional[float] = None  # upper bound: rod held at its two ends only, load at mid length
     flow_a: List[Optional[float]] = field(default_factory=list)
     flow_b: List[Optional[float]] = field(default_factory=list)
     flow_target: List[Optional[float]] = field(default_factory=list)
@@ -591,8 +597,8 @@ class _Flexure:
     """Pendulum built as one piece: arm, foot and link are a single beam structure.
 
     The arm is built into the outer shell at the anchor A (no pivot). The foot carries on from
-    the arm at the foot angle, and the link runs from the joint C to the carriage B, where it is
-    clamped or pivots. The part is made in its Y = 0 shape; the carriage then bends it.
+    the arm at the foot angle, and the link runs from the joint C to the carriage B, where it turns
+    on a steel rod (or is clamped). The part is made in its Y = 0 shape; the carriage then bends it.
 
     Small-deflection beam theory, so everything is a sum of two shapes: what 1 mm of carriage
     travel does with no tube, and what 1 N on the pin does with the carriage held. That is good
@@ -718,6 +724,7 @@ class _Flexure:
         pull = sgn * (self.r_mm[i_b, 1] * travel + self.r_n[i_b, 1] * force)
         thrust = pull - pull[::-1]
         side_load = np.abs(self.r_mm[i_b, 0] * travel + self.r_n[i_b, 0] * force)
+        rod_load = np.hypot(side_load, self.r_mm[i_b, 1] * travel + self.r_n[i_b, 1] * force)
         # Stress along the part: bending at the worse end of each element, plus the axial share.
         axial = np.abs(self.s_mm[:, 0][:, None] * travel + self.s_n[:, 0][:, None] * force)
         bending = np.maximum(np.abs(self.s_mm[:, 1][:, None] * travel + self.s_n[:, 1][:, None] * force),
@@ -762,6 +769,12 @@ class _Flexure:
             out.stress_limit_y = float(over.min()) if over.size else None
         out.max_rotation_deg = float(np.degrees(rotation[valid].max()))
         out.max_side_load = float(side_load[valid].max())
+        out.carriage_load = float(rod_load[valid].max())
+        d_rod, l_rod = p.carriage_pin_diameter, p.carriage_pin_length
+        if not p.carriage_clamped and d_rod > 0:
+            out.carriage_bearing_mpa = out.carriage_load / (d_rod * p.member_thickness)
+            if l_rod > 0:
+                out.carriage_pin_bending_mpa = float(32.0 * out.carriage_load * l_rod / 4.0 / (np.pi * d_rod ** 3))
         out.thrust_y0 = float(abs(thrust[i0]))
         out.thrust_needed = float(np.nanmax(np.abs(thrust_out)))
         _screw(p, out, y, thrust_out)

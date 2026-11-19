@@ -45,6 +45,8 @@ export interface LinkageParams {
   link_curved: boolean;
   compliant: boolean;
   carriage_clamped: boolean;
+  carriage_pin_diameter: number;
+  carriage_pin_length: number;
   member_strength_mpa: number;
 }
 
@@ -153,6 +155,9 @@ interface LinkageResult {
   screw_self_locking: boolean | null;
   max_link_force: number | null;
   max_side_load: number | null;
+  carriage_load: number | null;
+  carriage_bearing_mpa: number | null;
+  carriage_pin_bending_mpa: number | null;
   max_bending_stress_mpa: number | null;
   max_axial_stress_mpa: number | null;
   buckling_factor: number | null;
@@ -192,7 +197,10 @@ const COMMON = {
   contact_deformation: true,
   link_curved: false,
   compliant: false,
-  carriage_clamped: true,
+  // The real part: the link turns on a 1.5 x 8 mm stainless rod at the carriage.
+  carriage_clamped: false,
+  carriage_pin_diameter: 1.5,
+  carriage_pin_length: 8,
   // Assumed: about printed PETG at yield.
   member_strength_mpa: 40,
 };
@@ -218,7 +226,8 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
     const raw = JSON.parse(localStorage.getItem(storageKey(kind)) ?? 'null');
     if (raw && typeof raw === 'object') {
       return {
-        params: { ...DEFAULT_PARAMS[kind], ...raw.params, linkage_type: kind },
+        // A state stored before the pivot rod existed had the carriage end clamped by default: the real part pivots there.
+        params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind },
         // Ranges stored before the foot was searched kept the anchor on the tube side only: open them up once.
         search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}) },
         profile: typeof raw.profile === 'string' ? raw.profile : null,
@@ -455,7 +464,7 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
         {!pose.lines && <circle cx={axx} cy={-ayy} r={0.3} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />}
         {pose.lines && params.carriage_clamped
           ? <rect x={pose.pivotX - 0.45} y={-hB - 0.45} width={0.9} height={0.9} fill={BLUE} />
-          : <circle cx={pose.pivotX} cy={-hB} r={0.42} fill={BLUE} />}
+          : <circle cx={pose.pivotX} cy={-hB} r={pose.lines ? Math.max(params.carriage_pin_diameter / 2, 0.2) : 0.42} fill={BLUE} />}
       </g>
     );
   };
@@ -751,7 +760,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = await res.json();
       // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
-      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...raw.params, linkage_type: kind };
+      const p: LinkageParams = { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind };
       const s: LinkageSearch = { ...DEFAULT_SEARCH[kind], ...raw.search };
       setPlaying(false);
       setParams(p);
@@ -997,8 +1006,16 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                       title="Arm, foot and link are a single part fixed to the outer shell at the anchor. Nothing pivots: the carriage bends the part. Off: three rigid bars on pivots." />
                     {params.compliant && (
                       <>
-                        <Switch label="Carriage end held in angle" on={params.carriage_clamped} onChange={(v) => set('carriage_clamped', v)}
-                          title="On: the link is clamped in the carriage. Off: it pivots there (blue dot), which lets the link turn and takes much less thrust." />
+                        <Switch label="Carriage end clamped (no pivot rod)" on={params.carriage_clamped} onChange={(v) => set('carriage_clamped', v)}
+                          title="Off: the link turns on the steel rod in the carriage (blue dot), the only real pivot. On: the link is clamped in the carriage and cannot turn there." />
+                        {!params.carriage_clamped && (
+                          <>
+                            <ParameterSlider label="Pivot rod diameter" value={params.carriage_pin_diameter} min={0.5} max={4} step={0.1} onChange={(v) => set('carriage_pin_diameter', v)}
+                              description="Steel rod the link turns on at the carriage." />
+                            <ParameterSlider label="Pivot rod length" value={params.carriage_pin_length} min={2} max={20} step={0.5} onChange={(v) => set('carriage_pin_length', v)}
+                              description="Used for the rod's own bending, taken held at its two ends." />
+                          </>
+                        )}
                         <p className="text-[10px] leading-snug text-neutral-400">
                           The part is made in its Y = 0 shape and only bends. Its section, modulus and strength are under Forces and structure. Small-deflection beam model: trust it up to about 10° of rotation.
                         </p>
@@ -1191,6 +1208,16 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               <StatRow label="Pin moves, per mm of carriage" value={`${data.sensitivity_y0.toFixed(3)} mm`} />
               <StatRow label="Largest rotation" value={data.max_rotation_deg == null ? 'N/A'
                 : <span className={data.max_rotation_deg > 10 ? 'text-amber-400' : undefined}>{`${data.max_rotation_deg.toFixed(1)}°`}</span>} />
+              {data.carriage_bearing_mpa != null && (
+                <>
+                  <StatRow label="Worst load on the pivot rod" value={n2(data.carriage_load, 'N', 1)} />
+                  <StatRow label="Pressure in the link's eye" value={
+                    <span className={params.member_strength_mpa > 0 && data.carriage_bearing_mpa > params.member_strength_mpa ? 'text-red-400' : undefined}>
+                      {`${data.carriage_bearing_mpa.toFixed(1)} MPa`}
+                    </span>} />
+                  {data.carriage_pin_bending_mpa != null && <StatRow label="Rod bending, at most" value={`${data.carriage_pin_bending_mpa.toFixed(0)} MPa`} />}
+                </>
+              )}
               {data.stress_margin != null && data.stress_margin < 1 && (
                 <p className="text-[10px] leading-snug text-red-400" role="alert">
                   The part is stressed past its strength within this stroke. Make it thinner in the plane (bar width), longer, softer (modulus), or shorten the stroke.
@@ -1198,6 +1225,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               )}
               <p className="text-[10px] leading-snug text-neutral-400">
                 One section for arm, foot and link. Fillets at the joints are not modelled: a generous radius there lowers the real peak, a sharp corner raises it.
+                {data.carriage_bearing_mpa != null && ' The eye around the rod is not drawn or checked beyond its pressure (load over rod diameter × part thickness); the rod bending assumes the rod is held at its two ends only, with the load at mid length, so the real figure is lower. Friction on the rod is ignored.'}
               </p>
             </div>
           )}
