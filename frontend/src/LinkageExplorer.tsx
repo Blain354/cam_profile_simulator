@@ -1618,6 +1618,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer }: 
               className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
               {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {playing ? 'Stop' : 'Oscillate'}
             </Button>
+            <Button variant="ghost" type="button" onClick={() => { setPlaying(false); setCycleT(null); setY(0); }} disabled={!playing && yPose === 0}
+              title="Bring the carriage back to Y = 0"
+              className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
+              Center
+            </Button>
             <span className="text-xs text-neutral-400 text-right">
               {loadedRpm.toFixed(0)} RPM under load ({params.motor_speed} × {Math.round(params.speed_factor * 100)} %), {speed.toFixed(2)} mm/s
             </span>
