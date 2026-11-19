@@ -668,6 +668,7 @@ class LinkageRequest(BaseModel):
     carriage_pin_diameter: float = Field(1.5, ge=0, le=100)
     carriage_pin_length: float = Field(8.0, ge=0, le=1000)
     member_strength_mpa: float = Field(40.0, ge=0, le=1e5)
+    carriage_pin_strength_mpa: float = Field(300.0, ge=0, le=1e5)
 
 
 class LinkageOptimizeRequest(LinkageRequest):
@@ -704,13 +705,14 @@ def linkage_simulate(req: LinkageRequest):
 def linkage_optimize(req: LinkageOptimizeRequest):
     params = _linkage_params(req)
     names = [f.name for f in dataclasses.fields(LinkageSearch)]
-    best, feasible, tested = optimize_linkage(params, LinkageSearch(**{n: getattr(req, n) for n in names}))
+    best, feasible, tested, report = optimize_linkage(params, LinkageSearch(**{n: getattr(req, n) for n in names}))
     if best is None:
-        return {"found": False, "feasible": 0, "tested": tested}
+        return {"found": False, "feasible": feasible, "tested": tested, "search_report": report}
     return {
         "found": True,
         "feasible": feasible,
         "tested": tested,
+        "search_report": report,
         "params": dataclasses.asdict(best),
         "result": dataclasses.asdict(compute_linkage(best)),
     }

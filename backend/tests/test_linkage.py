@@ -2,10 +2,12 @@
 
 import math
 import unittest
+from unittest import mock
 from dataclasses import replace
 
 import numpy as np
 
+from backend import linkage
 from backend.linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
 
 # Pose measured on the lever concept sketch (about 29.5 px/mm).
@@ -16,6 +18,22 @@ PENDULUM = LinkageParams(linkage_type="pendulum", bar1_length=11.95, bar2_length
                          pivot_offset=4.0, foot_length=1.5, foot_angle_deg=100.0, tube_center_x=8.1)
 PENDULUM_SEARCH = LinkageSearch(bar2_min=8.0, bar2_max=18.0, anchor_max=8.0)
 LEVER_SEARCH = LinkageSearch(anchor_min=2.0, anchor_max=8.0, bar1_min=3.0, bar1_max=12.0, bar2_max=12.0)
+
+
+_ONE_PIECE_BUDGET = {"N_SHORTLIST": 12, "N_ONE_PIECE_ROUND": 4}
+_saved = {}
+
+
+def setUpModule():
+    # Each one-piece design costs a beam solve: a small budget keeps the suite quick.
+    for name, value in _ONE_PIECE_BUDGET.items():
+        _saved[name] = getattr(linkage, name)
+        setattr(linkage, name, value)
+
+
+def tearDownModule():
+    for name, value in _saved.items():
+        setattr(linkage, name, value)
 
 
 class LinkageTests(unittest.TestCase):
@@ -137,8 +155,9 @@ class LinkageTests(unittest.TestCase):
                  for goal in ("target", "response")]
         for p, s in cases:
             with self.subTest(kind=p.linkage_type, goal=s.objective):
-                best, feasible, _ = optimize_linkage(p, s)
+                best, feasible, _, report = optimize_linkage(p, s)
                 self.assertIsNotNone(best)
+                self.assertEqual(report["model"], "rigid")
                 self.assertGreater(feasible, 0)
                 r = compute_linkage(best)
                 self.assertTrue(r.feasible, r.message)
@@ -162,7 +181,7 @@ class LinkageTests(unittest.TestCase):
 
     def test_response_search_ranks_partial_flow_and_searches_the_foot(self):
         tight = replace(PENDULUM_SEARCH, max_stroke=0.3)
-        best, feasible, _ = optimize_linkage(PENDULUM, tight)
+        best, feasible, _, _ = optimize_linkage(PENDULUM, tight)
         self.assertIsNotNone(best)   # cannot reach full bore: still gives the most flow it can
         r = compute_linkage(best)
         self.assertTrue(r.feasible, r.message)
@@ -171,8 +190,8 @@ class LinkageTests(unittest.TestCase):
         self.assertLessEqual(best.stroke, 0.3 + 1e-9)
         self.assertLessEqual(r.max_oversqueeze, tight.max_oversqueeze + 0.01)
         # The foot is searched within its ranges, and held when the range is a single value.
-        free, _, _ = optimize_linkage(PENDULUM, PENDULUM_SEARCH)
-        held, _, _ = optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, foot_min=1.5, foot_max=1.5, foot_angle_min=100.0, foot_angle_max=100.0))
+        free = optimize_linkage(PENDULUM, PENDULUM_SEARCH)[0]
+        held = optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, foot_min=1.5, foot_max=1.5, foot_angle_min=100.0, foot_angle_max=100.0))[0]
         self.assertEqual((held.foot_length, held.foot_angle_deg), (1.5, 100.0))
         self.assertTrue(1.0 <= free.foot_length <= 6.0 and 45.0 <= free.foot_angle_deg <= 135.0)
         self.assertLessEqual(compute_linkage(free).y_open, compute_linkage(held).y_open + 1e-6)
@@ -193,7 +212,7 @@ class LinkageTests(unittest.TestCase):
             self.assertAlmostEqual(r.gap_a[i0], r.closed_gap - PENDULUM.preload, places=9)
             for y, jx, jy in zip(r.Y_positions, r.joint_x, r.joint_y):
                 self.assertAlmostEqual(math.hypot(jx - PENDULUM.pivot_offset, jy - (height / 2 - y)), r.link_length, places=9)
-        best, feasible, _ = optimize_linkage(replace(PENDULUM, fixed_height=18.0), PENDULUM_SEARCH)
+        best, feasible, _, _ = optimize_linkage(replace(PENDULUM, fixed_height=18.0), PENDULUM_SEARCH)
         self.assertIsNotNone(best)
         r = compute_linkage(best)
         self.assertTrue(r.feasible, r.message)
@@ -319,11 +338,6 @@ class LinkageTests(unittest.TestCase):
         self.assertEqual(r.stress_b, r.stress_a[::-1])
         self.assertIn(r.max_stress_where, ("arm", "foot", "link"))
         self.assertIn(r.max_stress_spot, ("shell", "joint", "carriage", "span"))
-        # The search still runs with the one-piece switch on (it works on the pivoted version).
-        best, feasible, _ = optimize_linkage(replace(p, stroke=3.0), PENDULUM_SEARCH)
-        self.assertIsNotNone(best)
-        self.assertTrue(best.compliant)
-        json.dumps(compute_linkage(best).__dict__, allow_nan=False)
         # A stroke long enough to jam the closed tube still gives a clean result.
         long = compute_linkage(replace(p, stroke=4.0))
         self.assertIsNotNone(long.jam_y)
@@ -357,6 +371,84 @@ class LinkageTests(unittest.TestCase):
         self.assertIsNone(bare.seal_force)
         self.assertGreater(bare.max_stress_mpa, 0.0)
         self.assertTrue(bare.forces_message)
+
+    @mock.patch.multiple(linkage, N_FIRST=6000, N_ROUND=3000)
+    def test_one_piece_search_ranks_on_the_part_and_holds_its_limits(self):
+        p = replace(PENDULUM, compliant=True, member_strength_mpa=150.0)
+        best, feasible, tested, report = optimize_linkage(p, PENDULUM_SEARCH)
+        self.assertEqual(report["model"], "one-piece")
+        # The first batch, then a round of draws around the best that hold, each design once.
+        rounds = len(linkage.ONE_PIECE_ROUNDS) * linkage.N_ONE_PIECE_ROUND
+        self.assertTrue(linkage.N_SHORTLIST < report["shortlist"] <= linkage.N_SHORTLIST + rounds, report)
+        self.assertEqual(report["shortlist"], report["passed"] + sum(report["rejected"].values()))
+        self.assertEqual(set(report["rejected"]), {"stress", "thrust", "eye", "rod", "no_flow"})
+        self.assertIsNotNone(best)
+        self.assertGreater(report["passed"], 0)
+        self.assertTrue(best.compliant)
+        self.assertEqual(best.chamber_volume_ml, p.chamber_volume_ml)
+        # Re-simulated as returned, over the travel it uses: every limit holds.
+        r = compute_linkage(best)
+        self.assertTrue(r.feasible, r.message)
+        self.assertIsNotNone(r.flexure)
+        self.assertLessEqual(best.stroke, PENDULUM_SEARCH.max_stroke + 1e-9)
+        self.assertIsNone(r.jam_y)
+        self.assertGreater(max(v or 0.0 for v in r.flow_a), 0.0)
+        self.assertLessEqual(r.max_stress_mpa, p.member_strength_mpa)
+        self.assertLessEqual(r.thrust_needed, r.thrust_available)
+        self.assertLessEqual(r.carriage_bearing_mpa, p.member_strength_mpa)
+        self.assertLessEqual(r.carriage_pin_bending_mpa, p.carriage_pin_strength_mpa)
+        # The part gives way: the closed tube's squeeze is read on the loaded gap.
+        self.assertLessEqual(r.closed_gap - min(g for g in r.gap_loaded_a if g is not None), PENDULUM_SEARCH.max_oversqueeze + 1e-9)
+        self.assertLessEqual(r.pivot_height_y0 + best.stroke, PENDULUM_SEARCH.max_pivot_height + 0.01)
+        if r.y_full_open is not None:
+            self.assertLess(best.stroke - r.y_full_open, 0.05 + 1e-9)
+        import json
+        json.dumps(r.__dict__, allow_nan=False)
+        # Same inputs, same answer.
+        self.assertEqual(optimize_linkage(p, PENDULUM_SEARCH), (best, feasible, tested, report))
+        # A range with min = max holds that value through both stages.
+        pinned = replace(PENDULUM_SEARCH, bar1_min=best.bar1_length, bar1_max=best.bar1_length,
+                         bar2_min=best.bar2_length, bar2_max=best.bar2_length,
+                         anchor_min=best.anchor_distance, anchor_max=best.anchor_distance,
+                         foot_angle_min=best.foot_angle_deg, foot_angle_max=best.foot_angle_deg)
+        held, _, _, held_report = optimize_linkage(p, pinned)
+        self.assertIsNotNone(held)
+        self.assertEqual((held.bar1_length, held.bar2_length, held.anchor_distance, held.foot_angle_deg),
+                         (best.bar1_length, best.bar2_length, best.anchor_distance, best.foot_angle_deg))
+        self.assertTrue(PENDULUM_SEARCH.foot_min <= held.foot_length <= PENDULUM_SEARCH.foot_max)
+        lever = optimize_linkage(LEVER, replace(LEVER_SEARCH, bar1_min=6.9, bar1_max=6.9, lever_min=16.5, lever_max=16.5))[0]
+        self.assertEqual((lever.bar1_length, lever.lever_length), (6.9, 16.5))
+        # Too weak a material: no design is offered, and the report says why.
+        none, _, _, weak = optimize_linkage(replace(p, member_strength_mpa=1.0), PENDULUM_SEARCH)
+        self.assertIsNone(none)
+        self.assertEqual(weak["passed"], 0)
+        self.assertGreater(weak["rejected"]["stress"], 0)
+        self.assertEqual(weak["shortlist"], sum(weak["rejected"].values()))
+        # The rod is checked only when the link turns on it; a limit set to 0 is not checked.
+        self.assertIsNone(linkage._one_piece_limit(best, r, best.stroke))
+        self.assertEqual(linkage._one_piece_limit(replace(best, carriage_pin_strength_mpa=1e-3), r, best.stroke), "rod")
+        self.assertIsNone(linkage._one_piece_limit(replace(best, carriage_pin_strength_mpa=0.0), r, best.stroke))
+        self.assertIsNone(linkage._one_piece_limit(replace(best, carriage_pin_strength_mpa=1e-3, carriage_clamped=True), r, best.stroke))
+        self.assertEqual(linkage._one_piece_limit(replace(best, member_strength_mpa=1e-3), r, best.stroke), "stress")
+        # A short rod: the eye takes the load on a small area and is checked before the rod.
+        short_rod = replace(best, carriage_pin_length=0.05)
+        self.assertEqual(linkage._one_piece_limit(short_rod, compute_linkage(short_rod), best.stroke), "eye")
+        # no_flow comes first: a stroke that jams the closed tube has no travel to check limits on.
+        jam = replace(p, stroke=4.0, member_strength_mpa=1e-3)
+        self.assertIsNotNone(compute_linkage(jam).jam_y)
+        self.assertEqual(linkage._one_piece_score(jam, replace(PENDULUM_SEARCH, objective="target"))[2], "no_flow")
+
+    @mock.patch.multiple(linkage, N_FIRST=6000, N_ROUND=3000)
+    def test_one_piece_search_looks_past_the_rigid_ranking(self):
+        # The screen's default one-piece part at 40 MPa: the best rigid designs all break or open
+        # little (about 38 % of full bore at most); random designs and refinement find a better part.
+        p = replace(PENDULUM, tube_center_x=8.0, foot_length=1.5, pad_length=1.0, link_curved=True, compliant=True)
+        s = replace(PENDULUM_SEARCH, bar1_min=6.0, bar1_max=16.0, anchor_min=-5.0)
+        best, _, _, report = optimize_linkage(p, s)
+        self.assertIsNotNone(best, report)
+        r = compute_linkage(best)
+        self.assertGreater(max(v or 0.0 for v in r.flow_a) / r.max_flow_l_min, 0.5)
+        self.assertLessEqual(r.max_stress_mpa, p.member_strength_mpa)
 
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))
