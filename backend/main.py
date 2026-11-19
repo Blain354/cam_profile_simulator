@@ -789,3 +789,51 @@ def linkage_profile_delete(kind: str, name: str):
     if not linkage_storage.delete_profile(*_profile_key(kind, name)):
         raise HTTPException(status_code=404, detail="Profile not found")
     return {"status": "deleted"}
+
+
+# ─── Bar materials ───────────────────────────────────────────────
+# A material is a modulus and a strength. The two built-in ones are indicative values for
+# printed parts; custom ones are kept with the profiles, under a kind no linkage uses.
+
+BUILTIN_MATERIALS = {
+    "PETG": {"modulus_mpa": 2500.0, "strength_mpa": 40.0},
+    "PLA": {"modulus_mpa": 3500.0, "strength_mpa": 50.0},
+}
+_MATERIAL_KIND = "material"
+
+
+class MaterialBody(BaseModel):
+    modulus_mpa: float = Field(..., gt=0, le=1e6)
+    strength_mpa: float = Field(..., ge=0, le=1e5)
+
+
+def _material_name(name: str) -> str:
+    name = name.strip()
+    if not 1 <= len(name) <= 60 or "/" in name or any(ord(ch) < 32 for ch in name):
+        raise HTTPException(status_code=400, detail="Material name must be 1 to 60 characters, without slashes")
+    if name.lower() in {key.lower() for key in BUILTIN_MATERIALS}:
+        raise HTTPException(status_code=409, detail=f"{name} is a built-in material: save yours under another name")
+    return name
+
+
+@app.get("/api/linkage/materials")
+def linkage_materials():
+    items = [{"name": name, **values, "builtin": True} for name, values in BUILTIN_MATERIALS.items()]
+    for row in linkage_storage.list_profiles(_MATERIAL_KIND):
+        values = linkage_storage.get_profile(_MATERIAL_KIND, row["name"]) or {}
+        items.append({"name": row["name"], "modulus_mpa": values.get("modulus_mpa"), "strength_mpa": values.get("strength_mpa"), "builtin": False})
+    return {"materials": items}
+
+
+@app.put("/api/linkage/materials/{name}")
+def linkage_material_save(name: str, body: MaterialBody):
+    name = _material_name(name)
+    existed = linkage_storage.save_profile(_MATERIAL_KIND, name, {"modulus_mpa": body.modulus_mpa, "strength_mpa": body.strength_mpa})
+    return {"status": "updated" if existed else "saved", "name": name}
+
+
+@app.delete("/api/linkage/materials/{name}")
+def linkage_material_delete(name: str):
+    if not linkage_storage.delete_profile(_MATERIAL_KIND, _material_name(name)):
+        raise HTTPException(status_code=404, detail="Material not found")
+    return {"status": "deleted"}

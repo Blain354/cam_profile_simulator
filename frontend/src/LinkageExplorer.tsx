@@ -219,6 +219,13 @@ const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   pendulum: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 16, bar2_min: 8, bar2_max: 18, anchor_min: -5, anchor_max: 8 },
 };
 
+interface Material { name: string; modulus_mpa: number; strength_mpa: number; builtin: boolean }
+/** Shown until the server's list arrives; the server holds the same two plus the custom ones. */
+const BUILTIN_MATERIALS: Material[] = [
+  { name: 'PETG', modulus_mpa: 2500, strength_mpa: 40, builtin: true },
+  { name: 'PLA', modulus_mpa: 3500, strength_mpa: 50, builtin: true },
+];
+
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
 
 function loadStored(kind: LinkageKind, shared: LinkageShared): { params: LinkageParams; search: LinkageSearch; profile: string | null } {
@@ -729,6 +736,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [profileMessage, setProfileMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [onshapeOpen, setOnshapeOpen] = useState(false);
+  const [materials, setMaterials] = useState<Material[]>(BUILTIN_MATERIALS);
+  const [materialName, setMaterialName] = useState('');
+  const [materialMessage, setMaterialMessage] = useState<string | null>(null);
   /** Time into the cycle 0, +stroke, 0, -stroke, 0 while oscillating (s). */
   const [cycleT, setCycleT] = useState<number | null>(null);
   /** Distance run in the current cycle (mm), plus the live speed and stroke for the animation loop. */
@@ -748,6 +758,41 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
     } catch { /* the list stays as it was */ }
   }, [kind]);
   useEffect(() => { refreshProfiles(); }, [refreshProfiles]);
+
+  const refreshMaterials = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/linkage/materials');
+      if (res.ok) setMaterials((await res.json()).materials ?? BUILTIN_MATERIALS);
+    } catch { /* the built-in ones stay */ }
+  }, []);
+  useEffect(() => { refreshMaterials(); }, [refreshMaterials]);
+  /** The material whose two values are the ones on screen, if any. */
+  const material = materials.find((m) => m.modulus_mpa === params.member_modulus_mpa && m.strength_mpa === params.member_strength_mpa) ?? null;
+  const pickMaterial = (name: string) => {
+    const m = materials.find((item) => item.name === name);
+    if (m) setParams((p) => ({ ...p, member_modulus_mpa: m.modulus_mpa, member_strength_mpa: m.strength_mpa }));
+    setMaterialMessage(null);
+  };
+  const saveMaterial = async () => {
+    const name = materialName.trim();
+    if (!name) { setMaterialMessage('Give the material a name first.'); return; }
+    try {
+      const res = await apiFetch(`/api/linkage/materials/${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modulus_mpa: params.member_modulus_mpa, strength_mpa: params.member_strength_mpa }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `HTTP ${res.status}`);
+      setMaterialName('');
+      setMaterialMessage(null);
+      refreshMaterials();
+    } catch (e) { setMaterialMessage(`Not saved: ${e instanceof Error ? e.message : e}`); }
+  };
+  const deleteMaterial = async () => {
+    if (!material || material.builtin || !window.confirm(`Delete the material "${material.name}"?`)) return;
+    try {
+      const res = await apiFetch(`/api/linkage/materials/${encodeURIComponent(material.name)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      refreshMaterials();
+    } catch (e) { setMaterialMessage(`Not deleted: ${e instanceof Error ? e.message : e}`); }
+  };
 
   const profileUrl = (name: string) => `/api/linkage/profiles/${kind}/${encodeURIComponent(name)}`;
   const snapshot = JSON.stringify({ params, search });
@@ -1179,12 +1224,42 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                 description="Major diameter of the lead screw: 3 for M3." />
               <ParameterSlider label="Thread friction" value={params.screw_friction} min={0.05} max={0.6} step={0.01} onChange={(v) => set('screw_friction', v)}
                 description="Friction coefficient between the screw and the nut. It sets how much of the motor torque becomes thrust, and whether the screw holds its position with the motor off." />
+              <div className="space-y-1.5 rounded-lg border border-neutral-700 p-2">
+                <div className="flex items-center gap-2">
+                  <label htmlFor={`linkage-material-${kind}`} className="shrink-0 text-xs font-semibold text-neutral-400">Material</label>
+                  <select id={`linkage-material-${kind}`} value={material?.name ?? ''} onChange={(e) => pickMaterial(e.target.value)}
+                    className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100">
+                    {!material && <option value="">Custom values</option>}
+                    {materials.map((m) => <option key={m.name} value={m.name}>{`${m.name} (${(m.modulus_mpa / 1000).toFixed(1)} GPa, ${m.strength_mpa} MPa)`}</option>)}
+                  </select>
+                  <Button variant="ghost" type="button" onClick={deleteMaterial} disabled={!material || material.builtin}
+                    title={material?.builtin ? 'A built-in material cannot be deleted' : 'Delete this material'} aria-label="Delete this material"
+                    className="shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:text-red-400 disabled:opacity-40">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+                {!material && (
+                  <div className="flex items-center gap-2">
+                    <Input type="text" value={materialName} maxLength={60} placeholder="Name these values" aria-label="Material name"
+                      onChange={(e) => setMaterialName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveMaterial(); }}
+                      className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100" />
+                    <Button variant="ghost" type="button" onClick={saveMaterial}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-neutral-700 px-2 py-1 text-xs text-neutral-200">
+                      <Save className="w-3.5 h-3.5" /> Save material
+                    </Button>
+                  </div>
+                )}
+                {materialMessage && <p className="text-[10px] leading-snug text-red-400" role="alert">{materialMessage}</p>}
+                <p className="text-[10px] leading-snug text-neutral-400">
+                  A material is the modulus and the strength below. PETG and PLA are indicative values for printed parts. To add your own, set the two sliders, name them and save.
+                </p>
+              </div>
               <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={100} onChange={(v) => set('member_modulus_mpa', v)}
                 secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(1)} GPa`}
                 description="Young's modulus of the bars: about 2 500 for printed PETG, 3 500 for PLA, 70 000 for aluminium." />
-              {pendulum && params.compliant && (
+              {(
                 <ParameterSlider label="Material strength (MPa)" value={params.member_strength_mpa} min={5} max={1000} step={1} onChange={(v) => set('member_strength_mpa', v)}
-                  description="Stress the one-piece part may see. Assumed 40 for printed PETG at yield; use less for a part that must flex many times, about 30 to 60 for PLA, 20 to 30 for TPU-like or nylon parts in fatigue." />
+                  description="Stress the material may see; the one-piece pendulum is checked against it. Assumed 40 for printed PETG at yield; use less for a part that must flex many times, about 30 to 60 for PLA, 20 to 30 for TPU-like or nylon parts in fatigue." />
               )}
               <ParameterSlider label="Bar width (mm)" value={params.member_width} min={0.5} max={10} step={0.1} onChange={(v) => set('member_width', v)}
                 description="Bar section in the plane of the mechanism. Bending stiffness goes with its cube." />
