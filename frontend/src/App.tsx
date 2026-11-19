@@ -7,7 +7,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
 import {
-  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box, Waypoints, Spline
+  Settings, Maximize2, Minimize2, Import, Download, RefreshCw, FlaskConical, Search, CircleHelp, Cog, Box, Waypoints, Spline, Anchor
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -63,7 +63,7 @@ function interpolateAlongY(yMm: number, ys: number[], vals: number[]): number | 
 
 export default function App() {
   const { theme, setTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'explorer' | 'builder' | 'linkage' | 'lever'>('explorer');
+  const [activeTab, setActiveTab] = useState<'explorer' | 'builder' | 'linkage' | 'lever' | 'pendulum'>('explorer');
   const [params, setParams] = useState<SimulationParams>(defaultParams);
   const [savedParams, setSavedParams] = useState<SimulationParams | null>(null);
   const [data, setData] = useState<SimulationResult | null>(null);
@@ -560,6 +560,10 @@ export default function App() {
               className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'lever' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
               <Spline className="w-3.5 h-3.5" /> Lever Linkage
             </Button>
+            <Button variant="ghost" onClick={() => setActiveTab('pendulum')}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'pendulum' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/50'}`}>
+              <Anchor className="w-3.5 h-3.5" /> Pendulum Linkage
+            </Button>
           </div>
 
           {/* Context pill (tab-specific) */}
@@ -877,10 +881,10 @@ export default function App() {
             </div>
           </motion.div>
         </div>
-      ) : activeTab === 'linkage' || activeTab === 'lever' ? (
+      ) : activeTab === 'linkage' || activeTab === 'lever' || activeTab === 'pendulum' ? (
         <LinkageExplorer
           key={activeTab}
-          kind={activeTab === 'lever' ? 'lever' : 'elbow'}
+          kind={activeTab === 'linkage' ? 'elbow' : activeTab}
           shared={{
             tube_id: params.tube_id,
             tube_od: params.tube_od,

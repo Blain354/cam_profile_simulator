@@ -634,6 +634,8 @@ class LinkageRequest(BaseModel):
     bar1_length: float = 13.0
     bar2_length: float = 7.8
     lever_length: float = 16.5
+    foot_length: float = Field(1.5, ge=0, le=50)
+    foot_angle_deg: float = Field(100.0, ge=0, le=180)
     anchor_distance: float = 2.33
     pivot_offset: float = 3.9
     tube_center_x: float = 8.0

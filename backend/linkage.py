@@ -8,10 +8,15 @@ Frame (mm): x from the lead-screw axis (base centre), y up from the fixed anchor
       (A-C, length bar2_length)
   P = pinch point, on the line A-C at lever_length from A
 
-Two linkage types share that geometry:
+Three linkage types share that geometry:
   "elbow": A = (-anchor_distance, 0) on the tube side, and P = C (two-bar toggle).
   "lever": A = (+anchor_distance, 0) on the far side; A-P is one long lever that
            reaches across to the tube, and bar 1 drives it at C part-way along.
+  "pendulum": A = (-anchor_distance, 0) on the tube side; the arm A-C hangs along
+           the tube and carries a rigid foot C-P (foot_length, at foot_angle from
+           the arm) that pushes the tube sideways. The carriage sits between A and
+           C, so this frame is the real mechanism upside down: its anchor is on the
+           top wall, and the carriage height above A is h0 - Y.
 
 The tube runs vertically at x = -tube_center_x and rests on a wall at
 x = -(tube_center_x + tube_od / 2). P squeezes it against that wall.
@@ -37,6 +42,7 @@ except ImportError:
 
 TYPE_ELBOW = "elbow"
 TYPE_LEVER = "lever"
+TYPE_PENDULUM = "pendulum"
 
 N_SAMPLES = 241
 N_SCORE = 60
@@ -50,6 +56,8 @@ class LinkageParams:
     bar1_length: float = 13.0        # mm, carriage pivot -> joint C
     bar2_length: float = 7.8         # mm, anchor -> joint C
     lever_length: float = 16.5       # mm, anchor -> pinch point (lever type only)
+    foot_length: float = 1.5         # mm, joint C -> pinch point (pendulum type only)
+    foot_angle_deg: float = 100.0    # deg between the arm A-C and the foot, toward the tube (pendulum only)
     anchor_distance: float = 2.33    # mm from the base centre (elbow: tube side, lever: far side)
     pivot_offset: float = 3.9        # mm, carriage pivot offset from the screw axis (far side)
     tube_center_x: float = 8.0       # mm, tube axis distance from the screw axis
@@ -81,6 +89,7 @@ class LinkageResult:
     flow_b: List[Optional[float]] = field(default_factory=list)
     flow_target: List[Optional[float]] = field(default_factory=list)
     anchor_x: float = 0.0
+    anchor_on_top: bool = False      # the frame is the real mechanism upside down
     pivot_height_y0: float = 0.0     # h0; the mirrored anchor sits at 2 * h0
     wall_x: float = 0.0
     closed_gap: float = 0.0          # pin-to-wall gap at which flow starts
@@ -123,13 +132,39 @@ def _closure(p: LinkageParams) -> Tuple[float, float, float]:
     return wall_x, closed_gap, closed_gap + p.tube_id / 2.0
 
 
-def _pivot_height_y0(l1, l2, reach, xa, xb, x_tip_closed):
-    """Carriage pivot height that puts the pinch point at x_tip_closed (lever above the base, carriage above C at Y = 0)."""
-    c = (x_tip_closed - xa) / reach
-    s_sq = 1.0 - c * c
-    s = np.sqrt(np.where(s_sq >= 0.0, s_sq, np.nan))
-    reach_sq = l1 * l1 - (xb - (xa + l2 * c)) ** 2
-    return l2 * s + np.sqrt(np.where(reach_sq >= 0.0, reach_sq, np.nan))
+def _body(p: LinkageParams, l2, lever_length):
+    """Pinch point on the hinged body: distance from A, and angle from the line A-C."""
+    if p.linkage_type == TYPE_LEVER:
+        return lever_length, 0.0
+    if p.linkage_type == TYPE_PENDULUM:
+        phi = np.radians(p.foot_angle_deg)
+        fx, fy = l2 + p.foot_length * np.cos(phi), p.foot_length * np.sin(phi)
+        return np.hypot(fx, fy), np.arctan2(fy, fx)
+    return l2, 0.0
+
+
+def _layout(p: LinkageParams) -> Tuple[float, float, float]:
+    """Anchor side (+1 far side, -1 tube side), root sign of the carriage vs C, and sign of Y in the frame."""
+    if p.linkage_type == TYPE_LEVER:
+        return 1.0, 1.0, 1.0
+    if p.linkage_type == TYPE_PENDULUM:
+        return -1.0, -1.0, -1.0
+    return -1.0, 1.0, 1.0
+
+
+def _tip(xa, jx, jy, ratio, delta):
+    dx = jx - xa
+    c, s = np.cos(delta), np.sin(delta)
+    return xa + ratio * (dx * c - jy * s), ratio * (dx * s + jy * c)
+
+
+def _pivot_height_y0(l1, l2, reach, delta, root, xa, xb, x_tip_closed):
+    """Carriage pivot height that puts the pinch point at x_tip_closed (body above the anchor line)."""
+    cc = (x_tip_closed - xa) / reach
+    theta = np.arccos(np.where(np.abs(cc) <= 1.0, cc, np.nan)) - delta
+    cx, cy = xa + l2 * np.cos(theta), l2 * np.sin(theta)
+    reach_sq = l1 * l1 - (xb - cx) ** 2
+    return cy + root * np.sqrt(np.where(reach_sq >= 0.0, reach_sq, np.nan))
 
 
 def _area_mm2(p: LinkageParams, gap: np.ndarray, closed_gap: float) -> np.ndarray:
@@ -180,24 +215,19 @@ def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: 
     return t * 1000.0, y_t, q_in, q_out, p_g, float(q_in.sum() * to_ml), float(q_out.sum() * to_ml)
 
 
-def _geometry(p: LinkageParams):
-    lever = p.linkage_type == TYPE_LEVER
-    xa = p.anchor_distance if lever else -p.anchor_distance
-    reach = p.lever_length if lever else p.bar2_length
-    return xa, p.pivot_offset, reach
-
-
 def compute_linkage(p: LinkageParams) -> LinkageResult:
     if min(p.bar1_length, p.bar2_length, p.lever_length, p.stroke, p.tube_id) <= 0 or p.tube_od <= p.tube_id:
         return LinkageResult(False, "Lengths, stroke and tube sizes must be positive, with OD > ID.")
     l1, l2 = p.bar1_length, p.bar2_length
-    xa, xb, reach = _geometry(p)
+    side, root, sgn = _layout(p)
+    xa, xb = side * p.anchor_distance, p.pivot_offset
+    reach, delta = _body(p, l2, p.lever_length)
     wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
 
     with np.errstate(invalid="ignore"):
-        h0 = float(_pivot_height_y0(l1, l2, reach, xa, xb, x_closed))
+        h0 = float(_pivot_height_y0(l1, l2, reach, delta, root, xa, xb, x_closed))
     if not np.isfinite(h0):
         return LinkageResult(
             False,
@@ -207,12 +237,11 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
 
     y = np.linspace(-p.stroke, p.stroke, N_SAMPLES)
     with np.errstate(invalid="ignore"):
-        jx, jy = _joint(l1, l2, xa, xb, h0 + y)
-        # Below the base line the hinged bar has gone through dead centre: not a usable pose.
-        ok = np.isfinite(jx) & (jy >= -_EPS)
+        jx, jy = _joint(l1, l2, xa, xb, h0 + sgn * y)
+        # Below the anchor line the hinged bar has gone through dead centre: not a usable pose.
+        ok = np.isfinite(jx) & (jy >= -_EPS) & (h0 + sgn * y > 0.0)
     jx, jy = np.where(ok, jx, np.nan), np.where(ok, jy, np.nan)
-    ratio = reach / l2
-    tx, ty = xa + ratio * (jx - xa), ratio * jy
+    tx, ty = _tip(xa, jx, jy, reach / l2, delta)
     gap_a = wall_x + tx - r_pin
     gap_b = gap_a[::-1]
     area_a = np.where(ok, _area_mm2(p, np.nan_to_num(gap_a, nan=0.0), closed_gap), 0.0)
@@ -264,6 +293,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         flow_b=_nan_to_none(flow_a[::-1]),
         flow_target=_nan_to_none(flow_target),
         anchor_x=xa,
+        anchor_on_top=sgn < 0.0,
         pivot_height_y0=h0,
         wall_x=wall_x,
         closed_gap=closed_gap,
@@ -302,30 +332,33 @@ class LinkageSearch:
     max_oversqueeze: float = 0.5      # mm, closed tube over the stroke
 
 
-def _score(p: LinkageParams, s: LinkageSearch, l1, l2, reach, a) -> np.ndarray:
+def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length) -> np.ndarray:
     """RMS opening error for broadcastable arrays of candidates; inf where infeasible."""
     wall_x, closed_gap, full_open_gap = _closure(p)
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
-    xa = a if p.linkage_type == TYPE_LEVER else -a
-    xb = p.pivot_offset
+    side, root, sgn = _layout(p)
+    xa, xb = side * a, p.pivot_offset
+    reach, delta = _body(p, l2, lever_length)
+    delta_ = delta[..., None] if isinstance(delta, np.ndarray) else delta
     with np.errstate(invalid="ignore", divide="ignore"):
-        h0 = _pivot_height_y0(l1, l2, reach, xa, xb, x_closed)
+        h0 = _pivot_height_y0(l1, l2, reach, delta, root, xa, xb, x_closed)
         y = np.linspace(0.0, p.stroke, N_SCORE)
         ratio = (reach / l2)[..., None]
         xa_ = xa[..., None]
         # Tube A opening over [0, stroke]; the same linkage at -Y is what the closed tube sees.
-        jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + y)
-        cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - y)
-        gap = wall_x + xa_ + ratio * (jx - xa_) - r_pin
-        squeeze = closed_gap - (wall_x + xa_ + ratio * (cx - xa_) - r_pin)
+        jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn * y)
+        cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn * y)
+        gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - r_pin
+        squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - r_pin)
         target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
         err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
         rms = np.sqrt(np.mean(err * err, axis=-1))
         ok = (
             np.isfinite(rms)
-            & (reach >= l2)
+            & ((reach >= l2) | (p.linkage_type != TYPE_LEVER))
             & (h0 >= s.min_pivot_height)
+            & (h0 > p.stroke)
             & (h0 + p.stroke <= s.max_pivot_height)
             & np.all(jy >= 0.0, axis=-1)
             & np.all(np.isfinite(cx), axis=-1)
@@ -355,8 +388,7 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         for v in axes[0]:
             rest = np.meshgrid(*axes[1:], indexing="ij")
             l2, a = rest[0], rest[1]
-            reach = rest[2] if lever else l2
-            score = _score(p, s, np.full_like(l2, v), l2, reach, a)
+            score = _score(p, s, np.full_like(l2, v), l2, a, rest[2] if lever else None)
             if level == 0:
                 feasible += int(np.isfinite(score).sum())
             idx = np.unravel_index(int(np.argmin(score)), score.shape)

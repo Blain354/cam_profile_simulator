@@ -9,13 +9,15 @@ import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
 
-export type LinkageKind = 'elbow' | 'lever';
+export type LinkageKind = 'elbow' | 'lever' | 'pendulum';
 
 export interface LinkageParams {
   linkage_type: LinkageKind;
   bar1_length: number;
   bar2_length: number;
   lever_length: number;
+  foot_length: number;
+  foot_angle_deg: number;
   anchor_distance: number;
   pivot_offset: number;
   tube_center_x: number;
@@ -62,6 +64,7 @@ interface LinkageResult {
   flow_b: Series;
   flow_target: Series;
   anchor_x: number;
+  anchor_on_top: boolean;
   pivot_height_y0: number;
   wall_x: number;
   closed_gap: number;
@@ -86,6 +89,9 @@ interface LinkageResult {
 export type LinkageShared = Pick<LinkageParams, 'tube_id' | 'tube_od' | 'input_pressure_psi' | 'compliance' | 'motor_speed' | 'lead_screw_pitch'>;
 
 const COMMON = {
+  lever_length: 16.5,
+  foot_length: 1.5,
+  foot_angle_deg: 100,
   tube_center_x: 8.0,
   preload: 0.1,
   stroke: 3.0,
@@ -99,16 +105,18 @@ const COMMON = {
   lead_screw_pitch: 0.5,
 };
 
-// Both sets were measured on the concept sketches (about 30 px/mm).
+// All sets were measured on the concept sketches (about 30 px/mm).
 const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   elbow: { ...COMMON, linkage_type: 'elbow', bar1_length: 13.0, bar2_length: 7.8, lever_length: 16.5, anchor_distance: 2.33, pivot_offset: 3.9, pin_diameter: 1.0 },
   lever: { ...COMMON, linkage_type: 'lever', bar1_length: 6.9, bar2_length: 6.9, lever_length: 16.5, anchor_distance: 5.05, pivot_offset: 3.97, pin_diameter: 0.4 },
+  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0 },
 };
 
 const SEARCH_COMMON = { lever_min: 10, lever_max: 22, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5 };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
+  pendulum: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 16, bar2_min: 8, bar2_max: 18, anchor_min: 0, anchor_max: 8 },
 };
 
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
@@ -145,6 +153,8 @@ interface Pose { anchor: [number, number]; pivotX: number; joint: [number, numbe
 
 function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; data: LinkageResult; y: number; details: boolean }) {
   const lever = params.linkage_type === 'lever';
+  const pendulum = params.linkage_type === 'pendulum';
+  const onTop = data.anchor_on_top;
   const h0 = data.pivot_height_y0;
   const wall = data.wall_x;
   const rPin = Math.max(params.pin_diameter / 2, 0.18);
@@ -152,14 +162,15 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   const margin = 1.7;
   const hB = h0 + y;
 
+  // The backend frame has the anchor at y = 0; a top-anchored linkage is that frame upside down.
   const at = (yy: number, xs: Series, ys: Series): [number, number] | null => {
     const px = interpAt(yy, data.Y_positions, xs), py = interpAt(yy, data.Y_positions, ys);
-    return px == null || py == null ? null : [px, py];
+    return px == null || py == null ? null : [px, onTop ? top - py : py];
   };
   // Tube B's linkage is tube A's turned half a turn about the carriage pivot at Y = 0: it sits at -Y.
   const flip = (pt: [number, number] | null): [number, number] | null => (pt ? [-pt[0], top - pt[1]] : null);
-  const poseA: Pose = { anchor: [data.anchor_x, 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) };
-  const poseB: Pose = { anchor: [-data.anchor_x, top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) };
+  const poseA: Pose = { anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) };
+  const poseB: Pose = { anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) };
 
   const gapA = interpAt(y, data.Y_positions, data.gap_a);
   const gapB = interpAt(y, data.Y_positions, data.gap_b);
@@ -182,7 +193,7 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
         {[-params.tube_od / 2, 0, params.tube_od / 2].map((dx) => (
           <line key={dx} x1={cx + dx} y1={-top - 1} x2={cx + dx} y2={1} stroke="var(--bui-text)" strokeWidth={0.05} strokeDasharray="0.5 0.12 0.1 0.12" />
         ))}
-        {label(cx, top + 1.1, name, 'var(--bui-text)')}
+        {label(cx, onTop ? -1.1 : top + 1.1, name, 'var(--bui-text)')}
       </g>
     );
   };
@@ -200,9 +211,16 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
         <line x1={axx - 0.6} y1={-ayy} x2={axx + 0.6} y2={-ayy} stroke="var(--bui-text)" strokeWidth={0.14} />
         {pose.joint && pose.tip && (
           <>
-            <line x1={axx} y1={-ayy} x2={pose.tip[0]} y2={-pose.tip[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
+            {pendulum ? (
+              <>
+                <line x1={axx} y1={-ayy} x2={pose.joint[0]} y2={-pose.joint[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
+                <line x1={pose.joint[0]} y1={-pose.joint[1]} x2={pose.tip[0]} y2={-pose.tip[1]} stroke={color} strokeWidth={0.5} strokeLinecap="round" />
+              </>
+            ) : (
+              <line x1={axx} y1={-ayy} x2={pose.tip[0]} y2={-pose.tip[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
+            )}
             <line x1={pose.pivotX} y1={-hB} x2={pose.joint[0]} y2={-pose.joint[1]} stroke={color} strokeWidth={0.22} strokeLinecap="round" />
-            {lever && <circle cx={pose.joint[0]} cy={-pose.joint[1]} r={0.2} fill={color} />}
+            {(lever || pendulum) && <circle cx={pose.joint[0]} cy={-pose.joint[1]} r={0.2} fill={color} />}
             <circle cx={pose.tip[0]} cy={-pose.tip[1]} r={rPin} fill="var(--bui-surface)" stroke={color} strokeWidth={0.1} />
           </>
         )}
@@ -232,7 +250,12 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
 
       {details && a.joint && a.tip && (
         <g>
-          {lever ? (
+          {pendulum ? (
+            <>
+              {label((a.anchor[0] + a.joint[0]) / 2 + 1.5, (a.anchor[1] + a.joint[1]) / 2, `L ${params.bar2_length.toFixed(2)}`, ORANGE)}
+              {label((a.pivotX + a.joint[0]) / 2, (hB + a.joint[1]) / 2 - 0.9, `r ${params.bar1_length.toFixed(2)}`, ORANGE)}
+            </>
+          ) : lever ? (
             <>
               {label(a.anchor[0] + 0.75 * (a.tip[0] - a.anchor[0]), a.anchor[1] + 0.75 * (a.tip[1] - a.anchor[1]) - 0.9, `L ${params.lever_length.toFixed(2)}`, ORANGE)}
               {label((a.anchor[0] + a.joint[0]) / 2 + 0.3, (a.anchor[1] + a.joint[1]) / 2 - 0.9, `c ${params.bar2_length.toFixed(2)}`, ORANGE)}
@@ -244,13 +267,15 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
               {label((a.joint[0] + a.anchor[0]) / 2 + 0.4, a.joint[1] / 2 - 0.8, `L2 ${params.bar2_length.toFixed(2)}`, ORANGE)}
             </>
           )}
-          <line x1={0} y1={0.75} x2={a.anchor[0]} y2={0.75} stroke={ORANGE} strokeWidth={0.06} />
-          <line x1={0} y1={0.45} x2={0} y2={1.05} stroke={ORANGE} strokeWidth={0.06} />
-          <line x1={a.anchor[0]} y1={0.45} x2={a.anchor[0]} y2={1.05} stroke={ORANGE} strokeWidth={0.06} />
-          {label(a.anchor[0] / 2, -1.35, `a ${params.anchor_distance.toFixed(2)}`, ORANGE)}
+          <g transform={onTop ? `translate(0 ${-top - 1.5})` : undefined}>
+            <line x1={0} y1={0.75} x2={a.anchor[0]} y2={0.75} stroke={ORANGE} strokeWidth={0.06} />
+            <line x1={0} y1={0.45} x2={0} y2={1.05} stroke={ORANGE} strokeWidth={0.06} />
+            <line x1={a.anchor[0]} y1={0.45} x2={a.anchor[0]} y2={1.05} stroke={ORANGE} strokeWidth={0.06} />
+          </g>
+          {label(a.anchor[0] / 2, onTop ? top + 1.35 : -1.35, `a ${params.anchor_distance.toFixed(2)}`, ORANGE)}
           {label(-wall + 0.25, h0 + 0.55, `h₀ ${h0.toFixed(2)}`, BLUE, 'start')}
-          {gapA != null && label(-wall + 0.2, a.tip[1] + 1.1, `gap ${gapA.toFixed(3)}`, 'var(--bui-text)', 'start')}
-          {gapB != null && poseB.tip && label(wall - 0.2, poseB.tip[1] - 1.1, `gap ${gapB.toFixed(3)}`, 'var(--bui-text)', 'end')}
+          {gapA != null && label(-wall + 0.2, a.tip[1] + (onTop ? -1.1 : 1.1), `gap ${gapA.toFixed(3)}`, 'var(--bui-text)', 'start')}
+          {gapB != null && poseB.tip && label(wall - 0.2, poseB.tip[1] + (onTop ? 1.1 : -1.1), `gap ${gapB.toFixed(3)}`, 'var(--bui-text)', 'end')}
         </g>
       )}
     </svg>
@@ -292,6 +317,7 @@ function ChartCard({ title, children }: { title: string; children: ReactElement 
 
 export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; shared: LinkageShared }) {
   const lever = kind === 'lever';
+  const pendulum = kind === 'pendulum';
   const [stored] = useState(() => loadStored(kind, shared));
   const [params, setParams] = useState<LinkageParams>(stored.params);
   const [search, setSearch] = useState<LinkageSearch>(stored.search);
@@ -350,7 +376,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       }
       const p: LinkageParams = out.params;
       setParams(p);
-      const found = lever
+      const found = pendulum
+        ? `L ${p.bar2_length.toFixed(2)}, r ${p.bar1_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}`
+        : lever
         ? `L ${p.lever_length.toFixed(2)}, c ${p.bar2_length.toFixed(2)}, r ${p.bar1_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}`
         : `L1 ${p.bar1_length.toFixed(2)}, L2 ${p.bar2_length.toFixed(2)}, a ${p.anchor_distance.toFixed(2)}`;
       setOptMessage({
@@ -384,13 +412,24 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
         <div className="flex items-center gap-2 mb-4 min-w-0">
           <Settings className="w-5 h-5 text-amber-500 shrink-0" />
-          <h2 className="text-lg font-bold text-white tracking-tight truncate">{lever ? 'Lever linkage' : 'Bar linkage'}</h2>
+          <h2 className="text-lg font-bold text-white tracking-tight truncate">{pendulum ? 'Pendulum linkage' : lever ? 'Lever linkage' : 'Bar linkage'}</h2>
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-4">
           <Accordion title="Bars (design variables)">
             <div className="space-y-5 pt-2">
-              {lever ? (
+              {pendulum ? (
+                <>
+                  <ParameterSlider label="Arm, L (mm)" value={params.bar2_length} min={2} max={30} step={0.05} onChange={(v) => set('bar2_length', v)}
+                    description="Fixed anchor on the opposite wall to the joint where the link pulls. The arm hangs along the tube." />
+                  <ParameterSlider label="Link, r (mm)" value={params.bar1_length} min={2} max={30} step={0.05} onChange={(v) => set('bar1_length', v)}
+                    description="Carriage pivot (blue) to the joint at the end of the arm." />
+                  <ParameterSlider label="Foot, f (mm)" value={params.foot_length} min={0} max={8} step={0.05} onChange={(v) => set('foot_length', v)}
+                    description="Rigid foot from the joint to the centre of the pin that presses on the tube. Not searched by the optimizer." />
+                  <ParameterSlider label="Foot angle (deg)" value={params.foot_angle_deg} min={0} max={180} step={1} onChange={(v) => set('foot_angle_deg', v)}
+                    description="Angle between the arm and the foot: 90 is square to the arm, toward the tube. Not searched by the optimizer." />
+                </>
+              ) : lever ? (
                 <>
                   <ParameterSlider label="Lever, L (mm)" value={params.lever_length} min={4} max={30} step={0.05} onChange={(v) => set('lever_length', v)}
                     description="Fixed anchor to the tip that pinches the tube. The lever reaches across the screw." />
@@ -408,7 +447,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                 </>
               )}
               <ParameterSlider label="Anchor dist, a (mm)" value={params.anchor_distance} min={-5} max={10} step={0.01} onChange={(v) => set('anchor_distance', v)}
-                description={lever
+                description={pendulum
+                  ? 'Fixed anchor offset from the centre of the base, toward its tube, on the wall opposite the carriage side it starts from.'
+                  : lever
                   ? 'Fixed anchor offset from the centre of the base, on the side opposite its tube.'
                   : 'Fixed anchor offset from the centre of the base, toward the tube. Negative puts it on the far side of the screw.'} />
             </div>
@@ -420,8 +461,8 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                 secondaryValue={params.target_exponent === 1 ? 'linear' : undefined}
                 description="Target opening = (Y / stroke)^exponent, closed at Y = 0 and full bore at the end of the stroke. 1 is strictly proportional; above 1 is finer near closure." />
               {lever && <RangeRow label="L range" min={search.lever_min} max={search.lever_max} onMin={(v) => setS('lever_min', v)} onMax={(v) => setS('lever_max', v)} />}
-              <RangeRow label={lever ? 'c range' : 'L2 range'} min={search.bar2_min} max={search.bar2_max} onMin={(v) => setS('bar2_min', v)} onMax={(v) => setS('bar2_max', v)} />
-              <RangeRow label={lever ? 'r range' : 'L1 range'} min={search.bar1_min} max={search.bar1_max} onMin={(v) => setS('bar1_min', v)} onMax={(v) => setS('bar1_max', v)} />
+              <RangeRow label={pendulum ? 'L range' : lever ? 'c range' : 'L2 range'} min={search.bar2_min} max={search.bar2_max} onMin={(v) => setS('bar2_min', v)} onMax={(v) => setS('bar2_max', v)} />
+              <RangeRow label={lever || pendulum ? 'r range' : 'L1 range'} min={search.bar1_min} max={search.bar1_max} onMin={(v) => setS('bar1_min', v)} onMax={(v) => setS('bar1_max', v)} />
               <RangeRow label="a range" min={search.anchor_min} max={search.anchor_max} onMin={(v) => setS('anchor_min', v)} onMax={(v) => setS('anchor_max', v)} />
               <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />
               <ParameterSlider label="Max over-squeeze" value={search.max_oversqueeze} min={0.05} max={2} step={0.05} onChange={(v) => setS('max_oversqueeze', v)}
