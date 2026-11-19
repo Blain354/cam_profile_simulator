@@ -194,24 +194,36 @@ Two places are looked at, the Part Studio first:
 
 | Where | Env | How it is written |
 |-------|-----|-------------------|
-| `assignVariable` features of a Part Studio (`#L1`, `#L2`…) | `ONSHAPE_LINKAGE_PART_STUDIO_ID` | one POST per variable, same call as the STL export |
-| a Variable Studio | `ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID` | one POST of the whole list: the variables this app does not know go back exactly as read |
+| `assignVariable` features of a Part Studio (`#L1`, `#L2`…) | `ONSHAPE_LINKAGE_PART_STUDIO_ID` | one POST per changed variable; a configured variable is updated in every configuration |
+| a Variable Studio | `ONSHAPE_LINKAGE_VARIABLE_STUDIO_ID` | one POST of the whole list; an unchanged variable goes back as name, type, expression and description only |
 
 A name found nowhere is left alone, unless **Also create the variables Onshape does not have yet**
 is ticked: they are then added to the Variable Studio (never to a Part Studio).
+Only this studio's own variables are read. A table with `variableStudioReference` set is skipped,
+so a name that exists only in the referenced studio shows up as absent, and creating it adds a
+variable on this studio.
 
 Default names are in `DEFAULT_MAPPING` (`backend/onshape_variables.py`): `pend_*` for the pendulum,
 `lever_*` for the lever, `L1` / `L2` and `elbow_*` for the bar linkage, plus `pinch_tube_OD` and
 `pinch_tube_ID` for all three. In the CAD sketch `L1` starts at the fixed anchor, which is the
 simulator's bar 2, so `L1` receives bar 2 and `L2` receives bar 1. To use other names, set
-`ONSHAPE_LINKAGE_MAPPING` to a JSON object `{"pendulum": {"my_onshape_name": "bar2_length", …}}`;
-the value keys are listed in `VALUES` in the same file. Derived values can be sent too:
-`link_length`, `total_height`, `pivot_height_y0`, `link_arc_radius`.
+`ONSHAPE_LINKAGE_MAPPING` to a JSON object. A kind whose value is an object replaces the default
+names for that kind: `{"pendulum": {"my_onshape_name": "bar2_length", …}}`.
+The value keys are listed in `VALUES` in the same file. Derived values can be sent too:
+`link_length`, `total_height`, `pivot_height_y0`, `link_arc_radius`. A straight link has no
+`link_arc_radius`, so that name is left out of the list.
 
-A Variable Studio has no configuration to isolate the write in, unlike the `automation`
-configuration of the STL export: what is written is what every Part Studio using that
-variable sees.
+Both writes reach past the `automation` configuration of the STL export.
+A Variable Studio has no configuration to write into: what is written is what every Part Studio
+using that variable sees. On a Part Studio `assignVariable`, this path calls
+`_patch_assign_variable_expression` (`backend/onshape_export.py`) with no
+`ONSHAPE_CONFIG_ENUM_VALUE`, so a configured variable is overwritten in every configuration.
+`push_variables` passes that value, so an STL export overwrites only the named configuration
+when the value is set.
 
-API calls: 1 or 2 to open the window, then 1 or 2 reads, 1 write for the Variable Studio and
-1 per Part Studio variable changed. These calls are made from the container and are not in
-`~/automation/state/onshape-appels.jsonl`.
+Opening the window is one read per place that is configured (1 or 2). Apply reads those places
+again, then posts the Variable Studio list once when a ticked row is updated or created there,
+and posts once per Part Studio variable that actually changes. With nothing ticked there is no
+write. These calls are made from the container and are not in
+`~/automation/state/onshape-appels.jsonl`. Missing keys, an unusable target, or a geometry that
+cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
