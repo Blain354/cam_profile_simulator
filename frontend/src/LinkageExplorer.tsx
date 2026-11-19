@@ -619,7 +619,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
       </div>
 
       {/* Panel 2: schematic */}
-      <div className="lg:col-span-4 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+      <div className="lg:col-span-4 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
         <div className="flex items-center gap-3 mb-3 shrink-0 min-w-0">
           <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Schematic</h3>
           <Button variant="ghost" type="button" onClick={() => setDetails(!details)}
@@ -627,17 +627,17 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             {details ? 'Hide details' : 'Details'}
           </Button>
         </div>
-        <div className="flex-1 min-h-[280px] w-full bg-neutral-900/60 rounded-lg border border-neutral-800/80 overflow-hidden">
+        <div className="order-2 flex-1 min-h-[180px] w-full bg-neutral-900/60 rounded-lg border border-neutral-800/80 overflow-hidden">
           {data && data.Y_positions.length > 0
             ? <LinkageDiagram params={params} data={data} y={yPose} details={details} />
             : <div className="flex h-full items-center justify-center p-4 text-center text-sm text-neutral-400">{data ? data.message : 'Loading…'}</div>}
         </div>
-        <div className="shrink-0 mt-3 space-y-1">
+        <div className="order-1 shrink-0 mb-3 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2 text-sm">
             <label htmlFor={`linkage-y-${kind}`} className="font-medium text-neutral-300">Carriage Y</label>
             <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
           </div>
-          <div className="flex items-center justify-between gap-2 pb-1">
+          <div className="order-last flex items-center justify-between gap-2 pt-1">
             <Button variant="ghost" type="button" onClick={togglePlay} disabled={speed <= 0} aria-pressed={playing}
               title="Run the carriage back and forth over the full stroke at the loaded motor speed"
               className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
@@ -651,13 +651,13 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             onChange={(e) => { setPlaying(false); setCycleT(null); setY(parseFloat(e.target.value)); }} className="w-full accent-amber-500 cursor-pointer" />
         </div>
         {data && !data.feasible && data.Y_positions.length > 0 && (
-          <p className="shrink-0 mt-2 rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{data.message}</p>
+          <p className="order-3 shrink-0 mt-2 rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{data.message}</p>
         )}
-        {error && <p className="shrink-0 mt-2 text-xs text-red-400" role="alert">{error}</p>}
+        {error && <p className="order-3 shrink-0 mt-2 text-xs text-red-400" role="alert">{error}</p>}
       </div>
 
       {/* Panel 3: charts */}
-      <div className="lg:col-span-5 min-w-0 grid grid-rows-3 gap-4 min-h-0">
+      <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
         <ChartCard title="Static flow vs carriage Y">
           <LineChart data={chartData} margin={margin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
