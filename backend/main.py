@@ -751,6 +751,7 @@ def linkage_onshape_apply(req: LinkageOnshapeApplyRequest):
 class LinkageProfileBody(BaseModel):
     params: dict
     search: dict = Field(default_factory=dict)
+    chart_settings: dict = Field(default_factory=dict)
 
 
 def _profile_key(kind: str, name: str):
@@ -780,7 +781,7 @@ def linkage_profile_get(kind: str, name: str):
 @app.put("/api/linkage/profiles/{kind}/{name}")
 def linkage_profile_save(kind: str, name: str, body: LinkageProfileBody):
     kind, name = _profile_key(kind, name)
-    existed = linkage_storage.save_profile(kind, name, {"params": body.params, "search": body.search})
+    existed = linkage_storage.save_profile(kind, name, {"params": body.params, "search": body.search, "chart_settings": body.chart_settings})
     return {"status": "updated" if existed else "saved", "name": name}
 
 

@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label
 } from 'recharts';
-import { Crosshair, ArrowRight, Maximize2, Minimize2, OctagonX, Trash2, ChevronDown, ChevronRight, Cog, AlertTriangle } from 'lucide-react';
+import { Crosshair, ArrowRight, OctagonX, Trash2, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult } from './components';
 import {
@@ -17,9 +17,10 @@ import {
   apiFetch,
   defaultParams,
   DelayedHoverHint,
-  ChartDomainSettingsModal,
 } from './components';
 import type { ChartDomainSettings } from './components';
+import { ChartCard } from './ChartCard';
+import { chartDomain } from './lib/chartDomain';
 import {
   builderMotorSpeed,
   builderTubeId,
@@ -550,11 +551,8 @@ interface BuilderExperiencePayload {
   last_solve_request?: unknown;
 }
 
-type BuilderMaxChart = 'flowY' | 'pressure' | 'vertical' | null;
 type BuilderChartSettingsKey = 'flowY' | 'pressure' | 'vertical';
 const CANDIDATE_CACHE_TTL_MS = 60_000;
-
-const DEFAULT_BUILDER_DOMAIN: ChartDomainSettings = { autoX: true, autoY: true, xMin: -1, xMax: 1, yMin: -1, yMax: 1 };
 
 /** Matches backend `MAX_RETURNED_CANDIDATES` — max rows in aggressivity list when more feasible triples exist. */
 const MAX_RETURNED_BUILDER_CANDIDATES = 100;
@@ -660,7 +658,6 @@ export default function ProfileBuilder({
   onDirtyStateChange,
   saveExperienceSignal,
 }: ProfileBuilderProps) {
-  const [maximizedChart, setMaximizedChart] = useState<BuilderMaxChart>(null);
   const [motorSpeed, setMotorSpeed] = useState(100);
   const [tubeId, setTubeId] = useState(2.0);
   const [tubeOd, setTubeOd] = useState(3.0);
@@ -727,7 +724,6 @@ export default function ProfileBuilder({
   const [experiences, setExperiences] = useState<SavedExperienceEntry[]>([]);
   const [showExperienceModal, setShowExperienceModal] = useState(false);
   const [showInfoPanel, setShowInfoPanel] = useState(true);
-  const [chartSettingsTarget, setChartSettingsTarget] = useState<BuilderChartSettingsKey | null>(null);
   const [builderChartSettings, setBuilderChartSettings] = useState<Record<BuilderChartSettingsKey, ChartDomainSettings>>({
     flowY: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 25 },
     pressure: { autoX: true, autoY: true, xMin: 0, xMax: 100, yMin: 0, yMax: 300 },
@@ -784,10 +780,6 @@ export default function ProfileBuilder({
   useEffect(() => {
     void fetchExperiences();
   }, []);
-
-  useEffect(() => {
-    setMaximizedChart(null);
-  }, [result]);
 
   useEffect(() => {
     setDisplayedSim(null);
@@ -1747,107 +1739,12 @@ export default function ProfileBuilder({
     };
   }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressurePsi, compliance, chamberVolume]);
 
-  const maximizedInfo = useMemo(() => {
-    if (!maximizedChart || !chartSim || !builderViewParams) return null;
-    switch (maximizedChart) {
-      case 'flowY':
-        return {
-          title: 'Flow vs Y',
-          comp: (
-            <ResponsiveContainer width="100%" height="100%" minHeight={320}>
-              <LineChart data={pneumaticData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                <XAxis
-                  dataKey="y"
-                  type="number"
-                  stroke="#888"
-                  label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }}
-                  tickFormatter={(v) => v.toFixed(3)}
-                  domain={builderChartSettings.flowY.autoX ? ['dataMin', 'dataMax'] : [builderChartSettings.flowY.xMin, builderChartSettings.flowY.xMax]}
-                  allowDataOverflow
-                />
-                <YAxis
-                  type="number"
-                  stroke="#888"
-                  label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                  domain={builderChartSettings.flowY.autoY ? ['dataMin', 'dataMax'] : [builderChartSettings.flowY.yMin, builderChartSettings.flowY.yMax]}
-                  allowDataOverflow={!builderChartSettings.flowY.autoY}
-                  tickFormatter={(v) => v.toFixed(3)}
-                />
-                <FlowVsYTooltipLikeExplorer />
-                <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
-                <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
-                  <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />
-                </ReferenceLine>
-              </LineChart>
-            </ResponsiveContainer>
-          ),
-        };
-      case 'pressure':
-        return {
-          title: 'Chamber Pressure vs Time',
-          comp: (
-            <ResponsiveContainer width="100%" height="100%" minHeight={320}>
-              <LineChart data={pressureData} margin={{ top: 16, right: 20, bottom: 24, left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                <XAxis
-                  dataKey="timeSec"
-                  type="number"
-                  stroke="#a3a3a3"
-                  domain={builderChartSettings.pressure.autoX ? ['dataMin', 'dataMax'] : [builderChartSettings.pressure.xMin, builderChartSettings.pressure.xMax]}
-                  allowDataOverflow
-                  tick={{ fontSize: 12, fill: '#d4d4d8' }}
-                  label={{ value: 'Time rel. Y=0 (s)', position: 'bottom', fill: '#d4d4d8', fontSize: 12, offset: 4 }}
-                  tickFormatter={(v) => `${v.toFixed(1)}s`}
-                />
-                <YAxis
-                  type="number"
-                  stroke="#a3a3a3"
-                  tick={{ fontSize: 12, fill: '#d4d4d8' }}
-                  label={{ value: 'Gauge (kPa)', angle: -90, position: 'insideLeft', fill: '#d4d4d8', offset: 10, fontSize: 12 }}
-                  domain={builderChartSettings.pressure.autoY ? ['dataMin', 'dataMax'] : [builderChartSettings.pressure.yMin, builderChartSettings.pressure.yMax]}
-                  allowDataOverflow={!builderChartSettings.pressure.autoY}
-                  tickFormatter={(v) => v.toFixed(0)}
-                />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
-                  formatter={(value: unknown) => [`${Number(value).toFixed(1)} kPa gauge`, 'Chamber']}
-                  labelFormatter={(l: unknown) => `t rel Y=0: ${Number(l).toFixed(3)} s`}
-                />
-                <ReferenceLine y={supplyGaugeKpa} stroke="#22d3ee" strokeDasharray="6 4" strokeWidth={2}>
-                  <Label value="Supply (gauge)" position="insideRight" fill="#22d3ee" fontSize={10} />
-                </ReferenceLine>
-                <Line type="monotone" dataKey="pressureGaugeKpa" name="Chamber" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
-                {equalizationTimeRelSec >= 0 && (
-                  <ReferenceLine x={equalizationTimeRelSec} stroke="#d946ef" strokeDasharray="5 5" strokeWidth={2}>
-                    <Label value="Equalized" position="insideTopRight" fill="#d946ef" fontSize={12} />
-                  </ReferenceLine>
-                )}
-              </LineChart>
-            </ResponsiveContainer>
-          ),
-        };
-      case 'vertical':
-        return {
-          title: 'Vertical System',
-          comp: (
-            <div className="h-full min-h-[320px] w-full">
-              <VerticalSystemView
-                data={chartSim}
-                params={builderViewParams}
-                details={true}
-                setDetails={() => {}}
-                isPreview={true}
-                allowInteractInPreview={true}
-                domainOverride={builderChartSettings.vertical}
-              />
-            </div>
-          ),
-        };
-      default:
-        return null;
-    }
-  }, [maximizedChart, chartSim, builderViewParams, pneumaticData, pressureData, activeIdx, supplyGaugeKpa, builderChartSettings, builderHasDynamicModel]);
+  const builderCard = (key: BuilderChartSettingsKey) => ({
+    settings: builderChartSettings[key],
+    onSettingsChange: (next: ChartDomainSettings) => setBuilderChartSettings((prev) => ({ ...prev, [key]: next })),
+    settingsTitle: `${key} domain settings`,
+    layout: true,
+  });
 
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
@@ -2451,66 +2348,9 @@ export default function ProfileBuilder({
               {/* Charts — same layout / semi-fullscreen as Explorer */}
               {chartSim && builderViewParams && (
                 <div className="relative min-h-0 flex-1 grid grid-rows-3 gap-4">
-                  <AnimatePresence>
-                    {maximizedChart && maximizedInfo && (
-                      <>
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          onClick={() => setMaximizedChart(null)}
-                          className="absolute -inset-4 z-40 rounded-xl bg-neutral-900/40"
-                        />
-                        <motion.div
-                          layoutId={`builder-${maximizedChart}`}
-                          className="absolute inset-0 z-50 flex flex-col overflow-hidden rounded-xl border border-neutral-600 bg-neutral-800"
-                        >
-                          <div className="flex shrink-0 items-center justify-between border-b border-neutral-700/50 bg-neutral-800/80 p-6 pb-2">
-                            <h3 className="text-xl font-bold text-neutral-100">{maximizedInfo.title}</h3>
-                            <Button variant="ghost"
-                              type="button"
-                              onClick={() => setMaximizedChart(null)}
-                              className="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-white"
-                              title="Exit fullscreen"
-                            >
-                              <Minimize2 className="h-6 w-6" />
-                            </Button>
-                          </div>
-                          <div className="min-h-0 w-full flex-1 overflow-hidden p-6">{maximizedInfo.comp}</div>
-                        </motion.div>
-                      </>
-                    )}
-                  </AnimatePresence>
-
-                  <motion.div
-                    layoutId="builder-flowY"
-                    className="row-span-2 flex min-h-0 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3"
-                  >
-                    <div className="relative mb-2 flex shrink-0 items-center justify-between">
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <h3 className="text-sm font-bold text-neutral-200">Flow vs Y</h3>
-                      </div>
-                      <div className="z-10 flex w-full justify-end gap-1">
-                        <Button variant="ghost"
-                          type="button"
-                          onClick={() => setChartSettingsTarget('flowY')}
-                          className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
-                          title="Chart settings"
-                        >
-                          <Cog className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost"
-                          type="button"
-                          onClick={() => setMaximizedChart('flowY')}
-                          className={`rounded-md p-1.5 transition-colors hover:bg-neutral-700 ${maximizedChart === 'flowY' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
-                          title="Expand chart"
-                        >
-                          <Maximize2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className={`min-h-0 w-full flex-1 ${maximizedChart === 'flowY' ? 'opacity-0' : 'opacity-100'}`}>
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
+                  <ChartCard title="Flow vs Y" {...builderCard('flowY')} className="row-span-2">
+                    {({ maximized, settings: c }) => (
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={maximized ? 320 : 260}>
                         <LineChart data={pneumaticData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                           <XAxis
@@ -2519,131 +2359,91 @@ export default function ProfileBuilder({
                             stroke="#888"
                             label={{ value: 'Y Position (mm)', position: 'bottom', fill: '#888' }}
                             tickFormatter={(v) => v.toFixed(3)}
-                            domain={builderChartSettings.flowY.autoX ? ['dataMin', 'dataMax'] : [builderChartSettings.flowY.xMin, builderChartSettings.flowY.xMax]}
+                            domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
                             allowDataOverflow
                           />
                           <YAxis
                             type="number"
                             stroke="#888"
                             label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                            domain={builderChartSettings.flowY.autoY ? ['dataMin', 'dataMax'] : [builderChartSettings.flowY.yMin, builderChartSettings.flowY.yMax]}
-                            allowDataOverflow={!builderChartSettings.flowY.autoY}
+                            domain={chartDomain(c, 'y', ['dataMin', 'dataMax'])}
+                            allowDataOverflow={!c.autoY}
                             tickFormatter={(v) => v.toFixed(3)}
                           />
                           <FlowVsYTooltipLikeExplorer />
                           <FlowVsYLinesExplorerStyle hasDynamicModel={builderHasDynamicModel} />
-                          <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3} />
+                          <ReferenceLine x={0} stroke="white" strokeDasharray="5 5" strokeWidth={3}>
+                            {maximized && <Label value="Bushing center (0 mm)" position="insideTopLeft" fill="white" fontSize={12} fontWeight="bold" offset={15} />}
+                          </ReferenceLine>
                         </LineChart>
                       </ResponsiveContainer>
-                    </div>
-                  </motion.div>
+                    )}
+                  </ChartCard>
 
                   <div className="row-span-1 flex min-h-0 flex-col gap-4 lg:flex-row">
-                    <motion.div
-                      layoutId="builder-pressure"
-                      className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3"
-                    >
-                      <div className="relative mb-2 flex shrink-0 items-center justify-between">
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Chamber Pressure</h3>
-                        </div>
-                        <div className="z-10 flex w-full justify-end gap-1">
-                          <Button variant="ghost"
-                            type="button"
-                            onClick={() => setChartSettingsTarget('pressure')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
-                            title="Chart settings"
-                          >
-                            <Cog className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost"
-                            type="button"
-                            onClick={() => setMaximizedChart('pressure')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'pressure' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
-                            title="Expand chart"
-                          >
-                            <Maximize2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className={`min-h-0 w-full flex-1 ${maximizedChart === 'pressure' ? 'opacity-0' : 'opacity-100'}`}>
-                        <ResponsiveContainer width="100%" height="100%" minHeight={160}>
-                          <LineChart data={pressureData} margin={{ top: 10, right: 15, bottom: 20, left: 15 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                            <XAxis
-                              dataKey="timeSec"
-                              type="number"
-                              stroke="#a3a3a3"
-                              domain={builderChartSettings.pressure.autoX ? ['dataMin', 'dataMax'] : [builderChartSettings.pressure.xMin, builderChartSettings.pressure.xMax]}
-                              allowDataOverflow
-                              tick={{ fontSize: 11, fill: '#d4d4d8' }}
-                              label={{ value: 'Time rel. Y=0 (s)', position: 'bottom', fill: '#d4d4d8', fontSize: 11, offset: 4 }}
-                              tickFormatter={(v) => `${v.toFixed(1)}s`}
-                            />
-                            <YAxis
-                              type="number"
-                              stroke="#a3a3a3"
-                              tick={{ fontSize: 11, fill: '#d4d4d8' }}
-                              label={{ value: 'Gauge (kPa)', angle: -90, position: 'insideLeft', fill: '#d4d4d8', offset: 10, fontSize: 11 }}
-                              domain={builderChartSettings.pressure.autoY ? ['dataMin', 'dataMax'] : [builderChartSettings.pressure.yMin, builderChartSettings.pressure.yMax]}
-                              allowDataOverflow={!builderChartSettings.pressure.autoY}
-                              tickFormatter={(v) => v.toFixed(0)}
-                            />
-                            <Tooltip
-                              contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
-                              formatter={(value: unknown) => [`${Number(value).toFixed(1)} kPa gauge`, 'Chamber']}
-                              labelFormatter={(l: unknown) => `t rel Y=0: ${Number(l).toFixed(3)} s`}
-                            />
-                            <ReferenceLine y={supplyGaugeKpa} stroke="#22d3ee" strokeDasharray="6 4" strokeWidth={2} />
-                            <Line type="monotone" dataKey="pressureGaugeKpa" name="Chamber" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
-                            {equalizationTimeRelSec >= 0 && (
-                              <ReferenceLine x={equalizationTimeRelSec} stroke="#d946ef" strokeDasharray="5 5" strokeWidth={2}>
-                                <Label value="Equalized" position="insideTopRight" fill="#d946ef" fontSize={11} />
+                    <ChartCard title="Chamber Pressure" maximizedTitle="Chamber Pressure vs Time" compact {...builderCard('pressure')} className="min-w-0 flex-1">
+                      {({ maximized, settings: c }) => {
+                        const font = maximized ? 12 : 11;
+                        return (
+                          <ResponsiveContainer width="100%" height="100%" minHeight={maximized ? 320 : 160}>
+                            <LineChart data={pressureData} margin={maximized ? { top: 16, right: 20, bottom: 24, left: 20 } : { top: 10, right: 15, bottom: 20, left: 15 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                              <XAxis
+                                dataKey="timeSec"
+                                type="number"
+                                stroke="#a3a3a3"
+                                domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
+                                allowDataOverflow
+                                tick={{ fontSize: font, fill: '#d4d4d8' }}
+                                label={{ value: 'Time rel. Y=0 (s)', position: 'bottom', fill: '#d4d4d8', fontSize: font, offset: 4 }}
+                                tickFormatter={(v) => `${v.toFixed(1)}s`}
+                              />
+                              <YAxis
+                                type="number"
+                                stroke="#a3a3a3"
+                                tick={{ fontSize: font, fill: '#d4d4d8' }}
+                                label={{ value: 'Gauge (kPa)', angle: -90, position: 'insideLeft', fill: '#d4d4d8', offset: 10, fontSize: font }}
+                                domain={chartDomain(c, 'y', ['dataMin', 'dataMax'])}
+                                allowDataOverflow={!c.autoY}
+                                tickFormatter={(v) => v.toFixed(0)}
+                              />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
+                                formatter={(value: unknown) => [`${Number(value).toFixed(1)} kPa gauge`, 'Chamber']}
+                                labelFormatter={(l: unknown) => `t rel Y=0: ${Number(l).toFixed(3)} s`}
+                              />
+                              <ReferenceLine y={supplyGaugeKpa} stroke="#22d3ee" strokeDasharray="6 4" strokeWidth={2}>
+                                {maximized && <Label value="Supply (gauge)" position="insideRight" fill="#22d3ee" fontSize={10} />}
                               </ReferenceLine>
-                            )}
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </motion.div>
+                              <Line type="monotone" dataKey="pressureGaugeKpa" name="Chamber" stroke="#8b5cf6" strokeWidth={3} dot={false} isAnimationActive={false} />
+                              {equalizationTimeRelSec >= 0 && (
+                                <ReferenceLine x={equalizationTimeRelSec} stroke="#d946ef" strokeDasharray="5 5" strokeWidth={2}>
+                                  <Label value="Equalized" position="insideTopRight" fill="#d946ef" fontSize={font} />
+                                </ReferenceLine>
+                              )}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        );
+                      }}
+                    </ChartCard>
 
-                    <motion.div
-                      layoutId="builder-vertical"
-                      className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch rounded-xl border border-neutral-700 bg-neutral-800 p-3"
-                    >
-                      <div className="relative mb-2 flex shrink-0 items-center justify-between">
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <h3 className="text-xs font-bold text-neutral-400 lg:text-neutral-200">Cam Profile</h3>
-                        </div>
-                        <div className="z-10 flex w-full justify-end gap-1">
-                          <Button variant="ghost"
-                            type="button"
-                            onClick={() => setChartSettingsTarget('vertical')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
-                            title="Chart settings"
-                          >
-                            <Cog className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost"
-                            type="button"
-                            onClick={() => setMaximizedChart('vertical')}
-                            className={`rounded-md p-1 transition-colors hover:bg-neutral-700 ${maximizedChart === 'vertical' ? 'opacity-0' : 'text-neutral-400 hover:text-white'}`}
-                            title="Expand view"
-                          >
-                            <Maximize2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className={`min-h-0 w-full flex-1 overflow-hidden ${maximizedChart === 'vertical' ? 'opacity-0' : 'opacity-100'}`}>
-                        <VerticalSystemView
-                          data={chartSim}
-                          params={builderViewParams}
-                          details={true}
-                          setDetails={() => {}}
-                          isPreview={true}
-                          domainOverride={builderChartSettings.vertical}
-                        />
-                      </div>
-                    </motion.div>
+                    <ChartCard title="Cam Profile" maximizedTitle="Vertical System" compact maximizeLabel="Expand view" {...builderCard('vertical')}
+                      className="min-w-0 flex-1" bodyClassName="overflow-hidden">
+                      {({ maximized, settings: c }) => {
+                        const view = (
+                          <VerticalSystemView
+                            data={chartSim}
+                            params={builderViewParams}
+                            details={true}
+                            setDetails={() => {}}
+                            isPreview={true}
+                            allowInteractInPreview={maximized}
+                            domainOverride={c}
+                          />
+                        );
+                        return maximized ? <div className="h-full min-h-[320px] w-full">{view}</div> : view;
+                      }}
+                    </ChartCard>
                   </div>
                 </div>
               )}
@@ -2663,17 +2463,6 @@ export default function ProfileBuilder({
           )}
         </AnimatePresence>
       </div>
-
-      <ChartDomainSettingsModal
-        isOpen={chartSettingsTarget !== null}
-        title={chartSettingsTarget ? `${chartSettingsTarget} domain settings` : 'Domain settings'}
-        settings={chartSettingsTarget ? builderChartSettings[chartSettingsTarget] : DEFAULT_BUILDER_DOMAIN}
-        onClose={() => setChartSettingsTarget(null)}
-        onChange={(next) => {
-          if (!chartSettingsTarget) return;
-          setBuilderChartSettings((prev) => ({ ...prev, [chartSettingsTarget]: next }));
-        }}
-      />
 
       <Modal
         open={showExperienceModal}
