@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { interpAt } from './lib/camTravel';
 import { legacyPsiToKpa } from './lib/pressure';
 import {
-  ChevronDown, ChevronRight, Trash2,
+  ChevronDown, ChevronRight,
   RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -38,11 +38,6 @@ export interface ChartDomainSettings {
   xMax: number;
   yMin: number;
   yMax: number;
-}
-
-export interface SavedConfigEntry {
-  filename: string;
-  note: string;
 }
 
 export interface SimulationResult {
@@ -777,155 +772,103 @@ export function VerticalSystemView({
   );
 }
 
-// ─── ConfigModal ─────────────────────────────────────────────────
+// ─── Cam profile preview ─────────────────────────────────────────
 
-export function ConfigModal({
-  isOpen, onClose, configs, onHoverConfig, onSelectConfig, onOpenConfig, onDeleteConfig, onSetDefault,
-  selectedConfig, defaultConfig, previewParams, previewData, onApply,
-}: {
-  isOpen: boolean; onClose: () => void; configs: SavedConfigEntry[];
-  onHoverConfig: (name: string) => void; onSelectConfig: (name: string) => void;
-  onOpenConfig: (name: string) => void; onDeleteConfig: (name: string, e: React.MouseEvent) => void;
-  onSetDefault: (name: string) => void; selectedConfig: string | null; defaultConfig: string | null;
-  previewParams: SimulationParams | null; previewData: SimulationResult | null; onApply: () => void;
-}) {
-  const previewStats = useMemo(() => {
-    if (!previewData) return null;
-    const staticFlowAtHalfMm = (() => {
-      const ys = previewData.Y_positions;
-      const vals = previewData.flow_l_min;
-      const len = ys.length;
-      if (!len || len !== vals.length) return null;
-      if (len === 1) return vals[0];
-      for (let i = 0; i < len - 1; i++) {
-        const a = ys[i];
-        const b = ys[i + 1];
-        if (a === b) continue;
-        if ((0.5 - a) * (0.5 - b) <= 0) {
-          const t = (0.5 - a) / (b - a);
-          return vals[i] + t * (vals[i + 1] - vals[i]);
-        }
-      }
-      let best = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < len; i++) {
-        const d = Math.abs(ys[i] - 0.5);
-        if (d < bestDist) {
-          bestDist = d;
-          best = i;
-        }
-      }
-      return vals[best];
-    })();
-    const maxStaticFlow = previewData.flow_l_min.length ? Math.max(...previewData.flow_l_min) : 0;
-    const hasDynamic = previewData.dynamic_flow_l_min.length > 0;
-    const maxDynamicFlow = hasDynamic ? Math.max(...previewData.dynamic_flow_l_min) : null;
+/** A stored cam profile's parameters, its note column over the payload's note as the old route served it. */
+export function camParamsFromProfile(payload: Record<string, unknown>, note: string): SimulationParams {
+  return mergeConfigParams('note' in payload || note ? { ...payload, note } : payload);
+}
+
+function staticFlowAt(sim: SimulationResult, yMm: number): number | null {
+  const ys = sim.Y_positions;
+  const vals = sim.flow_l_min;
+  const len = ys.length;
+  if (!len || len !== vals.length) return null;
+  if (len === 1) return vals[0];
+  for (let i = 0; i < len - 1; i++) {
+    const a = ys[i];
+    const b = ys[i + 1];
+    if (a === b) continue;
+    if ((yMm - a) * (yMm - b) <= 0) {
+      const t = (yMm - a) / (b - a);
+      return vals[i] + t * (vals[i + 1] - vals[i]);
+    }
+  }
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < len; i++) {
+    const d = Math.abs(ys[i] - yMm);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return vals[best];
+}
+
+/** The import window's preview of a Cam Explorer profile: its inputs, simulated figures and cam drawing. */
+export function CamProfilePreview({ payload }: { payload: Record<string, unknown> }) {
+  const params = useMemo(() => mergeConfigParams(payload), [payload]);
+  // The simulation answer with the parameters it is for: a late answer for an earlier hover never shows.
+  const [sim, setSim] = useState<{ params: SimulationParams; data: SimulationResult } | null>(null);
+  const data = sim?.params === params ? sim.data : null;
+  useEffect(() => {
+    const ac = new AbortController();
+    apiFetch('/api/simulate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: ac.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((out) => { if (!ac.signal.aborted && out && Array.isArray(out.Y_positions)) setSim({ params, data: out }); })
+      .catch(() => { /* no figures, the inputs stay */ });
+    return () => ac.abort();
+  }, [params]);
+  const stats = useMemo(() => {
+    if (!data) return null;
     return {
-      gapAtY0: previewData.gap_at_Y0,
-      staticFlowAtHalfMm,
-      maxStaticFlow,
-      maxDynamicFlow,
-      totalVolume: previewData.total_volume_ml,
-      equalization: previewData.equalization_time_ms,
+      gapAtY0: data.gap_at_Y0,
+      staticFlowAtHalfMm: staticFlowAt(data, 0.5),
+      maxStaticFlow: data.flow_l_min.length ? Math.max(...data.flow_l_min) : 0,
+      maxDynamicFlow: data.dynamic_flow_l_min.length ? Math.max(...data.dynamic_flow_l_min) : null,
+      totalVolume: data.total_volume_ml,
+      equalization: data.equalization_time_ms,
     };
-  }, [previewData]);
-
+  }, [data]);
+  const row = (label: string, value: string, tone = 'text-neutral-200') => (
+    <div key={label} className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">{label}</span><span className={`text-[11px] font-mono ${tone}`}>{value}</span></div>
+  );
   return (
-    <Modal open={isOpen} onClose={onClose} title="Configurations" size="lg">
-      <div className="flex h-[min(62vh,640px)] min-h-0 flex-col overflow-hidden md:flex-row">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-neutral-800 md:w-60 md:flex-none md:border-b-0 md:border-r">
-          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">
-            {configs.map(({ filename, note }) => (
-              <div key={filename} className="group relative flex items-start min-w-0 max-w-full">
-                <Button variant="ghost" type="button" onMouseEnter={() => onHoverConfig(filename)} onClick={() => onSelectConfig(filename)}
-                  onDoubleClick={() => onOpenConfig(filename)} title={`${filename} — double-click to open`}
-                  className={`min-w-0 w-full max-w-full text-left px-3 py-2 rounded-lg text-xs transition-all pr-10 ${selectedConfig === filename ? 'bg-blue-600 text-white font-bold' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
-                  <div className="flex items-start justify-between gap-2 w-full min-w-0">
-                    <span className="font-mono break-all [overflow-wrap:anywhere] text-left leading-snug">{filename}</span>
-                    {defaultConfig === filename && (
-                      <div className="flex items-center gap-1 bg-emerald-500 text-white px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 mt-0.5">
-                        Default
-                      </div>
-                    )}
-                  </div>
-                  {note.trim() ? (
-                    <p className={`mt-1 text-[10px] leading-snug line-clamp-2 font-normal break-words [overflow-wrap:anywhere] ${selectedConfig === filename ? 'text-blue-100/90' : 'text-neutral-500 group-hover:text-neutral-400'}`}>{note.trim()}</p>
-                  ) : null}
-                </Button>
-                <Button variant="ghost" onClick={(e) => onDeleteConfig(filename, e)}
-                  className="absolute right-2 top-2 p-1.5 rounded-md text-neutral-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all" title="Delete Config">
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-          <div className="p-4 border-t border-neutral-800">
-            <Button variant="ghost" disabled={!selectedConfig} onClick={onApply}
-              className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-all shadow-lg">
-              Open config
-            </Button>
+    <div className="flex h-full min-h-0 flex-col md:flex-row">
+      <div className="max-h-40 w-full overflow-y-auto border-b border-neutral-800 bg-neutral-900/65 p-4 space-y-4 md:max-h-none md:w-2/5 md:max-w-[280px] md:border-b-0 md:border-r">
+        <div>
+          <div className="text-[10px] text-neutral-500 font-bold mb-2">Simulation Inputs</div>
+          <div className="grid grid-cols-1 gap-2">
+            {row('Motor speed', `${params.motor_speed.toFixed(1)} RPM`)}
+            {row('Thickness', `${params.thickness.toFixed(3)} mm`)}
+            {row('Tube', `${params.tube_id.toFixed(2)} x ${params.tube_od.toFixed(2)} mm`)}
+            {row('Pressure', `${params.input_pressure_kpa.toFixed(1)} kPa`)}
+            {row('Compliance', `${params.compliance.toFixed(3)} mm/MPa`)}
+            {row('Chamber vol.', `${params.chamber_volume_ml.toFixed(2)} mL`)}
           </div>
         </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="p-4 border-b border-neutral-800 flex justify-between items-center bg-neutral-900/40">
-            <h4 className="text-xs font-bold text-neutral-500">Configuration Preview</h4>
-            {selectedConfig && (
-              <Button variant="ghost" onClick={() => onSetDefault(selectedConfig)} disabled={defaultConfig === selectedConfig}
-                className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${defaultConfig === selectedConfig ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 opacity-50' : 'bg-blue-600/10 border-blue-500/30 text-blue-400 hover:bg-blue-600/20'}`}>
-                {defaultConfig === selectedConfig ? 'Is default' : 'Set as default'}
-              </Button>
-            )}
+        {stats && (
+          <div>
+            <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
+            <div className="grid grid-cols-1 gap-2">
+              {row('gap @ Y=0', `${stats.gapAtY0.toFixed(4)} mm`, 'text-cyan-300')}
+              {row('Static flow @ Y=0.5', stats.staticFlowAtHalfMm !== null ? `${stats.staticFlowAtHalfMm.toFixed(3)} L/min` : 'N/A', 'text-amber-300')}
+              {row('Max flow (static)', `${stats.maxStaticFlow.toFixed(3)} L/min`, 'text-amber-300')}
+              {row('Max flow (dynamic)', stats.maxDynamicFlow !== null ? `${stats.maxDynamicFlow.toFixed(3)} L/min` : 'N/A', 'text-amber-300')}
+              {row('Total volume', `${stats.totalVolume.toFixed(2)} mL`, 'text-amber-300')}
+              {row('Equalization', stats.equalization >= 0 ? `${stats.equalization.toFixed(1)} ms` : 'N/A', 'text-amber-300')}
+            </div>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-            {previewParams ? (
-              <>
-                <div className="max-h-40 w-full overflow-y-auto border-b border-neutral-800 bg-neutral-900/65 p-4 space-y-4 md:max-h-none md:w-2/5 md:max-w-[280px] md:border-b-0 md:border-r">
-                  {previewParams.note.trim() ? (
-                    <div>
-                      <div className="text-[10px] text-neutral-500 font-bold mb-1">Note</div>
-                      <p className="text-xs text-neutral-200 leading-relaxed whitespace-pre-wrap break-words">{previewParams.note.trim()}</p>
-                    </div>
-                  ) : null}
-
-                  <div>
-                    <div className="text-[10px] text-neutral-500 font-bold mb-2">Simulation Inputs</div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Motor speed</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.motor_speed.toFixed(1)} RPM</span></div>
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Thickness</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.thickness.toFixed(3)} mm</span></div>
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Tube</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.tube_id.toFixed(2)} x {previewParams.tube_od.toFixed(2)} mm</span></div>
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Pressure</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.input_pressure_kpa.toFixed(1)} kPa</span></div>
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Compliance</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.compliance.toFixed(3)} mm/MPa</span></div>
-                      <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Chamber vol.</span><span className="text-[11px] font-mono text-neutral-200">{previewParams.chamber_volume_ml.toFixed(2)} mL</span></div>
-                    </div>
-                  </div>
-
-                  {previewStats && (
-                    <div>
-                      <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
-                      <div className="grid grid-cols-1 gap-2">
-                        <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">gap @ Y=0</span><span className="text-[11px] font-mono text-cyan-300">{previewStats.gapAtY0.toFixed(4)} mm</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Static flow @ Y=0.5</span><span className="text-[11px] font-mono text-amber-300">{previewStats.staticFlowAtHalfMm !== null ? `${previewStats.staticFlowAtHalfMm.toFixed(3)} L/min` : 'N/A'}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Max flow (static)</span><span className="text-[11px] font-mono text-amber-300">{previewStats.maxStaticFlow.toFixed(3)} L/min</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Max flow (dynamic)</span><span className="text-[11px] font-mono text-amber-300">{previewStats.maxDynamicFlow !== null ? `${previewStats.maxDynamicFlow.toFixed(3)} L/min` : 'N/A'}</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Total volume</span><span className="text-[11px] font-mono text-amber-300">{previewStats.totalVolume.toFixed(2)} mL</span></div>
-                        <div className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">Equalization</span><span className="text-[11px] font-mono text-amber-300">{previewStats.equalization >= 0 ? `${previewStats.equalization.toFixed(1)} ms` : 'N/A'}</span></div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex min-h-32 min-w-0 flex-1 items-center justify-center overflow-hidden p-4">
-                  <div className="w-full h-full flex flex-col items-center justify-center">
-                    <VerticalSystemView data={previewData} params={previewParams} details={true} setDetails={() => {}} isPreview={true} />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-neutral-600 text-sm font-medium">Hover a config to preview...</div>
-            )}
-          </div>
+        )}
+      </div>
+      <div className="flex min-h-32 min-w-0 flex-1 items-center justify-center overflow-hidden p-4">
+        <div className="w-full h-full flex flex-col items-center justify-center">
+          <VerticalSystemView data={data} params={params} details={true} setDetails={() => {}} isPreview={true} />
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }

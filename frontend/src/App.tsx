@@ -7,23 +7,26 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import {
-  Settings, Import, Download, RefreshCw, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor
+  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
-import type { SimulationParams, SimulationResult, SavedConfigEntry } from './components';
+import type { SimulationParams, SimulationResult } from './components';
 import {
-  ParameterSlider, StatRow, Accordion, ConfigModal, TooltipHintsProvider, ClosureRampToggle,
-  apiFetch, defaultParams, mergeConfigParams,
+  ParameterSlider, StatRow, Accordion, TooltipHintsProvider, ClosureRampToggle, CamProfilePreview,
+  apiFetch, defaultParams, mergeConfigParams, camParamsFromProfile,
 } from './components';
+import { ProfileImportModal, ProfilePill, ProfileSaveDialog } from './ProfileControls';
+import { UNSAVED_PROFILE, createProfile, getDefaultProfile, getProfile, listProfiles, profileTypeOf, saveProfile } from './lib/profiles';
+import type { ProfileHandle, ProfilePayload, ProfileState, ProfileType, StoredProfile } from './lib/profiles';
 import { CamSchematicCard } from './CamSchematic';
 import { interpAt, useCamTravel } from './lib/camTravel';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain } from './lib/chartDomain';
 import type { ChartCardView } from './ChartCard';
-import ProfileBuilder from './ProfileBuilder';
-import LinkageExplorer from './LinkageExplorer';
+import ProfileBuilder, { FinderProfilePreview } from './ProfileBuilder';
+import LinkageExplorer, { LinkageProfilePreview } from './LinkageExplorer';
 import { SubTabs } from './SubTabs';
 import type { SubTab } from './SubTabs';
 import {
@@ -50,6 +53,11 @@ const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum'];
 const TABS_KEY = 'cam-sim.tabs.v1';
 const SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Finder' }];
 const DEFAULT_SUB_TABS: Record<TopTab, SubTab> = { cam: 'explorer', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer' };
+
+const renderProfilePreview = (type: ProfileType) => (payload: ProfilePayload) =>
+  type === 'cam' ? <CamProfilePreview payload={payload} />
+    : type === 'cam-finder' ? <FinderProfilePreview payload={payload} />
+      : <LinkageProfilePreview kind={type} payload={payload} />;
 
 function loadTabs(): { tab: TopTab; sub: Record<TopTab, SubTab> } {
   const sub = { ...DEFAULT_SUB_TABS };
@@ -107,18 +115,15 @@ export default function App() {
   const [data, setData] = useState<SimulationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [configs, setConfigs] = useState<SavedConfigEntry[]>([]);
-  const [defaultConfig, setDefaultConfig] = useState<string | null>(null);
-  const [activeConfigName, setActiveConfigName] = useState<string>('Default');
-  const [previewParams, setPreviewParams] = useState<SimulationParams | null>(null);
-  const [previewData, setPreviewData] = useState<SimulationResult | null>(null);
-  const [selectedConfig, setSelectedConfig] = useState<string | null>(null);
-  const [activeBuilderExperienceName, setActiveBuilderExperienceName] = useState('Unsaved');
-  const [openBuilderExperienceSignal, setOpenBuilderExperienceSignal] = useState(0);
-  const [saveBuilderExperienceSignal, setSaveBuilderExperienceSignal] = useState(0);
-  /** Profile Builder: show Save/Update in header when a solve can be persisted and is not yet saved. */
-  const [builderSaveExperienceVisible, setBuilderSaveExperienceVisible] = useState(false);
+  /** The loaded cam profile; null when nothing saved is loaded. */
+  const [activeConfigName, setActiveConfigName] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  /** The Cam Finder and the open linkage tab report their profile here; the header pill acts on them through the refs. */
+  const [finderProfile, setFinderProfile] = useState<ProfileState>(UNSAVED_PROFILE);
+  const [linkageProfile, setLinkageProfile] = useState<ProfileState>(UNSAVED_PROFILE);
+  const finderRef = useRef<ProfileHandle>(null);
+  const linkageRef = useRef<ProfileHandle>(null);
   const [guidanceMode, setGuidanceMode] = useState(true);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -183,156 +188,32 @@ export default function App() {
   const handleApplyFromBuilder = useCallback((builderParams: SimulationParams) => {
     setParams(builderParams);
     setSavedParams(null);
-    setActiveConfigName('Builder');
+    setActiveConfigName(null);
     setActiveTab('cam');
     setSubTab('cam', 'explorer');
     setToast({ message: 'Profile applied from Builder', visible: true });
     setTimeout(() => setToast({ message: '', visible: false }), 3000);
   }, [setSubTab]);
 
-  const fetchConfigs = async () => {
-    try {
-      const res = await apiFetch('/api/configs');
-      const listData = await res.json();
-      const raw = listData.configs as unknown;
-      const normalized: SavedConfigEntry[] = Array.isArray(raw)
-        ? raw.map((c: unknown) =>
-          typeof c === 'string'
-            ? { filename: c, note: '' }
-            : { filename: (c as SavedConfigEntry).filename, note: typeof (c as SavedConfigEntry).note === 'string' ? (c as SavedConfigEntry).note : '' }
-        )
-        : [];
-      setConfigs(normalized);
-      const defRes = await apiFetch('/api/configs/default');
-      const defData = await defRes.json();
-      setDefaultConfig(defData.default);
-    } catch (err) {
-      console.error('Error fetching configs:', err);
-    }
+  const applyCamProfile = (p: StoredProfile) => {
+    const merged = camParamsFromProfile(p.payload, p.note);
+    setParams(merged);
+    setSavedParams(merged);
+    setActiveConfigName(p.name);
   };
 
   useEffect(() => {
-    fetchConfigs();
     (async () => {
       try {
-        const res = await apiFetch('/api/configs/default');
-        const data = await res.json();
-        if (data.default && data.default !== 'none') {
-          const configRes = await apiFetch(`/api/configs/${data.default}`);
-          if (configRes.ok) {
-            const configParams = await configRes.json();
-            const merged = mergeConfigParams(configParams);
-            setParams(merged);
-            setSavedParams(merged);
-            setDefaultConfig(data.default);
-            setActiveConfigName(data.default);
-            showToast(`Startup profile loaded: ${data.default}`);
-          }
-        }
+        const name = await getDefaultProfile('cam');
+        if (!name) return;
+        applyCamProfile(await getProfile('cam', name));
+        showToast(`Startup profile loaded: ${name}`);
       } catch (err) {
         console.error('Error loading default config:', err);
       }
     })();
   }, []);
-
-  const handleApplyConfig = () => {
-    if (previewParams) {
-      setParams(previewParams);
-      setSavedParams(previewParams);
-      setShowImportModal(false);
-      if (selectedConfig) setActiveConfigName(selectedConfig);
-    }
-  };
-
-  const handleOpenConfigByName = async (name: string) => {
-    try {
-      const res = await apiFetch(`/api/configs/${name}`);
-      if (!res.ok) throw new Error(`Failed to load ${name}`);
-      const configParams = await res.json();
-      const merged = mergeConfigParams(configParams);
-      setParams(merged);
-      setSavedParams(merged);
-      setActiveConfigName(name);
-      setSelectedConfig(name);
-      setPreviewParams(merged);
-      setShowImportModal(false);
-    } catch (err) {
-      console.error('Error opening config:', err);
-    }
-  };
-
-  const loadConfigData = async (name: string) => {
-    try {
-      const res = await apiFetch(`/api/configs/${name}`);
-      const configParams = await res.json();
-      const merged = mergeConfigParams(configParams);
-      setPreviewParams(merged);
-      const simRes = await apiFetch('/api/simulate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged),
-      });
-      const simResult = await simRes.json();
-      setPreviewData(simResult);
-    } catch (err) {
-      console.error('Error loading config:', err);
-    }
-  };
-
-  const handleSetDefault = async (name: string) => {
-    try {
-      await apiFetch(`/api/configs/default/${name}`, { method: 'POST' });
-      setDefaultConfig(name);
-    } catch (err) {
-      console.error('Error setting default config:', err);
-    }
-  };
-
-  const handleDeleteConfig = async (name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(`Are you sure you want to delete ${name}?`)) return;
-    try {
-      if (defaultConfig === name) {
-        await apiFetch('/api/configs/default/none', { method: 'POST' });
-        setDefaultConfig(null);
-      }
-      await apiFetch(`/api/configs/${name}`, { method: 'DELETE' });
-      if (selectedConfig === name) { setSelectedConfig(null); setPreviewParams(null); setPreviewData(null); }
-      fetchConfigs();
-    } catch (err) {
-      console.error('Error deleting config:', err);
-    }
-  };
-
-  const handleSaveConfig = async () => {
-    try {
-      const res = await apiFetch('/api/save-config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
-      });
-      const data = await res.json();
-      setActiveConfigName(data.filename);
-      setSavedParams(params);
-      showToast('Simulation Config Saved to Repo');
-      fetchConfigs();
-    } catch (err) {
-      console.error('Error saving config:', err);
-      showToast('Error saving config');
-    }
-  };
-
-  const handleUpdateConfig = async () => {
-    try {
-      if (activeConfigName === 'Default' || !activeConfigName.endsWith('.json')) return handleSaveConfig();
-      await apiFetch(`/api/configs/${activeConfigName}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
-      });
-      setSavedParams(params);
-      showToast(`Profile ${activeConfigName} updated`);
-      fetchConfigs();
-    } catch (err) {
-      console.error('Error updating config:', err);
-      showToast('Error updating config');
-    }
-  };
-
   const handleLoadConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -398,6 +279,54 @@ export default function App() {
   };
 
   const hasChanges = useMemo(() => savedParams ? JSON.stringify(params) !== JSON.stringify(savedParams) : false, [params, savedParams]);
+
+  // ─── Saved profiles: one pill, one import window, one save dialog for every tab ───
+  const profileType = profileTypeOf(activeTab, subTab);
+  const camProfile: ProfileState = { name: activeConfigName, dirty: hasChanges, canSave: true, note: params.note };
+  const camHandle: ProfileHandle = {
+    getPayload: (note) => ({ ...params, note }),
+    apply: applyCamProfile,
+    markSaved: (name, note, payload) => {
+      setActiveConfigName(name);
+      setParams((prev) => ({ ...prev, note }));
+      setSavedParams(payload as unknown as SimulationParams);
+    },
+    detach: () => { setActiveConfigName(null); setSavedParams(null); },
+  };
+  const profileState = camExplorer ? camProfile : camFinder ? finderProfile : linkageProfile;
+  const profileHandle = (): ProfileHandle | null => (camExplorer ? camHandle : camFinder ? finderRef.current : linkageRef.current);
+
+  /** Store the open feature's payload; an empty name is generated by the server (cam and Cam Finder only). */
+  const saveAsNew = async (type: ProfileType, handle: ProfileHandle | null, loaded: string | null, name: string, note: string) => {
+    if (!handle) return false;
+    if (name) {
+      const { profiles } = await listProfiles(type);
+      if (name !== loaded && profiles.some((p) => p.name === name) && !confirm(`Overwrite the saved profile "${name}"?`)) return false;
+    }
+    const payload = handle.getPayload(note);
+    const out = name ? await saveProfile(type, name, payload, note) : await createProfile(type, payload, note);
+    handle.markSaved(out.name, note, payload);
+    showToast(out.status === 'updated' ? `Profile ${out.name} updated` : `Profile ${out.name} saved`);
+    return true;
+  };
+
+  /** Overwrite the loaded profile, keeping its stored note when the feature has no note field. */
+  const updateProfile = async () => {
+    const type = profileType;
+    const handle = profileHandle();
+    const name = profileState.name;
+    if (!handle || !name) return;
+    try {
+      const note = profileState.note ?? (await getProfile(type, name).catch(() => null))?.note ?? '';
+      const payload = handle.getPayload(note);
+      await saveProfile(type, name, payload, note);
+      handle.markSaved(name, note, payload);
+      showToast(`Profile ${name} updated`);
+    } catch (err) {
+      showToast(`Not saved: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
   const isModified = useCallback((key: keyof SimulationParams) => savedParams ? params[key] !== savedParams[key] : false, [params, savedParams]);
 
   const hasDynamicModel = data && params.chamber_volume_ml > 0;
@@ -609,85 +538,9 @@ export default function App() {
             <SubTabs label="Mode" value={subTab} options={SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
           </div>
 
-          {/* Context pill (tab-specific) */}
-          {camExplorer && (
-            <div className="flex items-center gap-2.5 flex-wrap min-[1440px]:flex-nowrap min-w-0">
-              <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-1 shadow-sm transition-colors ${hasChanges ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={activeConfigName}>
-                <div className={`flex min-w-0 max-w-[min(100vw-8rem,18rem)] sm:max-w-[22rem] items-center gap-2 rounded-lg px-2.5 py-1.5 ${hasChanges ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
-                  <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
-                  <span className={`min-w-0 truncate font-mono text-xs sm:text-sm font-medium tabular-nums ${hasChanges ? 'text-amber-300' : 'text-emerald-400'}`}>
-                    {activeConfigName}{hasChanges ? <span className="text-amber-400">*</span> : null}
-                  </span>
-                </div>
-                <Button variant="ghost" type="button" onClick={() => { fetchConfigs(); setShowImportModal(true); }}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white"
-                  title="Browse and import a JSON config from the repo" aria-label="Import configuration from repository">
-                  <Import className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
-                  <span className="hidden sm:inline">Import</span>
-                </Button>
-              </div>
-              <AnimatePresence>
-                {hasChanges && (
-                  <motion.button initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
-                    onClick={handleUpdateConfig}
-                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center gap-1.5 transition-all font-bold text-[10px]"
-                    title="Update currently loaded config">
-                    <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-100" />
-                    </span>
-                    <RefreshCw className="w-3 h-3" /> Update
-                  </motion.button>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-          {camFinder && (
-            <div className="flex items-center gap-2.5 flex-wrap min-[1440px]:flex-nowrap min-w-0">
-              <div
-                className="inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border border-neutral-700/80 bg-neutral-800/50 p-1 shadow-sm transition-colors"
-                title={activeBuilderExperienceName}
-              >
-                <div className="flex min-w-0 max-w-[min(100vw-8rem,18rem)] sm:max-w-[22rem] items-center gap-2 rounded-lg bg-neutral-900/40 px-2.5 py-1.5">
-                  <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Experience</span>
-                  <span className="min-w-0 truncate font-mono text-xs sm:text-sm font-medium tabular-nums text-emerald-400">
-                    {activeBuilderExperienceName}
-                  </span>
-                </div>
-                <Button variant="ghost"
-                  type="button"
-                  onClick={() => setOpenBuilderExperienceSignal((n) => n + 1)}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:bg-neutral-700/80 hover:text-white"
-                  title="Browse and import a saved builder experience"
-                  aria-label="Import builder experience"
-                >
-                  <Import className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
-                  <span className="hidden sm:inline">Import</span>
-                </Button>
-              </div>
-              <AnimatePresence>
-                {builderSaveExperienceVisible && (
-                  <motion.button
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -10 }}
-                    onClick={() => setSaveBuilderExperienceSignal((n) => n + 1)}
-                    className="relative cursor-pointer px-3 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center gap-1.5 transition-all font-bold text-[10px]"
-                    title={
-                      activeBuilderExperienceName === 'Unsaved'
-                        ? 'Save this solve as a new builder experience'
-                        : 'Update the loaded builder experience on disk'
-                    }
-                  >
-                    <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-100" />
-                    </span>
-                    <RefreshCw className="w-3 h-3" />{' '}
-                    {activeBuilderExperienceName === 'Unsaved' ? 'Save' : 'Update'}
-                  </motion.button>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
+          {/* The open tab's profile: one pill for every tab and sub-tab */}
+          <ProfilePill state={profileState} onImport={() => setImportOpen(true)}
+            onSaveAsNew={() => setSaveOpen(true)} onUpdate={() => { void updateProfile(); }} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button variant="ghost"
@@ -738,7 +591,10 @@ export default function App() {
               </div>
               <div className="flex gap-2 shrink-0">
                 <Input type="file" ref={fileInputRef} onChange={handleLoadConfig} accept=".json" className="hidden" />
-                <Button variant="ghost" onClick={handleSaveConfig}
+                <Button variant="ghost" onClick={() => {
+                  saveAsNew('cam', camHandle, activeConfigName, '', params.note)
+                    .catch((err) => showToast(`Not saved: ${err instanceof Error ? err.message : err}`));
+                }}
                   className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 transition-all border border-blue-600/50 flex items-center justify-center shadow-sm"
                   title="Save Configuration as New File">
                   <Download className="w-4 h-4" />
@@ -861,6 +717,8 @@ export default function App() {
           kind={activeTab === 'linkage' ? 'elbow' : activeTab}
           mode={subTab}
           onOpenExplorer={() => setSubTab(activeTab, 'explorer')}
+          onProfileStateChange={setLinkageProfile}
+          profileRef={linkageRef}
           shared={{
             tube_id: params.tube_id,
             tube_od: params.tube_od,
@@ -877,10 +735,8 @@ export default function App() {
             onApplyToExplorer={handleApplyFromBuilder}
             explorerCompliance={params.compliance}
             guidanceEnabled={guidanceMode}
-            onActiveExperienceNameChange={setActiveBuilderExperienceName}
-            openExperienceBrowserSignal={openBuilderExperienceSignal}
-            onDirtyStateChange={setBuilderSaveExperienceVisible}
-            saveExperienceSignal={saveBuilderExperienceSignal}
+            onProfileStateChange={setFinderProfile}
+            profileRef={finderRef}
           />
         </div>
       )}
@@ -890,14 +746,18 @@ export default function App() {
         isOpen={showStlExport}
         onClose={() => setShowStlExport(false)}
         params={params}
-        configName={activeConfigName}
+        configName={activeConfigName ?? 'Default'}
       />
 
-      <ConfigModal
-        isOpen={showImportModal} onClose={() => setShowImportModal(false)} configs={configs}
-        onHoverConfig={loadConfigData} onSelectConfig={setSelectedConfig} onOpenConfig={handleOpenConfigByName}
-        onDeleteConfig={handleDeleteConfig} onSetDefault={handleSetDefault} selectedConfig={selectedConfig}
-        defaultConfig={defaultConfig} previewParams={previewParams} previewData={previewData} onApply={handleApplyConfig}
+      <ProfileImportModal
+        open={importOpen} onClose={() => setImportOpen(false)} type={profileType}
+        renderPreview={renderProfilePreview(profileType)}
+        onOpen={(p) => profileHandle()?.apply(p)}
+        onDeleted={(name) => { if (name === profileState.name) profileHandle()?.detach(); }}
+      />
+      <ProfileSaveDialog
+        open={saveOpen} onClose={() => setSaveOpen(false)} type={profileType} initialNote={profileState.note ?? ''}
+        onSave={(name, note) => saveAsNew(profileType, profileHandle(), profileState.name, name, note)}
       />
 
       <AnimatePresence>

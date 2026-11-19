@@ -1,10 +1,12 @@
 import { Textarea } from '@blain-projects/ui';
-import { Button, Input, LoadingState, Modal } from '@blain-projects/ui';
-import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
+import { Button, LoadingState } from '@blain-projects/ui';
+import { useState, useMemo, useEffect, useRef, useImperativeHandle, type ReactNode, type Ref } from 'react';
+import { useReportProfileState } from './lib/profiles';
+import type { ProfileHandle, ProfileState } from './lib/profiles';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
-import { Crosshair, ArrowRight, OctagonX, Trash2, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Crosshair, ArrowRight, OctagonX, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SimulationParams, SimulationResult } from './components';
 import {
@@ -13,7 +15,6 @@ import {
   StatRow,
   Accordion,
   VerticalSystemView,
-  apiUrl,
   apiFetch,
   defaultParams,
   DelayedHoverHint,
@@ -530,23 +531,14 @@ interface ProfileBuilderProps {
   /** Matches Explorer tab params (including the registered default config on load). */
   explorerCompliance: number;
   guidanceEnabled?: boolean;
-  onActiveExperienceNameChange?: (name: string) => void;
-  /** Incrementing signal from App header to open the experience browser modal. */
-  openExperienceBrowserSignal?: number;
-  /** When true, header should show Save/Update (solvable result + not yet saved or params changed). */
-  onDirtyStateChange?: (showSave: boolean) => void;
-  /** Incrementing signal from App header to save/update current experience. */
-  saveExperienceSignal?: number;
+  /** The header pill's view of the loaded profile (type cam-finder). */
+  onProfileStateChange?: (state: ProfileState) => void;
+  /** What the header pill calls to save, open and forget a profile. */
+  profileRef?: Ref<ProfileHandle>;
 }
 
-interface SavedExperienceEntry {
-  filename: string;
-  note: string;
-}
-
+/** The stored payload of a cam-finder profile. */
 interface BuilderExperiencePayload {
-  filename: string;
-  note: string;
   builder_params: Record<string, unknown>;
   solver_result: SolverResult;
   /** Inputs used for `solver_result` (same shape as `/api/solve-stream` body). Omitted on legacy saves. */
@@ -655,10 +647,8 @@ export default function ProfileBuilder({
   onApplyToExplorer,
   explorerCompliance,
   guidanceEnabled = true,
-  onActiveExperienceNameChange,
-  openExperienceBrowserSignal,
-  onDirtyStateChange,
-  saveExperienceSignal,
+  onProfileStateChange,
+  profileRef,
 }: ProfileBuilderProps) {
   const [motorSpeed, setMotorSpeed] = useState(100);
   const [tubeId, setTubeId] = useState(2.0);
@@ -723,17 +713,12 @@ export default function ProfileBuilder({
   const [displayedSim, setDisplayedSim] = useState<SimulationResult | null>(null);
   const [experienceNote, setExperienceNote] = useState('');
   const [activeExperienceName, setActiveExperienceName] = useState('Unsaved');
-  const [experiences, setExperiences] = useState<SavedExperienceEntry[]>([]);
-  const [showExperienceModal, setShowExperienceModal] = useState(false);
   const [showInfoPanel, setShowInfoPanel] = useState(true);
   const [builderChartSettings, setBuilderChartSettings] = useState<Record<BuilderChartSettingsKey, ChartDomainSettings>>({
     flowY: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 25 },
     pressure: { autoX: true, autoY: true, xMin: 0, xMax: 100, yMin: 0, yMax: 300 },
     vertical: { autoX: true, autoY: true, xMin: -2, xMax: 6, yMin: -8, yMax: 8 },
   });
-  const [selectedExperience, setSelectedExperience] = useState<string | null>(null);
-  const [previewExperience, setPreviewExperience] = useState<BuilderExperiencePayload | null>(null);
-  const [experienceQuery, setExperienceQuery] = useState('');
   const [savedExperienceSignature, setSavedExperienceSignature] = useState<string | null>(null);
   /** Inputs used for the last successful solve (or restored from a loaded experience). */
   const [lastSolveRequestBody, setLastSolveRequestBody] = useState<SolveStreamRequestBody | null>(null);
@@ -766,22 +751,6 @@ export default function ProfileBuilder({
   useEffect(() => {
     setCompliance(explorerCompliance);
   }, [explorerCompliance]);
-
-  useEffect(() => {
-    onActiveExperienceNameChange?.(activeExperienceName);
-  }, [activeExperienceName, onActiveExperienceNameChange]);
-
-  useEffect(() => {
-    if (!openExperienceBrowserSignal) return;
-    void (async () => {
-      await fetchExperiences();
-      setShowExperienceModal(true);
-    })();
-  }, [openExperienceBrowserSignal]);
-
-  useEffect(() => {
-    void fetchExperiences();
-  }, []);
 
   useEffect(() => {
     setDisplayedSim(null);
@@ -1213,66 +1182,22 @@ export default function ProfileBuilder({
     }
   };
 
-  const fetchExperiences = async () => {
-    const res = await apiFetch('/api/builder-experiences');
-    const data = await res.json();
-    const list = Array.isArray(data.experiences) ? data.experiences : [];
-    setExperiences(list.map((e: SavedExperienceEntry) => ({ filename: e.filename, note: e.note ?? '' })));
-  };
+  // The header pill saves only on a click: a later solve never saves on its own.
+  useReportProfileState({
+    name: activeExperienceName === 'Unsaved' ? null : activeExperienceName,
+    dirty: showBuilderSaveExperienceButton,
+    canSave: canSaveExperience,
+    note: experienceNote,
+  }, onProfileStateChange);
 
-  const handleSaveExperience = async () => {
-    if (!result?.success || !result.candidates?.length) return;
-    const canUpdateCurrent = builderHasUnsavedChanges && activeExperienceName !== 'Unsaved';
-    const endpoint = canUpdateCurrent
-      ? apiUrl(`/api/builder-experiences/${activeExperienceName}`)
-      : apiUrl('/api/builder-experiences');
-    const res = await fetch(endpoint, { credentials: "include",
-      method: canUpdateCurrent ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        note: experienceNote,
-        builder_params: collectBuilderParams(),
-        solver_result: result,
-        last_solve_request: lastSolveRequestBody ?? undefined,
-      }),
-    });
-    const data = await res.json();
-    setActiveExperienceName(data.filename ?? activeExperienceName ?? 'Saved');
-    setSavedExperienceSignature(currentExperienceSignature);
-    await fetchExperiences();
-  };
-
-  useEffect(() => {
-    onDirtyStateChange?.(showBuilderSaveExperienceButton);
-  }, [showBuilderSaveExperienceButton, onDirtyStateChange]);
-
-  // One save per header click: a later solve that makes saving possible again must not save on its own.
-  const handledSaveSignalRef = useRef(saveExperienceSignal ?? 0);
-  useEffect(() => {
-    if (!saveExperienceSignal || saveExperienceSignal === handledSaveSignalRef.current) return;
-    if (!canSaveExperience) return;
-    handledSaveSignalRef.current = saveExperienceSignal;
-    void handleSaveExperience();
-  }, [saveExperienceSignal, canSaveExperience]);
-
-  const loadExperiencePreview = async (name: string) => {
-    const res = await apiFetch(`/api/builder-experiences/${name}`);
-    if (!res.ok) return;
-    const payload = await res.json() as BuilderExperiencePayload;
-    setPreviewExperience(payload);
-  };
-
-  const applyExperience = async () => {
-    if (!selectedExperience) return;
-    const res = await apiFetch(`/api/builder-experiences/${selectedExperience}`);
-    if (!res.ok) return;
-    const payload = await res.json() as BuilderExperiencePayload;
-    applyBuilderParams(payload.builder_params);
+  const applyExperience = (name: string, note: string, payload: BuilderExperiencePayload) => {
+    const builderParams = (payload.builder_params ?? {}) as Record<string, unknown>;
+    applyBuilderParams(builderParams);
     setResult(payload.solver_result);
-    const loadedCandidates = payload.solver_result.candidates ?? [];
+    const loadedCandidates = payload.solver_result?.candidates ?? [];
     const loadedAgg =
-      typeof payload.builder_params.profileAggressivity01 === 'number'
-        ? payload.builder_params.profileAggressivity01
+      typeof builderParams.profileAggressivity01 === 'number'
+        ? builderParams.profileAggressivity01
         : 0.5;
     const loadedIdx = loadedCandidates.length <= 1
       ? 0
@@ -1281,7 +1206,7 @@ export default function ProfileBuilder({
         Math.max(0, Math.round(loadedAgg * (loadedCandidates.length - 1))),
       );
     const initial: Record<number, SimulationResult> = {};
-    if (payload.solver_result.simulation) {
+    if (payload.solver_result?.simulation) {
       initial[loadedIdx] = payload.solver_result.simulation;
       touchCandidateCache(loadedIdx);
     }
@@ -1289,41 +1214,40 @@ export default function ProfileBuilder({
       clearCandidateCacheTimer(Number(idx));
     }
     setCandidateSimByIndex(initial);
-    setExperienceNote(payload.note ?? '');
-    setActiveExperienceName(payload.filename);
+    setExperienceNote(note);
+    setActiveExperienceName(name);
     setLastSolveRequestBody(
       tryParseLastSolveRequest(payload.last_solve_request) ??
-        solveStreamBodyFromBuilderParams((payload.builder_params ?? {}) as Record<string, unknown>, explorerCompliance),
+        solveStreamBodyFromBuilderParams(builderParams, explorerCompliance),
     );
     setSavedExperienceSignature(
       makeExperienceSignature(
-        payload.note ?? '',
-        omitProfileAggressivityForDirtySignature({ rampEnabled: false, ...payload.builder_params }),
+        note,
+        omitProfileAggressivityForDirtySignature({ rampEnabled: false, ...builderParams }),
       ),
     );
-    setShowExperienceModal(false);
   };
 
-  const deleteExperience = async (name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(`Delete experience ${name}?`)) return;
-    await apiFetch(`/api/builder-experiences/${name}`, { method: 'DELETE' });
-    if (selectedExperience === name) {
-      setSelectedExperience(null);
-      setPreviewExperience(null);
-    }
-    await fetchExperiences();
-  };
-
-  const filteredExperiences = useMemo(() => {
-    const q = experienceQuery.trim().toLowerCase();
-    if (!q) return experiences;
-    return experiences.filter((exp) => {
-      const name = exp.filename.toLowerCase();
-      const note = (exp.note || '').toLowerCase();
-      return name.includes(q) || note.includes(q);
-    });
-  }, [experiences, experienceQuery]);
+  useImperativeHandle(profileRef, () => ({
+    getPayload: () => ({
+      builder_params: collectBuilderParams(),
+      solver_result: result,
+      ...(lastSolveRequestBody ? { last_solve_request: lastSolveRequestBody } : {}),
+    }),
+    apply: (p) => applyExperience(p.name, p.note, p.payload as unknown as BuilderExperiencePayload),
+    markSaved: (name, note, payload) => {
+      setActiveExperienceName(name);
+      setExperienceNote(note);
+      setSavedExperienceSignature(makeExperienceSignature(
+        note,
+        omitProfileAggressivityForDirtySignature(payload.builder_params as Record<string, unknown>),
+      ));
+    },
+    detach: () => {
+      setActiveExperienceName('Unsaved');
+      setSavedExperienceSignature(null);
+    },
+  }));
 
   const handleSolve = async () => {
     solveAbortRef.current?.abort();
@@ -2469,215 +2393,132 @@ export default function ProfileBuilder({
         </AnimatePresence>
       </div>
 
-      <Modal
-        open={showExperienceModal}
-        onClose={() => setShowExperienceModal(false)}
-        title="Builder Experiences"
-        size="lg"
-      >
-        <div className="flex h-[min(62vh,640px)] min-h-0 flex-col overflow-hidden md:flex-row">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-neutral-800 md:w-60 md:flex-none md:border-b-0 md:border-r">
-            <div className="border-b border-neutral-800/70 px-3 pb-2 pt-1">
-                <Input
-                  type="text"
-                  value={experienceQuery}
-                  onChange={(e) => setExperienceQuery(e.target.value)}
-                  placeholder="Search"
-                  className="w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2.5 py-1.5 text-[11px] text-neutral-200 placeholder:text-neutral-500"
-                />
-              </div>
-              <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2 space-y-1">
-                {filteredExperiences.map(({ filename, note }) => (
-                  <div key={filename} className="group relative flex items-start min-w-0 max-w-full">
-                    <Button variant="ghost"
-                      type="button"
-                      onMouseEnter={() => { void loadExperiencePreview(filename); }}
-                      onClick={() => setSelectedExperience(filename)}
-                      onDoubleClick={() => { setSelectedExperience(filename); void applyExperience(); }}
-                      className={`min-w-0 w-full max-w-full text-left px-3 py-2 rounded-lg text-xs transition-all pr-10 ${selectedExperience === filename ? 'bg-emerald-600 text-white font-bold' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
-                    >
-                      <span className="font-mono break-all [overflow-wrap:anywhere] text-left leading-snug">{filename}</span>
-                      {note.trim() ? (
-                        <p className={`mt-1 text-[10px] leading-snug line-clamp-2 font-normal break-words [overflow-wrap:anywhere] ${selectedExperience === filename ? 'text-emerald-100/90' : 'text-neutral-500 group-hover:text-neutral-400'}`}>{note.trim()}</p>
-                      ) : null}
-                    </Button>
-                    <Button variant="ghost"
-                      onClick={(e) => { void deleteExperience(filename, e); }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-neutral-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
-                      title="Delete experience"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                ))}
-                {filteredExperiences.length === 0 && (
-                  <div className="px-3 py-6 text-center text-[11px] text-neutral-500">
-                    No matching experience
-                  </div>
-                )}
-              </div>
-              <div className="p-4 border-t border-neutral-800">
-                <Button variant="ghost"
-                  disabled={!selectedExperience}
-                  onClick={() => { void applyExperience(); }}
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-all shadow-lg"
-                >
-                  LOAD EXPERIENCE
-                </Button>
-              </div>
+    </div>
+  );
+}
+
+/** The import window's preview of a Cam Finder profile: the candidate's cam drawing and key figures. */
+export function FinderProfilePreview({ payload }: { payload: Record<string, unknown> }) {
+  const exp = payload as unknown as BuilderExperiencePayload;
+  const sim = exp.solver_result?.simulation;
+  if (!sim) {
+    return <div className="h-full flex items-center justify-center text-neutral-600 text-sm font-medium">No solve saved with this profile</div>;
+  }
+  const p = (exp.builder_params ?? {}) as Record<string, unknown>;
+  const n = (key: string, fallback: number) => (typeof p[key] === 'number' ? p[key] as number : fallback);
+  const staticFlowAtHalfMm = (() => {
+    const ys = sim.Y_positions;
+    const vals = sim.flow_l_min;
+    const len = ys.length;
+    if (!len || len !== vals.length) return null;
+    if (len === 1) return vals[0];
+    for (let i = 0; i < len - 1; i++) {
+      const a = ys[i];
+      const b = ys[i + 1];
+      if (a === b) continue;
+      if ((0.5 - a) * (0.5 - b) <= 0) {
+        const t = (0.5 - a) / (b - a);
+        return vals[i] + t * (vals[i + 1] - vals[i]);
+      }
+    }
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < len; i++) {
+      const d = Math.abs(ys[i] - 0.5);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return vals[best];
+  })();
+  const rows: Array<{ label: string; value: string; tone?: string }> = [
+    { label: 'Motor Speed', value: `${n('motorSpeed', 100).toFixed(0)} RPM` },
+    { label: 'Tube ID', value: `${n('tubeId', 2.0).toFixed(2)} mm` },
+    { label: 'Tube OD', value: `${n('tubeOd', 3.0).toFixed(2)} mm` },
+    { label: 'Pressure', value: `${n('pressureKpa', 100).toFixed(1)} kPa` },
+    { label: 'Compliance', value: `${n('compliance', 0.9).toFixed(3)} mm/MPa` },
+    { label: 'Thickness', value: `${n('thickness', 2.5).toFixed(2)} mm` },
+    { label: 'Chamber Volume', value: `${n('chamberVolume', 50).toFixed(1)} mL` },
+    {
+      label: 'Static flow @ Y=0.5 mm',
+      value: staticFlowAtHalfMm !== null ? `${staticFlowAtHalfMm.toFixed(3)} L/min` : 'N/A',
+      tone: 'text-amber-300',
+    },
+  ];
+  const grid = searchGridPreviewFromParams(p);
+  const candLen = exp.solver_result.candidates?.length ?? 0;
+  const terminatedEarly = exp.solver_result.message?.startsWith('Terminated early');
+  return (
+    <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
+      <div className="min-h-0 max-h-40 overflow-auto rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 md:max-h-none">
+        <div className="text-[10px] font-bold text-neutral-500 mb-3">Simplified Parameters</div>
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.label} className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2">
+              <div className="text-[10px] text-neutral-500">{row.label}</div>
+              <div className={`font-mono text-xs font-semibold ${row.tone ?? 'text-neutral-200'}`}>{row.value}</div>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="flex h-10 shrink-0 items-center border-b border-neutral-800 bg-neutral-900/40 px-4">
-                <h4 className="text-xs font-bold text-neutral-500">Experience Preview</h4>
-              </div>
-              <div className="min-h-0 flex-1 overflow-hidden p-3">
-                {previewExperience?.solver_result?.simulation ? (
-                  <div className="grid h-full min-h-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
-                    <div className="min-h-0 max-h-40 overflow-auto rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 md:max-h-none">
-                      <div className="text-[10px] font-bold text-neutral-500 mb-3">Simplified Parameters</div>
-                      {(() => {
-                        const p = (previewExperience.builder_params ?? {}) as Record<string, unknown>;
-                        const n = (key: string, fallback: number) => (typeof p[key] === 'number' ? p[key] as number : fallback);
-                        const sim = previewExperience.solver_result.simulation;
-                        const staticFlowAtHalfMm = (() => {
-                          if (!sim) return null;
-                          const ys = sim.Y_positions;
-                          const vals = sim.flow_l_min;
-                          const len = ys.length;
-                          if (!len || len !== vals.length) return null;
-                          if (len === 1) return vals[0];
-                          for (let i = 0; i < len - 1; i++) {
-                            const a = ys[i];
-                            const b = ys[i + 1];
-                            if (a === b) continue;
-                            if ((0.5 - a) * (0.5 - b) <= 0) {
-                              const t = (0.5 - a) / (b - a);
-                              return vals[i] + t * (vals[i + 1] - vals[i]);
-                            }
-                          }
-                          let best = 0;
-                          let bestDist = Infinity;
-                          for (let i = 0; i < len; i++) {
-                            const d = Math.abs(ys[i] - 0.5);
-                            if (d < bestDist) {
-                              bestDist = d;
-                              best = i;
-                            }
-                          }
-                          return vals[best];
-                        })();
-                        const rows: Array<{ label: string; value: string; tone?: string }> = [
-                          { label: 'Motor Speed', value: `${n('motorSpeed', 100).toFixed(0)} RPM` },
-                          { label: 'Tube ID', value: `${n('tubeId', 2.0).toFixed(2)} mm` },
-                          { label: 'Tube OD', value: `${n('tubeOd', 3.0).toFixed(2)} mm` },
-                          { label: 'Pressure', value: `${n('pressureKpa', 100).toFixed(1)} kPa` },
-                          { label: 'Compliance', value: `${n('compliance', 0.9).toFixed(3)} mm/MPa` },
-                          { label: 'Thickness', value: `${n('thickness', 2.5).toFixed(2)} mm` },
-                          { label: 'Chamber Volume', value: `${n('chamberVolume', 50).toFixed(1)} mL` },
-                          {
-                            label: 'Static flow @ Y=0.5 mm',
-                            value: staticFlowAtHalfMm !== null ? `${staticFlowAtHalfMm.toFixed(3)} L/min` : 'N/A',
-                            tone: 'text-amber-300',
-                          },
-                        ];
-                        return (
-                          <div className="space-y-2">
-                            {rows.map((row) => (
-                              <div key={row.label} className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2">
-                                <div className="text-[10px] text-neutral-500">{row.label}</div>
-                                <div className={`font-mono text-xs font-semibold ${row.tone ?? 'text-neutral-200'}`}>{row.value}</div>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                      {(() => {
-                        const p = (previewExperience.builder_params ?? {}) as Record<string, unknown>;
-                        const grid = searchGridPreviewFromParams(p);
-                        const candLen = previewExperience.solver_result.candidates?.length ?? 0;
-                        const terminatedEarly = previewExperience.solver_result.message?.startsWith('Terminated early');
-                        return (
-                          <div className="mt-4 border-t border-neutral-800 pt-3 space-y-2">
-                            <div className="text-[10px] font-bold text-neutral-500">Search grid</div>
-                            <p className="text-[10px] text-sky-300/95 leading-snug font-mono">{grid.lines.k}</p>
-                            <p className="text-[10px] text-emerald-300/95 leading-snug font-mono">{grid.lines.h}</p>
-                            <p className="text-[10px] text-red-300/95 leading-snug font-mono">{grid.lines.d}</p>
-                            <div className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2 space-y-1.5">
-                              <div className="text-[10px] text-neutral-500">Grid & solve</div>
-                              <p className="text-[11px] text-neutral-200 leading-snug">
-                                <span className="text-neutral-400">Triple product (K×H×D):</span>{' '}
-                                <span className="font-mono font-semibold text-neutral-100">
-                                  {grid.kN}×{grid.hN}×{grid.dN} = {grid.triples.toLocaleString()}
-                                </span>
-                                <span className="text-neutral-500"> planned evaluations</span>
-                              </p>
-                              <p className="text-[11px] text-neutral-200 leading-snug">
-                                <span className="text-neutral-400">Gap @ Y=0 margin:</span>{' '}
-                                <span className="font-mono text-neutral-100">{grid.g.gapAtY0MarginMm.toFixed(4)} mm</span>
-                              </p>
-                              <p className="text-[11px] text-neutral-200 leading-snug">
-                                <span className="text-neutral-400">Rest gap:</span>{' '}
-                                <span className="font-mono text-neutral-100">
-                                  {grid.g.optimizeDefaultDistance ? 'max per cell (optimize)' : `fixed (×${grid.g.defaultDistSafetyFactor.toFixed(3)} − axis play)`}
-                                </span>
-                              </p>
-                              <p className="text-[11px] text-neutral-200 leading-snug">
-                                <span className="text-neutral-400">Feasible configs (aggressivity list):</span>{' '}
-                                <span className="font-mono font-semibold text-amber-300/90">{candLen}</span>
-                                <span className="text-neutral-500">
-                                  {candLen < MAX_RETURNED_BUILDER_CANDIDATES
-                                    ? ' — all feasible solutions'
-                                    : ` — up to ${MAX_RETURNED_BUILDER_CANDIDATES} evenly spaced along flow rise-rate`}
-                                </span>
-                              </p>
-                              {terminatedEarly ? (
-                                <p className="text-[10px] text-amber-400/95 leading-snug">
-                                  Solve ended before the full grid was evaluated — counts above are from saved settings; some triples may have been skipped.
-                                </p>
-                              ) : null}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    <div className="min-h-32 min-w-0">
-                      <VerticalSystemView
-                        data={previewExperience.solver_result.simulation}
-                        params={{
-                          ...defaultParams,
-                          ...(previewExperience.builder_params as Partial<SimulationParams>),
-                          ramp_enabled: previewExperience.solver_result.simulation?.ramp_enabled ?? false,
-                          height: previewExperience.solver_result.height,
-                          K: previewExperience.solver_result.K,
-                          deadband: previewExperience.solver_result.deadband,
-                          default_distance: previewExperience.solver_result.default_distance,
-                        }}
-                        details={true}
-                        setDetails={() => {}}
-                        isPreview={true}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-neutral-600 text-sm font-medium">
-                    Hover an experience to preview...
-                  </div>
-                )}
-              </div>
-              {previewExperience && (
-                <div className="p-4 bg-neutral-900 border-t border-neutral-800 space-y-2">
-                  <div className="text-[10px] text-neutral-500 font-bold">Note</div>
-                  <p className="text-xs text-neutral-200 leading-relaxed whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
-                    {previewExperience.note?.trim() || 'No note'}
-                  </p>
-                  <div className="text-[10px] text-neutral-500">
-                    Candidates: <span className="font-mono text-neutral-300">{previewExperience.solver_result.candidates?.length ?? 0}</span>
-                  </div>
-                </div>
-              )}
-            </div>
+          ))}
         </div>
-      </Modal>
+        <div className="mt-4 border-t border-neutral-800 pt-3 space-y-2">
+          <div className="text-[10px] font-bold text-neutral-500">Search grid</div>
+          <p className="text-[10px] text-sky-300/95 leading-snug font-mono">{grid.lines.k}</p>
+          <p className="text-[10px] text-emerald-300/95 leading-snug font-mono">{grid.lines.h}</p>
+          <p className="text-[10px] text-red-300/95 leading-snug font-mono">{grid.lines.d}</p>
+          <div className="rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2 space-y-1.5">
+            <div className="text-[10px] text-neutral-500">Grid & solve</div>
+            <p className="text-[11px] text-neutral-200 leading-snug">
+              <span className="text-neutral-400">Triple product (K×H×D):</span>{' '}
+              <span className="font-mono font-semibold text-neutral-100">
+                {grid.kN}×{grid.hN}×{grid.dN} = {grid.triples.toLocaleString()}
+              </span>
+              <span className="text-neutral-500"> planned evaluations</span>
+            </p>
+            <p className="text-[11px] text-neutral-200 leading-snug">
+              <span className="text-neutral-400">Gap @ Y=0 margin:</span>{' '}
+              <span className="font-mono text-neutral-100">{grid.g.gapAtY0MarginMm.toFixed(4)} mm</span>
+            </p>
+            <p className="text-[11px] text-neutral-200 leading-snug">
+              <span className="text-neutral-400">Rest gap:</span>{' '}
+              <span className="font-mono text-neutral-100">
+                {grid.g.optimizeDefaultDistance ? 'max per cell (optimize)' : `fixed (×${grid.g.defaultDistSafetyFactor.toFixed(3)} − axis play)`}
+              </span>
+            </p>
+            <p className="text-[11px] text-neutral-200 leading-snug">
+              <span className="text-neutral-400">Feasible configs (aggressivity list):</span>{' '}
+              <span className="font-mono font-semibold text-amber-300/90">{candLen}</span>
+              <span className="text-neutral-500">
+                {candLen < MAX_RETURNED_BUILDER_CANDIDATES
+                  ? ' — all feasible solutions'
+                  : ` — up to ${MAX_RETURNED_BUILDER_CANDIDATES} evenly spaced along flow rise-rate`}
+              </span>
+            </p>
+            {terminatedEarly ? (
+              <p className="text-[10px] text-amber-400/95 leading-snug">
+                Solve ended before the full grid was evaluated — counts above are from saved settings; some triples may have been skipped.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      <div className="min-h-32 min-w-0">
+        <VerticalSystemView
+          data={sim}
+          params={{
+            ...defaultParams,
+            ...(exp.builder_params as Partial<SimulationParams>),
+            ramp_enabled: sim.ramp_enabled ?? false,
+            height: exp.solver_result.height,
+            K: exp.solver_result.K,
+            deadband: exp.solver_result.deadband,
+            default_distance: exp.solver_result.default_distance,
+          }}
+          details={true}
+          setDetails={() => {}}
+          isPreview={true}
+        />
+      </div>
     </div>
   );
 }
