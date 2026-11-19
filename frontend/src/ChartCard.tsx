@@ -55,7 +55,8 @@ export function ChartCard({
     if (!maximized) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximized(false); };
+    // A layer that already handled this Esc (a UI-kit modal or popover) keeps it.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) setMaximized(false); };
     window.addEventListener('keydown', onKey);
     minimizeRef.current?.focus({ preventScroll: true });
     const opener = maximizeRef.current;

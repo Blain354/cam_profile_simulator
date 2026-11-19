@@ -588,8 +588,9 @@ function Switch({ label, on, onChange, title }: { label: string; on: boolean; on
   );
 }
 
+// The card header with its buttons is 12px taller than the old bare title: the chart's floor gives it back, so a 210px row still holds the card.
 function FitChart({ children }: { children: ReactElement }) {
-  return <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={170}>{children}</ResponsiveContainer>;
+  return <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={158}>{children}</ResponsiveContainer>;
 }
 
 // ─── Onshape variable table ──────────────────────────────────────
@@ -817,7 +818,9 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
 
   const profileUrl = (name: string) => `/api/linkage/profiles/${kind}/${encodeURIComponent(name)}`;
   const snapshot = JSON.stringify({ params, search });
-  const profileDirty = activeProfile != null && savedSnapshot != null && savedSnapshot !== snapshot;
+  const chartSettingsDirty = savedChartSettings != null
+    && (Object.keys(savedChartSettings) as LinkageChartKey[]).some((k) => !sameDomainSettings(chartSettings[k], savedChartSettings[k]));
+  const profileDirty = activeProfile != null && ((savedSnapshot != null && savedSnapshot !== snapshot) || chartSettingsDirty);
 
   const loadProfile = async (name: string) => {
     setProfileMessage(null);
