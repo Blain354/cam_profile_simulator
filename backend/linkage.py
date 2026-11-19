@@ -93,7 +93,7 @@ class LinkageParams:
     compliant: bool = False
     carriage_clamped: bool = False   # True: the link's carriage end is held in angle. False: it turns on the pivot rod
     carriage_pin_diameter: float = 1.5  # mm, steel rod the link turns on at the carriage
-    carriage_pin_length: float = 8.0    # mm, that rod's length
+    carriage_pin_length: float = 8.0    # mm, that rod's length: half sits in the carriage, half in the link's eye
     member_strength_mpa: float = 40.0   # MPa, stress the material may see (assumed: about printed PETG at yield)
 
 
@@ -131,8 +131,8 @@ class LinkageResult:
     max_rotation_deg: Optional[float] = None       # largest rotation along the part over the stroke
     # Pivot rod at the carriage (one-piece part, carriage end free to turn).
     carriage_load: Optional[float] = None          # N, worst load one part puts on the rod
-    carriage_bearing_mpa: Optional[float] = None   # that load over rod diameter x part thickness: pressure in the eye
-    carriage_pin_bending_mpa: Optional[float] = None  # upper bound: rod held at its two ends only, load at mid length
+    carriage_bearing_mpa: Optional[float] = None   # that load over rod diameter x half the rod length: pressure in the eye
+    carriage_pin_bending_mpa: Optional[float] = None  # rod bending where it leaves the carriage: load at the middle of the eye half
     flow_a: List[Optional[float]] = field(default_factory=list)
     flow_b: List[Optional[float]] = field(default_factory=list)
     flow_target: List[Optional[float]] = field(default_factory=list)
@@ -771,9 +771,11 @@ class _Flexure:
         out.max_side_load = float(side_load[valid].max())
         out.carriage_load = float(rod_load[valid].max())
         d_rod, l_rod = p.carriage_pin_diameter, p.carriage_pin_length
-        if not p.carriage_clamped and d_rod > 0:
-            out.carriage_bearing_mpa = out.carriage_load / (d_rod * p.member_thickness)
-            if l_rod > 0:
+        if not p.carriage_clamped and d_rod > 0 and l_rod > 0:
+            # Half the rod is in the carriage, half in the eye. The eye's load sits at the middle
+            # of its half, a quarter of the rod length from where the rod leaves the carriage.
+            out.carriage_bearing_mpa = out.carriage_load / (d_rod * l_rod / 2.0)
+            if True:
                 out.carriage_pin_bending_mpa = float(32.0 * out.carriage_load * l_rod / 4.0 / (np.pi * d_rod ** 3))
         out.thrust_y0 = float(abs(thrust[i0]))
         out.thrust_needed = float(np.nanmax(np.abs(thrust_out)))

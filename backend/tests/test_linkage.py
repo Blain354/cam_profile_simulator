@@ -339,7 +339,7 @@ class LinkageTests(unittest.TestCase):
         # The rod carries what the carriage gives the part; the eye and the rod are checked on it.
         self.assertGreater(pivot.carriage_load, 0.0)
         self.assertGreaterEqual(pivot.carriage_load, pivot.max_side_load)
-        self.assertAlmostEqual(pivot.carriage_bearing_mpa, pivot.carriage_load / (1.5 * p.member_thickness), places=9)
+        self.assertAlmostEqual(pivot.carriage_bearing_mpa, pivot.carriage_load / (1.5 * 4.0), places=9)
         self.assertAlmostEqual(pivot.carriage_pin_bending_mpa, 32 * pivot.carriage_load * 8.0 / 4 / (np.pi * 1.5 ** 3), places=9)
         self.assertIsNone(r.carriage_bearing_mpa)       # clamped: no rod
         thick_rod = compute_linkage(replace(p, carriage_clamped=False, carriage_pin_diameter=3.0))

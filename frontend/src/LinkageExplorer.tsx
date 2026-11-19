@@ -1013,7 +1013,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                             <ParameterSlider label="Pivot rod diameter" value={params.carriage_pin_diameter} min={0.5} max={4} step={0.1} onChange={(v) => set('carriage_pin_diameter', v)}
                               description="Steel rod the link turns on at the carriage." />
                             <ParameterSlider label="Pivot rod length" value={params.carriage_pin_length} min={2} max={20} step={0.5} onChange={(v) => set('carriage_pin_length', v)}
-                              description="Used for the rod's own bending, taken held at its two ends." />
+                              description="Half of it sits in the carriage, half in the link's eye." />
                           </>
                         )}
                         <p className="text-[10px] leading-snug text-neutral-400">
@@ -1215,7 +1215,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                     <span className={params.member_strength_mpa > 0 && data.carriage_bearing_mpa > params.member_strength_mpa ? 'text-red-400' : undefined}>
                       {`${data.carriage_bearing_mpa.toFixed(1)} MPa`}
                     </span>} />
-                  {data.carriage_pin_bending_mpa != null && <StatRow label="Rod bending, at most" value={`${data.carriage_pin_bending_mpa.toFixed(0)} MPa`} />}
+                  {data.carriage_pin_bending_mpa != null && <StatRow label="Rod bending at the carriage face" value={`${data.carriage_pin_bending_mpa.toFixed(0)} MPa`} />}
                 </>
               )}
               {data.stress_margin != null && data.stress_margin < 1 && (
@@ -1225,7 +1225,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
               )}
               <p className="text-[10px] leading-snug text-neutral-400">
                 One section for arm, foot and link. Fillets at the joints are not modelled: a generous radius there lowers the real peak, a sharp corner raises it.
-                {data.carriage_bearing_mpa != null && ' The eye around the rod is not drawn or checked beyond its pressure (load over rod diameter × part thickness); the rod bending assumes the rod is held at its two ends only, with the load at mid length, so the real figure is lower. Friction on the rod is ignored.'}
+                {data.carriage_bearing_mpa != null && ' The rod sits half in the carriage, half in the eye of the link: the eye pressure is the load over rod diameter × half the rod length, and the rod bends where it leaves the carriage, with the load at the middle of the eye. The eye itself is not drawn, the pressure in the carriage bore is not checked, and friction on the rod is ignored.'}
               </p>
             </div>
           )}
