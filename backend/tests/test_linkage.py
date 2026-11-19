@@ -80,6 +80,8 @@ class LinkageTests(unittest.TestCase):
         # Free air needed to pressurise the chamber: V * dP / P_atm.
         self.assertAlmostEqual(r.volume_in_ml, p.chamber_volume_ml * supply / 101.325, delta=0.05 * r.volume_in_ml)
         self.assertEqual(compute_linkage(replace(p, chamber_volume_ml=0.0)).time_ms, [])
+        # A 100 RPM motor at 85 % runs the 4 x 3 mm cycle at 0.708 mm/s.
+        self.assertAlmostEqual(r.time_ms[-1] / 1000.0, 12.0 / (100 * 0.85 * 0.5 / 60.0), places=6)
 
     def test_optimizer_beats_start_and_respects_bounds(self):
         for p, s in ((LinkageParams(), LinkageSearch()), (LEVER, LEVER_SEARCH), (PENDULUM, PENDULUM_SEARCH)):

@@ -72,6 +72,7 @@ class LinkageParams:
     chamber_volume_ml: float = 10.0  # mL, 0 disables the chamber traces
     motor_speed: float = 100.0       # RPM
     lead_screw_pitch: float = 0.5    # mm/rev
+    speed_factor: float = 0.85       # share of the no-load speed kept under load and friction
 
 
 @dataclass
@@ -102,7 +103,7 @@ class LinkageResult:
     max_oversqueeze: float = 0.0     # worst squeeze past closure of the closed tube
     max_flow_l_min: float = 0.0
     rms_error: Optional[float] = None
-    # Chamber cycle 0 -> +stroke -> 0 -> -stroke -> 0 at the motor's linear speed.
+    # Chamber cycle 0 -> +stroke -> 0 -> -stroke -> 0 at the motor's loaded linear speed.
     time_ms: List[float] = field(default_factory=list)
     y_time: List[float] = field(default_factory=list)
     flow_in_l_min: List[float] = field(default_factory=list)    # free air, supply -> chamber (tube A)
@@ -182,7 +183,7 @@ def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: 
     Implicit Euler on the chamber pressure (bisection): the chamber settles in
     milliseconds while the carriage takes seconds, so an explicit step would ring.
     """
-    speed = p.motor_speed * p.lead_screw_pitch / 60.0
+    speed = p.motor_speed * p.speed_factor * p.lead_screw_pitch / 60.0
     if p.chamber_volume_ml <= 0 or speed <= 0:
         return None
     s = p.stroke

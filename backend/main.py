@@ -650,6 +650,7 @@ class LinkageRequest(BaseModel):
     chamber_volume_ml: float = Field(10.0, ge=0, le=10000)
     motor_speed: float = Field(100.0, ge=0, le=100000)
     lead_screw_pitch: float = Field(0.5, ge=0, le=100)
+    speed_factor: float = Field(0.85, ge=0, le=1)
 
 
 class LinkageOptimizeRequest(LinkageRequest):

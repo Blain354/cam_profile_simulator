@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
-import { Settings, Target } from 'lucide-react';
+import { Pause, Play, Settings, Target } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
@@ -32,6 +32,7 @@ export interface LinkageParams {
   chamber_volume_ml: number;
   motor_speed: number;
   lead_screw_pitch: number;
+  speed_factor: number;
 }
 
 interface LinkageSearch {
@@ -103,6 +104,7 @@ const COMMON = {
   chamber_volume_ml: 10.0,
   motor_speed: 100.0,
   lead_screw_pitch: 0.5,
+  speed_factor: 0.85,
 };
 
 // All sets were measured on the concept sketches (about 30 px/mm).
@@ -328,6 +330,11 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   const [optimizing, setOptimizing] = useState(false);
   const [optMessage, setOptMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [playing, setPlaying] = useState(false);
+  /** Time into the cycle 0, +stroke, 0, -stroke, 0 while oscillating (s). */
+  const [cycleT, setCycleT] = useState<number | null>(null);
+  /** Distance run in the current cycle (mm), plus the live speed and stroke for the animation loop. */
+  const motion = useRef({ d: 0, speed: 0, stroke: 1 });
 
   const set = <K extends keyof LinkageParams>(key: K, value: LinkageParams[K]) => setParams((p) => ({ ...p, [key]: value }));
   const setS = (key: keyof LinkageSearch, value: number) => setSearch((s) => ({ ...s, [key]: value }));
@@ -360,6 +367,42 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const yPose = Math.min(Math.max(y, -params.stroke), params.stroke);
+
+  // What the motor really turns under load and friction, and the carriage speed that gives.
+  const loadedRpm = params.motor_speed * params.speed_factor;
+  const speed = loadedRpm * params.lead_screw_pitch / 60;
+  useEffect(() => {
+    motion.current.speed = speed;
+    motion.current.stroke = params.stroke;
+  }, [speed, params.stroke]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last: number | null = null;
+    let shown = 0;
+    const step = (now: number) => {
+      const m = motion.current;
+      if (m.speed <= 0) { setPlaying(false); return; }
+      if (last != null) m.d = (m.d + (now - last) / 1000 * m.speed) % (4 * m.stroke);
+      last = now;
+      if (now - shown > 30) {
+        shown = now;
+        const s = m.stroke;
+        setY(m.d <= s ? m.d : m.d <= 3 * s ? 2 * s - m.d : m.d - 4 * s);
+        setCycleT(m.d / m.speed);
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+
+  const togglePlay = () => {
+    // Resume from where the carriage is: on the way up if Y >= 0, on the way down otherwise.
+    if (!playing) motion.current.d = yPose >= 0 ? yPose : 2 * params.stroke - yPose;
+    setPlaying(!playing);
+  };
 
   const optimize = async () => {
     setOptimizing(true);
@@ -502,8 +545,11 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
                 secondaryValue={params.chamber_volume_ml === 0 ? 'no traces' : undefined}
                 description="Chamber fed by tube A and vented by tube B, for the in / out traces." />
               <ParameterSlider label="Motor speed (RPM)" value={params.motor_speed} min={10} max={1000} step={10} onChange={(v) => set('motor_speed', v)}
-                secondaryValue={`${(params.motor_speed * params.lead_screw_pitch / 60).toFixed(2)} mm/s`}
-                description="Sets how fast the carriage runs the cycle 0, +stroke, 0, -stroke, 0." />
+                secondaryValue="no load"
+                description="Rated no-load speed of the motor. With the load factor it sets how fast the carriage runs the cycle 0, +stroke, 0, -stroke, 0." />
+              <ParameterSlider label="Load factor (%)" value={Math.round(params.speed_factor * 100)} min={10} max={100} step={1} onChange={(v) => set('speed_factor', v / 100)}
+                secondaryValue={`${loadedRpm.toFixed(0)} RPM, ${speed.toFixed(2)} mm/s`}
+                description="Share of the no-load speed the motor keeps under load and friction: 85 % makes a 100 RPM motor run at 85 RPM. Used by the Oscillate button and by the chamber traces." />
               <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1} max={12} step={0.1} onChange={(v) => set('tube_id', v)} />
               <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1} max={16} step={0.1} onChange={(v) => set('tube_od', v)} />
               <ParameterSlider label="Pressure (PSI)" value={params.input_pressure_psi} min={0} max={150} step={1} onChange={(v) => set('input_pressure_psi', v)}
@@ -546,12 +592,22 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             : <div className="flex h-full items-center justify-center p-4 text-center text-sm text-neutral-400">{data ? data.message : 'Loading…'}</div>}
         </div>
         <div className="shrink-0 mt-3 space-y-1">
-          <div className="flex items-center justify-between text-sm">
+          <div className="flex items-center justify-between gap-2 text-sm">
             <label htmlFor={`linkage-y-${kind}`} className="font-medium text-neutral-300">Carriage Y</label>
             <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
           </div>
+          <div className="flex items-center justify-between gap-2 pb-1">
+            <Button variant="ghost" type="button" onClick={togglePlay} disabled={speed <= 0} aria-pressed={playing}
+              title="Run the carriage back and forth over the full stroke at the loaded motor speed"
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
+              {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {playing ? 'Stop' : 'Oscillate'}
+            </Button>
+            <span className="text-xs text-neutral-400 text-right">
+              {loadedRpm.toFixed(0)} RPM under load ({params.motor_speed} × {Math.round(params.speed_factor * 100)} %), {speed.toFixed(2)} mm/s
+            </span>
+          </div>
           <input id={`linkage-y-${kind}`} type="range" min={-params.stroke} max={params.stroke} step={0.01} value={yPose}
-            onChange={(e) => setY(parseFloat(e.target.value))} className="w-full accent-amber-500 cursor-pointer" />
+            onChange={(e) => { setPlaying(false); setCycleT(null); setY(parseFloat(e.target.value)); }} className="w-full accent-amber-500 cursor-pointer" />
         </div>
         {data && !data.feasible && data.Y_positions.length > 0 && (
           <p className="shrink-0 mt-2 rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{data.message}</p>
@@ -605,6 +661,7 @@ export default function LinkageExplorer({ kind, shared }: { kind: LinkageKind; s
             <Line yAxisId="q" type="linear" dataKey="flowIn" name="Air in (tube A)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
             <Line yAxisId="q" type="linear" dataKey="flowOut" name="Air out (tube B)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
             <Line yAxisId="p" type="linear" dataKey="kpa" name="Chamber pressure" stroke="#a78bfa" strokeWidth={2} dot={false} isAnimationActive={false} />
+            {cycleT != null && <ReferenceLine yAxisId="q" x={cycleT} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
           </LineChart>
         </ChartCard>
       </div>
