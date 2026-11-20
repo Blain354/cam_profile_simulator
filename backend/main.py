@@ -845,6 +845,8 @@ class LinkageRequest(KpaBody):
     carriage_pin_length: float = Field(8.0, ge=0, le=1000)
     member_strength_mpa: float = Field(40.0, ge=0, le=1e5)
     carriage_pin_strength_mpa: float = Field(300.0, ge=0, le=1e5)
+    pivot_inverted: bool = False
+    assembly_clearance: float = Field(0.3, ge=0, le=20)
 
 
 class LinkageOptimizeRequest(LinkageRequest):
@@ -869,6 +871,7 @@ class LinkageOptimizeRequest(LinkageRequest):
     max_oversqueeze: float = 0.5
     objective: str = "response"
     max_stroke: float = Field(3.0, gt=0, le=50)
+    pivot_side: str = Field("normal", pattern="^(normal|inverted|both)$")
 
 
 def _linkage_params(req: LinkageRequest) -> LinkageParams:
