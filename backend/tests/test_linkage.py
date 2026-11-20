@@ -26,11 +26,6 @@ PENDULUM_INV = LinkageParams(linkage_type="pendulum", bar1_length=8.713, bar2_le
 LEVER_SEARCH = LinkageSearch(anchor_min=2.0, anchor_max=8.0, bar1_min=3.0, bar1_max=12.0, bar2_max=12.0)
 
 
-# These fixtures predate the assembly clearance check, and most of what their searches find puts
-# the two linkages through each other (the defaults included: see test_clearance_between_the_two_linkages).
-# The tests of the search machinery itself run them with the check off, which gives main's results.
-UNCHECKED = {"assembly_clearance": -math.inf}
-
 _ONE_PIECE_BUDGET = {"N_SHORTLIST": 12, "N_ONE_PIECE_ROUND": 4}
 _saved = {}
 
@@ -202,7 +197,7 @@ class LinkageTests(unittest.TestCase):
         self.assertAlmostEqual(r.time_ms[-1] / 1000.0, 12.0 / (100 * 0.85 * 0.5 / 60.0), places=6)
 
     def test_optimizer_beats_start_and_respects_bounds(self):
-        cases = [(replace(p, **UNCHECKED), replace(s, objective=goal)) for p, s in ((LinkageParams(), LinkageSearch(max_stroke=5.0)), (LEVER, LEVER_SEARCH), (PENDULUM, PENDULUM_SEARCH))
+        cases = [(p, replace(s, objective=goal)) for p, s in ((LinkageParams(), LinkageSearch(max_stroke=5.0)), (LEVER, LEVER_SEARCH), (PENDULUM, PENDULUM_SEARCH))
                  for goal in ("target", "response")]
         for p, s in cases:
             with self.subTest(kind=p.linkage_type, goal=s.objective):
@@ -231,7 +226,6 @@ class LinkageTests(unittest.TestCase):
                     self.assertLessEqual(r.rms_error, start.rms_error + 1e-9)
 
     def test_response_search_ranks_partial_flow_and_searches_the_foot(self):
-        PENDULUM = replace(globals()["PENDULUM"], **UNCHECKED)
         tight = replace(PENDULUM_SEARCH, max_stroke=0.3)
         best, feasible, _, _ = optimize_linkage(PENDULUM, tight)
         self.assertIsNotNone(best)   # cannot reach full bore: still gives the most flow it can
@@ -251,8 +245,6 @@ class LinkageTests(unittest.TestCase):
         self.assertIsNone(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, max_oversqueeze=0.05))[0])
 
     def test_pinch_height_limit_from_the_top_plane(self):
-        PENDULUM = replace(globals()["PENDULUM"], **UNCHECKED)
-
         def height(q):
             r = compute_linkage(replace(q, compliant=False))
             return r.tip_y[len(r.Y_positions) // 2]
@@ -464,7 +456,7 @@ class LinkageTests(unittest.TestCase):
         rounds = len(linkage.ONE_PIECE_ROUNDS) * linkage.N_ONE_PIECE_ROUND
         self.assertTrue(linkage.N_SHORTLIST < report["shortlist"] <= linkage.N_SHORTLIST + rounds, report)
         self.assertEqual(report["shortlist"], report["passed"] + sum(report["rejected"].values()))
-        self.assertEqual(set(report["rejected"]), {"stress", "thrust", "eye", "rod", "no_flow", "collision"})
+        self.assertEqual(set(report["rejected"]), {"stress", "thrust", "eye", "rod", "no_flow", "collision", "seal"})
         self.assertIsNotNone(best)
         self.assertGreater(report["passed"], 0)
         self.assertTrue(best.compliant)
@@ -554,46 +546,75 @@ class LinkageTests(unittest.TestCase):
                 self.assertGreater(chords - float(sag), exact - bound)
 
     def test_clearance_between_the_two_linkages(self):
-        # Two straight links that cross the screw axis: the default elbow's links come within
-        # 1.6 mm of each other at the end of the stroke, under their 2 mm width.
+        # The CAD's layout: planes 10.75 mm apart, 3 mm slabs, carriage block 5.5 mm across, rod 8 mm.
+        self.assertEqual(linkage._plane_gaps(LinkageParams()), {"slabs": 7.75, "carriage": 1.125, "pivot rod": 2.625})
         r = compute_linkage(LinkageParams())
+        self.assertEqual((r.plane_gap, r.plane_gap_where), (1.125, "carriage"))
+        self.assertIsNone(r.min_clearance)            # nothing reaches the other linkage: nothing to measure
+        self.assertIsNone(r.collision_y)
+        # A clamped one-piece link has no rod.
+        self.assertNotIn("pivot rod", linkage._plane_gaps(replace(PENDULUM, compliant=True, carriage_clamped=True)))
+
+        # Slabs that overlap: every member against every member, in plane. The default elbow's two
+        # links, which both cross the screw axis, come within 1.6 mm at the end of the stroke.
+        with mock.patch.object(linkage, "_plane_gaps", return_value={"slabs": -1.0}):
+            r = compute_linkage(LinkageParams())
         self.assertAlmostEqual(r.min_clearance, -0.409, places=3)
-        self.assertEqual(r.min_clearance_where, "link A / link B")
-        self.assertAlmostEqual(r.min_clearance_y, 3.0)
+        self.assertEqual((r.min_clearance_where, r.min_clearance_y), ("link A / link B", 3.0))
         self.assertAlmostEqual(r.collision_y, 1.4, places=6)
-        # By hand: the half turn of link A at -Y against link A at +Y, at Y = 3.
         i = len(r.Y_positions) - 1
         h0, xb = r.pivot_height_y0, r.pivot_x
-        a = ((xb, h0 + 3.0), (r.joint_x[i], r.joint_y[i]))
-        b = ((-xb, 2 * h0 - (h0 - 3.0)), (-r.joint_x[0], 2 * h0 - r.joint_y[0]))
+        a = ((xb, h0 + 3.0), (r.joint_x[i], r.joint_y[i]))            # link A at Y = 3
+        b = ((-xb, h0 + 3.0), (-r.joint_x[0], 2 * h0 - r.joint_y[0]))  # link B: link A at -3, turned
         self.assertAlmostEqual(float(linkage._seg_dist(*a[0], *a[1], *b[0], *b[1])) - 2.0, r.min_clearance, places=9)
-        # The clearance asked only decides where it counts as a collision; a narrower bar has more room.
-        self.assertIsNone(compute_linkage(replace(LinkageParams(), assembly_clearance=-1.0)).collision_y)
-        self.assertAlmostEqual(compute_linkage(replace(LinkageParams(), member_width=1.0)).min_clearance, r.min_clearance + 1.0, places=9)
-        # The inverted elbow keeps its pivot and link on its own side: far apart.
-        self.assertGreater(compute_linkage(ELBOW_INV).min_clearance, 5.0)
-        # One piece: the bent centre lines are measured.
-        one = compute_linkage(replace(PENDULUM_INV, compliant=True))
-        self.assertIsNotNone(one.min_clearance)
+
+        # A rod long enough to reach the other slab: B's rod, a 1.5 mm disc, against A's members.
+        r = compute_linkage(replace(LinkageParams(), carriage_pin_length=14.0))
+        self.assertEqual(r.plane_gap_where, "pivot rod")
+        self.assertAlmostEqual(r.plane_gap, -0.375)
+        y = np.array(r.Y_positions)
+        by = r.pivot_height_y0 + r.travel_sign * y
+        hand = min(float(linkage._seg_dist(-xb, py, -xb, py, *seg)) for k, py in enumerate(by)
+                   for seg in ((r.anchor_x, 0.0, r.joint_x[k], r.joint_y[k]), (xb, py, r.joint_x[k], r.joint_y[k]))) - 0.75 - 1.0
+        self.assertAlmostEqual(r.min_clearance, hand, places=9)
+        self.assertTrue(r.min_clearance_where.startswith("pivot rod B / "))
+        # Slabs thick enough to reach the carriage block: the link's eye sits in the block.
+        r = compute_linkage(replace(PENDULUM_INV, member_thickness=6.0, compliant=True))
+        self.assertEqual(r.plane_gap_where, "carriage")
+        self.assertAlmostEqual(r.min_clearance, -1.0)                 # half a bar inside
+        self.assertTrue(r.min_clearance_where.startswith("carriage block / "))
+        self.assertEqual(r.collision_y, 0.0)
+        # The inverted elbow keeps its rod on its own side: the same gaps as normal.
+        self.assertEqual(compute_linkage(ELBOW_INV).plane_gap, 1.125)
 
     def test_a_design_that_collides_is_refused(self):
-        # This elbow's two links cross from Y = 0: with every range held on it, nothing is left.
-        p = replace(LinkageParams(), bar1_length=12.478, bar2_length=9.598, anchor_distance=5.999)
+        # Slabs 6 mm thick reach the carriage block, and every link's eye sits in it: nothing is left.
+        p = replace(LinkageParams(), member_thickness=6.0)
         self.assertEqual(compute_linkage(p).collision_y, 0.0)
-        held = LinkageSearch(bar1_min=12.478, bar1_max=12.478, bar2_min=9.598, bar2_max=9.598, anchor_min=5.999, anchor_max=5.999, max_stroke=5.0)
-        best, feasible, tested, report = optimize_linkage(p, held)
+        best, feasible, tested, report = optimize_linkage(p, LinkageSearch(max_stroke=5.0))
         self.assertIsNone(best)
         self.assertEqual(feasible, 0)
-        self.assertEqual(report["sides"]["normal"]["collision"], tested)
-        # Without the clearance the same search returns it: the clearance alone refused it.
-        self.assertIsNotNone(optimize_linkage(replace(p, assembly_clearance=-10.0), held)[0])
-        # A search keeps what it returns clear of the other linkage over its stroke.
+        self.assertGreater(report["sides"]["normal"]["collision"], 0)
+        # Without the clearance the same search returns a design: the clearance alone refused them.
+        self.assertIsNotNone(optimize_linkage(replace(p, assembly_clearance=-10.0), LinkageSearch(max_stroke=5.0))[0])
+        # A rod that reaches the other slab: the search keeps what it returns clear of it over its stroke.
         for q, s in ((LinkageParams(), LinkageSearch(max_stroke=5.0)), (LEVER, LEVER_SEARCH), (PENDULUM, PENDULUM_SEARCH)):
             with self.subTest(kind=q.linkage_type):
+                q = replace(q, carriage_pin_length=14.0)
                 found = optimize_linkage(q, s)[0]
                 r = compute_linkage(found)
                 self.assertIsNone(r.collision_y)
                 self.assertGreaterEqual(r.min_clearance, q.assembly_clearance)
+
+    def test_the_finder_keeps_only_designs_that_seal_at_rest(self):
+        on = optimize_linkage(LEVER, LEVER_SEARCH)
+        off = optimize_linkage(LEVER, replace(LEVER_SEARCH, require_seal=False))
+        self.assertTrue(compute_linkage(on[0]).sealed_after_flex)
+        self.assertEqual(on, optimize_linkage(LEVER, LEVER_SEARCH))                   # same inputs, same answer
+        if not compute_linkage(off[0]).sealed_after_flex:
+            self.assertNotEqual(on[0], off[0])
+            self.assertGreater(on[3]["sides"]["normal"]["seal"], 0)
+        self.assertEqual(off[3]["sides"]["normal"]["seal"], 0)
 
     def test_both_pivot_sides_are_searched_and_the_better_kept(self):
         runs = {side: optimize_linkage(LEVER, replace(LEVER_SEARCH, pivot_side=side)) for side in ("normal", "inverted", "both")}

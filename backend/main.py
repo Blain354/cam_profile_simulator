@@ -847,6 +847,11 @@ class LinkageRequest(KpaBody):
     carriage_pin_strength_mpa: float = Field(300.0, ge=0, le=1e5)
     pivot_inverted: bool = False
     assembly_clearance: float = Field(0.3, ge=0, le=20)
+    linkage_plane_spacing: float = Field(10.75, ge=0, le=200)
+    carriage_block_width: float = Field(5.5, ge=0, le=200)
+    carriage_block_length: float = Field(17.5, ge=0, le=200)
+    carriage_block_height: float = Field(5.0, ge=0, le=200)
+    carriage_block_offset: float = Field(0.95, ge=-100, le=100)
 
 
 class LinkageOptimizeRequest(LinkageRequest):

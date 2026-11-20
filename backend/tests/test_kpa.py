@@ -100,7 +100,7 @@ class SamePhysicsTests(unittest.TestCase):
         want = dict(ref["result"])
         want["seal_pressure_y0_kpa"] = want.pop("seal_pressure_y0_psi") * 6.89476
         # Fields added since the reference was frozen (inverted pivot, assembly clearance).
-        for key in ("pivot_x", "travel_sign", "min_clearance", "min_clearance_y", "min_clearance_where", "collision_y"):
+        for key in ("pivot_x", "travel_sign", "min_clearance", "min_clearance_y", "min_clearance_where", "collision_y", "plane_gap", "plane_gap_where"):
             self.assertNotIn(key, want)
             result.pop(key, None)
         self._assert_same(result, want, rtol)
