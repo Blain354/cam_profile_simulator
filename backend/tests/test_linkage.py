@@ -723,18 +723,23 @@ class LinkageTests(unittest.TestCase):
         import main
         client = TestClient(main.app)
         seen = []
-        with mock.patch.object(main, "optimize_linkage", side_effect=lambda p, s: seen.append(s) or (None, 0, 0, {})):
+        with mock.patch.object(main, "optimize_linkage", side_effect=lambda p, s: seen.append((p, s)) or (None, 0, 0, {})):
             for body in (
                 {"linkage_type": "lever"},
-                {"linkage_type": "lever", "pivot_side": "both", "require_seal": False, "objective": "chamber", "min_flow_pct": 40.0},
+                {"linkage_type": "pendulum", "pivot_side": "both", "require_seal": False, "objective": "chamber", "min_flow_pct": 40.0,
+                 "link_curve_mode": "radius", "link_curve_flip": True, "link_radius": 12.5,
+                 "link_curve_search": "all", "link_radius_min": 6.0, "link_radius_max": 30.0},
             ):
                 self.assertEqual(client.post("/api/linkage/optimize", json=body).status_code, 200)
         self.assertEqual(
-            [(s.pivot_side, s.require_seal, s.objective, s.min_flow_pct) for s in seen],
-            [("normal", True, "response", 0.0), ("both", False, "chamber", 40.0)],
+            [(s.pivot_side, s.require_seal, s.objective, s.min_flow_pct, s.link_curve_search, s.link_radius_min, s.link_radius_max) for _, s in seen],
+            [("normal", True, "response", 0.0, "current", 5.0, 40.0), ("both", False, "chamber", 40.0, "all", 6.0, 30.0)],
         )
+        self.assertEqual((seen[1][0].link_curve_mode, seen[1][0].link_curve_flip, seen[1][0].link_radius), ("radius", True, 12.5))
         self.assertEqual(client.post("/api/linkage/optimize", json={"pivot_side": "sideways"}).status_code, 422)
         self.assertEqual(client.post("/api/linkage/optimize", json={"objective": "bogus"}).status_code, 422)
+        self.assertEqual(client.post("/api/linkage/optimize", json={"link_curve_search": "bogus"}).status_code, 422)
+        self.assertEqual(client.post("/api/linkage/optimize", json={"link_curve_mode": "bogus"}).status_code, 422)
         got = client.post("/api/linkage/optimize", json={"linkage_type": "elbow", "max_stroke": 5.0}).json()
         self.assertTrue(got["found"])
         self.assertEqual(got["search_report"]["pivot_side"], "normal")
@@ -803,6 +808,95 @@ class LinkageTests(unittest.TestCase):
         tight = replace(PENDULUM_SEARCH, max_stroke=0.25, min_flow_pct=90.0)
         none_found, _, _, _ = optimize_linkage(PENDULUM, tight)
         self.assertIsNone(none_found)
+
+    def test_link_curve_modes_tangent_flip_straight_and_custom_radius(self):
+        p = replace(PENDULUM_INV, pad_length=1.0, stroke=0.15)
+        straight = compute_linkage(replace(p, link_curve_mode="straight", link_curved=False))
+        self.assertEqual(straight.link_arc_half_angle_deg, 0.0)
+        self.assertIsNone(straight.link_arc_radius)
+        self.assertEqual(straight.link_arc_side, 0.0)
+
+        # Tangent continuous (-f) and opposite tangent (+f) share the same tangent circle on opposite sides.
+        t_cont = compute_linkage(replace(p, link_curve_mode="tangent", link_curve_flip=False, link_curved=True))
+        t_flip = compute_linkage(replace(p, link_curve_mode="tangent", link_curve_flip=True, link_curved=True))
+        self.assertAlmostEqual(t_cont.link_arc_half_angle_deg + t_flip.link_arc_half_angle_deg, 180.0, places=6)
+        self.assertAlmostEqual(t_cont.link_arc_radius, t_flip.link_arc_radius, places=6)
+        self.assertEqual(t_cont.link_arc_side, -t_flip.link_arc_side)
+        # Verify exact tangency direction at C for both modes.
+        i0 = len(t_cont.Y_positions) // 2
+        cx, cy, px, py = t_cont.joint_x[i0], t_cont.joint_y[i0], t_cont.tip_x[i0], t_cont.tip_y[i0]
+        bx, by = t_cont.pivot_x, t_cont.pivot_height_y0
+        chord = math.atan2(by - cy, bx - cx)
+        fx, fy = (px - cx) / p.foot_length, (py - cy) / p.foot_length
+        for res, want_dot in ((t_cont, -1.0), (t_flip, 1.0)):
+            ang = chord + res.link_arc_side * math.radians(res.link_arc_half_angle_deg)
+            self.assertAlmostEqual(math.cos(ang) * fx + math.sin(ang) * fy, want_dot, places=9)
+
+        # Custom radius inward (+1) and outward (-1) match requested radius; below l1/2 clamps to semicircle.
+        r_in = compute_linkage(replace(p, link_curve_mode="radius", link_curve_flip=False, link_radius=12.0, link_curved=True))
+        r_out = compute_linkage(replace(p, link_curve_mode="radius", link_curve_flip=True, link_radius=12.0, link_curved=True))
+        self.assertAlmostEqual(r_in.link_arc_radius, 12.0, places=6)
+        self.assertAlmostEqual(r_out.link_arc_radius, 12.0, places=6)
+        self.assertEqual(r_in.link_arc_side, 1.0)
+        self.assertEqual(r_out.link_arc_side, -1.0)
+        self.assertAlmostEqual(r_in.link_arc_half_angle_deg, r_out.link_arc_half_angle_deg, places=6)
+        clamped = compute_linkage(replace(p, link_curve_mode="radius", link_radius=1.0, link_curved=True))
+        self.assertAlmostEqual(clamped.link_arc_half_angle_deg, 90.0, places=6)
+        self.assertAlmostEqual(clamped.link_arc_radius, p.bar1_length / 2.0, places=6)
+
+        # On pivoted bars, smaller arc radius strictly lowers pin stiffness compared to flatter/straight links.
+        p_r6 = compute_linkage(replace(p, link_curve_mode="radius", link_radius=6.0, link_curved=True))
+        p_r15 = compute_linkage(replace(p, link_curve_mode="radius", link_radius=15.0, link_curved=True))
+        self.assertLess(p_r6.pin_stiffness, p_r15.pin_stiffness)
+        self.assertLess(p_r15.pin_stiffness, straight.pin_stiffness)
+        # In one-piece mode, radius and curve side both tune the frame's stiffness.
+        c_straight = compute_linkage(replace(p, compliant=True, link_curve_mode="straight", link_curved=False))
+        c_r15_in = compute_linkage(replace(p, compliant=True, link_curve_mode="radius", link_curve_flip=False, link_radius=15.0, link_curved=True))
+        c_r15_out = compute_linkage(replace(p, compliant=True, link_curve_mode="radius", link_curve_flip=True, link_radius=15.0, link_curved=True))
+        c_r6 = compute_linkage(replace(p, compliant=True, link_curve_mode="radius", link_radius=6.0, link_curved=True))
+        self.assertLess(c_r6.pin_stiffness, c_r15_in.pin_stiffness)
+        self.assertLess(c_r6.pin_stiffness, c_straight.pin_stiffness)
+        self.assertNotAlmostEqual(c_r15_in.pin_stiffness, c_r15_out.pin_stiffness, places=1)
+        # Non-pendulum linkages stay straight even if link_curve_mode is set.
+        self.assertEqual(compute_linkage(replace(LEVER, link_curve_mode="radius", link_radius=10.0)).link_arc_half_angle_deg, 0.0)
+
+    @mock.patch.multiple(linkage, N_FIRST=6000, N_ROUND=3000)
+    def test_solver_studies_link_curve_options(self):
+        with self.assertRaises(ValueError):
+            optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, link_curve_search="bogus"))
+        p_inv = replace(PENDULUM, compliant=True, pad_length=1.0, pivot_inverted=True, member_strength_mpa=80.0)
+        s_all = replace(PENDULUM_SEARCH, anchor_min=-5.0, pivot_side="inverted", link_curve_search="all",
+                        link_radius_min=6.0, link_radius_max=30.0)
+        best, feasible, _, report = optimize_linkage(p_inv, s_all)
+        self.assertIsNotNone(best, report)
+        self.assertGreater(feasible, 0)
+        self.assertEqual(report["model"], "one-piece")
+        self.assertEqual(set(report["curves"]), {"straight", "tangent", "tangent_flip", "radius_in", "radius_out"})
+        self.assertEqual(sum(v["solved"] for v in report["curves"].values()), report["shortlist"])
+        self.assertEqual(report["shortlist"], report["passed"] + sum(report["rejected"].values()))
+        self.assertEqual(report["link_curve"], linkage._curve_option_name(best))
+        self.assertEqual(best.link_curved, best.link_curve_mode != "straight")
+        self.assertTrue(compute_linkage(best).feasible)
+
+        # Restricting to specific curve families enforces that exact mode.
+        b_str = optimize_linkage(p_inv, replace(s_all, link_curve_search="straight"))[0]
+        self.assertIsNotNone(b_str)
+        self.assertEqual(b_str.link_curve_mode, "straight")
+        self.assertFalse(b_str.link_curved)
+
+        b_rad = optimize_linkage(p_inv, replace(s_all, link_curve_search="radius"))[0]
+        self.assertIsNotNone(b_rad)
+        self.assertEqual(b_rad.link_curve_mode, "radius")
+        self.assertTrue(b_rad.link_curved)
+        self.assertTrue(6.0 - 1e-6 <= b_rad.link_radius <= 30.0 + 1e-6 or b_rad.link_radius >= b_rad.bar1_length / 2.0 - 1e-6)
+
+        # Rigid mode also evaluates all curve options cleanly.
+        p_rig = replace(PENDULUM, compliant=False, pad_length=1.0, pivot_inverted=True)
+        b_rig, _, _, rep_rig = optimize_linkage(p_rig, s_all)
+        self.assertIsNotNone(b_rig, rep_rig)
+        self.assertEqual(rep_rig["model"], "rigid")
+        self.assertGreater(len(rep_rig["curves"]), 1)
+        self.assertIsNotNone(rep_rig["candidates"][0]["link_curve"])
 
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))

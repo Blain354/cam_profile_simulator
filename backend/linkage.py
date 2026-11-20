@@ -88,6 +88,9 @@ OBJECTIVES = (
 
 PIVOT_SIDES = {"normal": (False,), "inverted": (True,), "both": (False, True)}
 
+LINK_CURVE_MODES = ("straight", "tangent", "radius")
+LINK_CURVE_SEARCHES = ("current", "all", "straight", "tangent", "tangent_flip", "radius")
+
 N_SAMPLES = 241
 N_OPT_SAMPLES = 81   # fast odd grid used during one-piece screening; finalists run at full N_SAMPLES
 N_SCORE = 60
@@ -136,7 +139,10 @@ class LinkageParams:
     member_width: float = 2.0        # mm, bar section in the plane of the mechanism (the bending direction)
     member_thickness: float = 3.0    # mm, bar section out of the plane
     contact_deformation: bool = True  # the tube pushes the pin back until bars and tube balance; False = rigid bars
-    link_curved: bool = False        # link drawn as an arc that meets the joint along the foot (pendulum only)
+    link_curved: bool = False        # legacy toggle: True -> tangent arc when link_curve_mode is ""
+    link_curve_mode: str = ""        # "" (follow link_curved) | "straight" | "tangent" | "radius" (pendulum only)
+    link_curve_flip: bool = False    # tangent: opposite direction (+f vs -f); radius: outward (-1) vs inward (+1)
+    link_radius: float = 10.0        # mm, arc radius when link_curve_mode == "radius" (clamped to >= l1 / 2)
     # One-piece flexure (pendulum only): arm, foot and link are a single part built into the
     # outer shell at the anchor. Nothing pivots; the part bends. See _Flexure.
     compliant: bool = False
@@ -759,23 +765,71 @@ def _clearance_exact(p: LinkageParams, out: "LinkageResult", y, segs, names, sag
     out.collision_y = float(hit.min()) if hit.size else None
 
 
-def _link_arc(p: LinkageParams, l1, cx, cy, bx, by, px, py) -> Tuple[float, float]:
-    """Curved link: the arc of a circle from the carriage pivot B to the joint C that meets C
-    along the foot C-P, at the Y = 0 pose. Returns (alpha, side): alpha (rad) is the angle
-    between the chord and the arc's tangent at C, side the sign of the bulge about C->B.
+def _link_curve_mode(p: LinkageParams) -> str:
+    """Effective link curve mode for a pendulum ('straight', 'tangent', or 'radius')."""
+    if p.linkage_type != TYPE_PENDULUM:
+        return "straight"
+    if p.link_curve_mode in LINK_CURVE_MODES:
+        return p.link_curve_mode
+    return "tangent" if p.link_curved else "straight"
 
-    The link stays a pin-ended bar of chord l1, so the kinematics do not change. What changes
-    is that the pull T along the chord now bends it, by T times the offset from the chord.
+
+def _curve_option_name(p: LinkageParams) -> str:
+    """Canonical curve option tag for reporting and deduplication."""
+    mode = _link_curve_mode(p)
+    if mode == "straight":
+        return "straight"
+    if mode == "tangent":
+        return "tangent_flip" if p.link_curve_flip else "tangent"
+    return "radius_out" if p.link_curve_flip else "radius_in"
+
+
+def _with_curve(p: LinkageParams, mode: str, flip: bool = False, radius: Optional[float] = None) -> LinkageParams:
+    """Return a copy of `p` with consistent link curve fields."""
+    return replace(
+        p,
+        link_curved=(mode != "straight"),
+        link_curve_mode=mode,
+        link_curve_flip=bool(flip),
+        link_radius=float(p.link_radius if radius is None else radius),
+    )
+
+
+def _link_arc(p: LinkageParams, l1, cx, cy, bx, by, px, py) -> Tuple[float, float]:
+    """Curved link: circular arc from the joint C to the carriage pivot B at the Y = 0 pose
+    (pendulum only). Returns (alpha, side): alpha (rad, in (0, pi)) is the angle between the
+    chord C->B and the arc's tangent at C, side (+1 / -1) the bulge side about C->B in this frame.
+
+    Modes:
+      "straight": straight bar from C to B (alpha = 0).
+      "tangent":  arc tangent to the foot line C-P at C. link_curve_flip False continues the foot
+                  smoothly past C (-f, G1 continuous with P->C); True leaves along +f (opposite tangent).
+      "radius":   minor arc of radius link_radius (clamped to >= l1 / 2, semicircle). link_curve_flip
+                  False bulges inward (+1, toward screw / away from tube); True bulges outward (-1, toward tube).
+
+    On pivoted bars the link stays a pin-ended bar of chord l1, so kinematics do not change, while
+    the pull T along the chord bends it. In one-piece mode the arc directly shapes the beam stiffness.
     """
-    if not (p.link_curved and p.linkage_type == TYPE_PENDULUM and p.foot_length > 0):
+    mode = _link_curve_mode(p)
+    if mode == "straight" or not np.isfinite(l1) or l1 <= 1e-9:
+        return 0.0, 0.0
+    if mode == "radius":
+        r = float(p.link_radius)
+        if not np.isfinite(r) or r <= 0.0:
+            return 0.0, 0.0
+        ratio = min(float(l1) / (2.0 * r), 1.0)
+        alpha = float(np.arcsin(ratio))
+        if not np.isfinite(alpha) or alpha < 1e-4:
+            return 0.0, 0.0
+        return alpha, (-1.0 if p.link_curve_flip else 1.0)
+    if p.foot_length <= 0:
         return 0.0, 0.0
     ux, uy = (bx - cx) / l1, (by - cy) / l1
     fx, fy = (px - cx) / p.foot_length, (py - cy) / p.foot_length
-    dot, cross = ux * fx + uy * fy, ux * fy - uy * fx
-    if dot < 0.0:   # the link leaves the joint on the side of the foot line that faces the carriage
-        dot, cross = -dot, -cross
+    tx, ty = (fx, fy) if p.link_curve_flip else (-fx, -fy)
+    dot, cross = ux * tx + uy * ty, ux * ty - uy * tx
     alpha = float(np.arctan2(abs(cross), dot))
-    if not np.isfinite(alpha) or alpha < 1e-4:
+    if not np.isfinite(alpha) or alpha < 1e-4 or alpha > np.pi - 1e-2:
         return 0.0, 0.0
     return alpha, float(np.sign(cross))
 
@@ -1584,6 +1638,11 @@ class LinkageSearch:
     # Refuse a design whose closed tube leaks at Y = 0 once the parts flex (sealed_after_flex False).
     # A design with no force figures (no compliance, no pin or pad) has no verdict and is not refused.
     require_seal: bool = True
+    # Link curve search (pendulum only): "current" keeps Explorer's shape; "all" compares straight,
+    # tangent (both directions), and custom radius (both sides); or restrict to one family.
+    link_curve_search: str = "current"
+    link_radius_min: float = 5.0      # mm, custom arc radius lower bound when searching radius / all
+    link_radius_max: float = 40.0     # mm, custom arc radius upper bound when searching radius / all
 
 
 def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
@@ -1604,15 +1663,27 @@ def _anchor_allowed(s: LinkageSearch, a) -> np.ndarray:
     return np.ones_like(a, dtype=bool) if hi <= lo else ~((a > lo) & (a < hi))
 
 
-def _arc_angle(l1, cx, cy, bx, by, px, py, foot):
+def _arc_angle(p: LinkageParams, l1, cx, cy, bx, by, px, py, foot, link_radius=None):
     """_link_arc for arrays of designs: the curved link's half angle and bulge side (0 when straight)."""
+    mode = _link_curve_mode(p)
+    l1 = np.asarray(l1, dtype=float)
+    if mode == "straight":
+        return np.zeros_like(l1), np.zeros_like(l1)
+    if mode == "radius":
+        r = np.asarray(p.link_radius if link_radius is None else link_radius, dtype=float)
+        valid_r = np.isfinite(r) & (r > 0.0) & np.isfinite(l1) & (l1 > 1e-9)
+        r_safe = np.where(valid_r, r, 1.0)
+        ratio = np.clip(l1 / (2.0 * r_safe), 0.0, 1.0)
+        alpha = np.arcsin(ratio)
+        good = valid_r & np.isfinite(alpha) & (alpha >= 1e-4)
+        side = -1.0 if p.link_curve_flip else 1.0
+        return np.where(good, alpha, 0.0), np.where(good, side, 0.0)
     ux, uy = (bx - cx) / l1, (by - cy) / l1
     fx, fy = (px - cx) / foot, (py - cy) / foot
-    dot, cross = ux * fx + uy * fy, ux * fy - uy * fx
-    flip = dot < 0.0
-    dot, cross = np.where(flip, -dot, dot), np.where(flip, -cross, cross)
+    tx, ty = (fx, fy) if p.link_curve_flip else (-fx, -fy)
+    dot, cross = ux * tx + uy * ty, ux * ty - uy * tx
     alpha = np.arctan2(np.abs(cross), dot)
-    good = np.isfinite(alpha) & (alpha >= 1e-4) & (foot > 0)
+    good = np.isfinite(alpha) & (alpha >= 1e-4) & (alpha <= np.pi - 1e-2) & (foot > 0)
     return np.where(good, alpha, 0.0), np.where(good, np.sign(cross), 0.0)
 
 
@@ -1658,15 +1729,16 @@ def _clearance_search(p: LinkageParams, checks, measure, xa, xb, l1, h0, sgn, y,
     xa_, l1_ = (np.broadcast_to(v, measure.shape[:1]) for v in (xa, l1))
     chunk = rows * len(y) + cols // BOX_POSES
     new_group = np.r_[True, chunk[1:] != chunk[:-1]]
-    seg_a, names, sag, _ = _members(pend, xa_[rows], *(np.take(v, flat) for v in pose_a), xb, h + sg * yy, l1_, alpha, side, N_ARC_SEARCH, rows)
-    seg_b, _, _, _ = _members(pend, xa_[rows], *(np.take(v, flat) for v in pose_b), xb, h - sg * yy, l1_, alpha, side, N_ARC_SEARCH, rows)
+    n_arc = max(N_ARC_SEARCH, 8) if np.any(np.asarray(alpha) > np.pi / 2.0) else N_ARC_SEARCH
+    seg_a, names, sag, _ = _members(pend, xa_[rows], *(np.take(v, flat) for v in pose_a), xb, h + sg * yy, l1_, alpha, side, n_arc, rows)
+    seg_b, _, _, _ = _members(pend, xa_[rows], *(np.take(v, flat) for v in pose_b), xb, h - sg * yy, l1_, alpha, side, n_arc, rows)
     clear, _, _ = _clearance_flat(p, checks, seg_a, names, sag, _turned(seg_b, h), sag, xb, h + sg * yy,
                                   np.flatnonzero(new_group), np.cumsum(new_group) - 1)
     out[rows, cols] = clear
     return out
 
 
-def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=None, foot_angle_deg=None, stats=None) -> np.ndarray:
+def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=None, foot_angle_deg=None, stats=None, link_radius=None) -> np.ndarray:
     """Score for arrays of candidates (one per row), lower is better; inf where infeasible.
 
     "target": RMS distance of the opening from (Y / stroke) ** exponent over the stroke.
@@ -1720,8 +1792,8 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
             row_ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
         else:
             row_ok &= h0 >= s.min_pivot_height
-        if p.link_curved and p.linkage_type == TYPE_PENDULUM:
-            alpha, arc_side = _arc_angle(l1, cx0, cy0, xb, h0, *_tip(xa, cx0, cy0, reach / l2, delta), p.foot_length)
+        if _link_curve_mode(p) != "straight" and p.linkage_type == TYPE_PENDULUM:
+            alpha, arc_side = _arc_angle(p, l1, cx0, cy0, xb, h0, *_tip(xa, cx0, cy0, reach / l2, delta), p.foot_length, link_radius)
         else:
             alpha, arc_side = np.zeros_like(l2), np.zeros_like(l2)
 
@@ -2038,6 +2110,7 @@ def _candidate_record(out: LinkageParams, r: LinkageResult, score: float, limiti
         "params": asdict(out),
         "score": round(float(score), 4),
         "pivot_side": _side_name(out),
+        "link_curve": _curve_option_name(out) if out.linkage_type == TYPE_PENDULUM else None,
         "limiting_factor": limiting_factor,
         "tags": [],
         "metrics": {
@@ -2064,6 +2137,8 @@ def _candidate_record(out: LinkageParams, r: LinkageResult, score: float, limiti
             "min_clearance": r.min_clearance,
             "max_rotation_deg": r.max_rotation_deg,
             "rms_error": r.rms_error,
+            "link_arc_radius": r.link_arc_radius,
+            "link_arc_half_angle_deg": r.link_arc_half_angle_deg,
         },
     }
 
@@ -2073,7 +2148,7 @@ def _curate_candidates(records: List[dict], max_count: int = MAX_PARETO_CANDIDAT
     if not records:
         return []
     ordered = sorted(records, key=lambda c: c["score"])
-    # Deduplicate near-identical designs (same side and close geometry OR nearly identical tradeoff metrics).
+    # Deduplicate near-identical designs (same side, same curve family, and close geometry OR tradeoff metrics).
     unique: List[dict] = []
     for rec in ordered:
         p = rec["params"]
@@ -2082,10 +2157,15 @@ def _curate_candidates(records: List[dict], max_count: int = MAX_PARETO_CANDIDAT
         for kept in unique:
             kp = kept["params"]
             km = kept["metrics"]
-            if rec["pivot_side"] != kept["pivot_side"]:
+            if rec["pivot_side"] != kept["pivot_side"] or rec.get("link_curve") != kept.get("link_curve"):
                 continue
+            rad_close = True
+            if rec.get("link_curve") in ("radius_in", "radius_out"):
+                r1, r2 = float(p.get("link_radius", 0.0)), float(kp.get("link_radius", 0.0))
+                rad_close = abs(r1 - r2) < max(0.6, 0.12 * max(r1, r2))
             geom_close = (
-                abs(p["bar2_length"] - kp["bar2_length"]) < 0.25
+                rad_close
+                and abs(p["bar2_length"] - kp["bar2_length"]) < 0.25
                 and abs(p["anchor_distance"] - kp["anchor_distance"]) < 0.25
                 and abs(p["foot_length"] - kp["foot_length"]) < 0.2
                 and abs(p["foot_angle_deg"] - kp["foot_angle_deg"]) < 2.0
@@ -2093,7 +2173,8 @@ def _curate_candidates(records: List[dict], max_count: int = MAX_PARETO_CANDIDAT
                 and abs(p["stroke"] - kp["stroke"]) < 0.08
             )
             metric_close = (
-                m["deadband"] is not None and km["deadband"] is not None
+                rad_close
+                and m["deadband"] is not None and km["deadband"] is not None
                 and abs(m["deadband"] - km["deadband"]) < 0.008
                 and abs((m["max_flow_reached_pct"] or 0.0) - (km["max_flow_reached_pct"] or 0.0)) < 2.0
                 and abs(p["stroke"] - kp["stroke"]) < 0.06
@@ -2152,6 +2233,16 @@ def _curate_candidates(records: List[dict], max_count: int = MAX_PARETO_CANDIDAT
         best_sm = max(sm_cands, key=lambda t: (t[1], -unique[t[0]]["score"]))[0]
         if (unique[best_sm]["metrics"]["stress_margin"] or 0.0) >= 1.15:
             mark(best_sm, "Higher margin")
+
+    # When multiple link curve options were explored, keep the best design of each curve family visible.
+    seen_curves = {unique[i].get("link_curve") for i in picked_idx}
+    for i, rec in enumerate(unique):
+        if len(picked_idx) >= max_count:
+            break
+        ck = rec.get("link_curve")
+        if ck is not None and ck not in seen_curves:
+            seen_curves.add(ck)
+            picked_idx.append(i)
 
     # Fill remaining slots with Pareto non-dominated designs on (deadband, -flow_pct), then next best scores.
     def dominated(i: int) -> bool:
@@ -2251,13 +2342,83 @@ def _rigid_search(p: LinkageParams, s: LinkageSearch) -> dict:
     return ctx
 
 
-def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[LinkageParams], float, List[dict]]:
+def _curve_specs(p: LinkageParams, s: LinkageSearch) -> Optional[List[Tuple[str, bool]]]:
+    """(link_curve_mode, link_curve_flip) specs explored for a pendulum search, or None for 'current'."""
+    if p.linkage_type != TYPE_PENDULUM or s.link_curve_search == "current":
+        return None
+    if s.link_curve_search == "straight":
+        return [("straight", False)]
+    if s.link_curve_search == "tangent":
+        return [("tangent", False)]
+    if s.link_curve_search == "tangent_flip":
+        return [("tangent", True)]
+    if s.link_curve_search == "radius":
+        return [("radius", False), ("radius", True)]
+    return [("straight", False), ("tangent", False), ("tangent", True), ("radius", False), ("radius", True)]
+
+
+def _radius_bounds(s: LinkageSearch) -> Tuple[float, float]:
+    lo = max(float(s.link_radius_min), 0.1)
+    hi = max(float(s.link_radius_max), 0.1)
+    return (lo, hi) if lo <= hi else (hi, lo)
+
+
+def _sample_radius(rng: np.random.Generator, l1: float, r_lo: float, r_hi: float) -> float:
+    lo_eff = max(r_lo, 0.5 * l1) if np.isfinite(l1) and l1 > 0.0 else r_lo
+    if r_hi <= lo_eff + 1e-9:
+        return round(float(lo_eff), 2)
+    return round(float(np.exp(rng.uniform(np.log(lo_eff), np.log(r_hi)))), 2)
+
+
+def _perturb_radius(rng: np.random.Generator, r_cur: float, spread: float, l1: float, r_lo: float, r_hi: float) -> float:
+    lo_eff = max(r_lo, 0.5 * l1) if np.isfinite(l1) and l1 > 0.0 else r_lo
+    if r_hi <= lo_eff + 1e-9:
+        return round(float(lo_eff), 2)
+    log_lo, log_hi = np.log(lo_eff), np.log(r_hi)
+    log_cur = float(np.clip(np.log(max(r_cur, lo_eff)), log_lo, log_hi))
+    val = float(np.clip(log_cur + rng.normal(0.0, spread * (log_hi - log_lo)), log_lo, log_hi))
+    return round(float(np.exp(val)), 2)
+
+
+def _exact_objective_score(out: LinkageParams, r: LinkageResult, s: LinkageSearch, fallback: float) -> float:
+    """Exact objective score computed on a full-resolution LinkageResult."""
+    if not _is_auto_stroke(s.objective):
+        return float(r.rms_error if r.rms_error is not None else fallback)
+    full_ref = tube_law.FULL_OPEN_FRACTION if tube_law.uses_fem(out) else 1.0
+    ff = min((r.max_flow_reached_pct / 100.0) / full_ref, 1.0)
+    y_open_e = r.y_open if r.y_open is not None else out.stroke
+    y_full_e = r.y_full_open if r.y_full_open is not None else np.inf
+    slope_norm = (r.flow_slope_mean / r.max_flow_l_min) if (r.flow_slope_mean is not None and r.max_flow_l_min > 0) else 0.0
+    accel_norm = (r.flow_accel_mean / r.max_flow_l_min) if (r.flow_accel_mean is not None and r.max_flow_l_min > 0) else 0.0
+    t90_e = None
+    if s.objective == OBJECTIVE_CHAMBER:
+        yp = np.array(r.Y_positions)
+        pos = yp >= 0.0
+        g_arr = np.array([np.nan if g is None else g for g in r.gap_loaded_a], dtype=float)[pos]
+        t90_e = _fast_chamber_t90_ms(out, yp[pos], _area_mm2(out, np.nan_to_num(g_arr, nan=0.0), r.closed_gap), out.stroke)
+    return float(_objective_score(s.objective, ff, y_open_e, y_full_e, out.stroke, slope_norm, accel_norm, t90_e))
+
+
+def _record_curve_stat(report: dict, curve_key: str, solved: int = 0, passed: int = 0, score: Optional[float] = None) -> None:
+    entry = report["curves"].setdefault(curve_key, {"solved": 0, "passed": 0, "found": False, "score": None})
+    entry["solved"] += solved
+    entry["passed"] += passed
+    if score is not None and np.isfinite(score):
+        entry["found"] = True
+        if entry["score"] is None or score < entry["score"]:
+            entry["score"] = float(score)
+
+
+def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict, report: Optional[dict] = None) -> Tuple[Optional[LinkageParams], float, List[dict]]:
     """Best rigid designs that compute_linkage also finds clear of the other linkage over the travel
     it uses and, with s.require_seal, sealed at Y = 0 once the bars flex. Evaluates a diverse spread
-    of finalists so Pareto alternatives are returned too. For 'chamber', re-scores finalists on the
-    exact chamber 0 -> 90 % rise time."""
+    of finalists so Pareto alternatives are returned too. For 'chamber' or multi-curve pendulum
+    searches, re-scores finalists on the exact loaded simulation."""
     p, names = ctx["p"], ctx["names"]
     auto_stroke = _is_auto_stroke(s.objective)
+    specs = _curve_specs(p, s)
+    multi_curve = specs is not None and (len(specs) > 1 or specs[0][0] == "radius")
+    r_lo, r_hi = _radius_bounds(s)
     x, score = ctx["pool"][-1]
     order = np.argsort(score, kind="stable")[:N_ELITE]
     candidates = [(x[i], score[i]) for i in order if np.isfinite(score[i])]
@@ -2265,19 +2426,21 @@ def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[Linka
     pool_sc = np.concatenate([sc for _, sc in ctx["pool"]])
     spread = _shortlist(p, names, ctx["lo"], ctx["hi"], pool_x, pool_sc, N_ELITE)
     spread_sc = ctx["evaluate"](spread) if len(spread) else np.array([])
-    if s.require_seal or s.objective == OBJECTIVE_CHAMBER:
+    if s.require_seal or s.objective == OBJECTIVE_CHAMBER or multi_curve:
         candidates = candidates[:2] + list(zip(spread, spread_sc))
     else:
         candidates = candidates[:1] + list(zip(spread, spread_sc)) + candidates[1:6]
 
     tried = set()
     verified: List[Tuple[float, LinkageParams, LinkageResult, str]] = []
-    max_verify = 10 if (s.objective == OBJECTIVE_CHAMBER or auto_stroke) else 6
+    max_verify = (18 if multi_curve else 10) if (s.objective == OBJECTIVE_CHAMBER or auto_stroke or multi_curve) else 6
+    max_geoms = 8 if multi_curve else len(candidates)
+    geoms_checked = 0
     for v, sc in candidates:
-        if len(verified) >= max_verify:
+        if len(verified) >= max_verify or geoms_checked >= max_geoms:
             break
-        out = replace(p, **{name: round(float(val), 3) for name, val in zip(names, v)})
-        key = tuple(getattr(out, n) for n in names)
+        base = replace(p, **{name: round(float(val), 3) for name, val in zip(names, v)})
+        key = tuple(getattr(base, n) for n in names)
         if key in tried or not np.isfinite(sc):
             continue
         tried.add(key)
@@ -2286,50 +2449,71 @@ def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[Linka
         sc = float(ctx["evaluate"](np.array([key], dtype=float))[0])
         if not np.isfinite(sc):
             continue
-        if auto_stroke:
-            out.stroke = s.max_stroke
-        r = compute_linkage(replace(out, chamber_volume_ml=0.0))
-        if s.require_seal and r.sealed_after_flex is False:
-            side["seal"] += 1
-            continue
-        limiting = "max_stroke"
-        if auto_stroke:
-            if r.collision_y is not None and r.collision_y < 0.05 - 1e-9:
-                continue
-            crushed = _crushed(r, s, r.gap_a)
-            caps_named = [(s.max_stroke, "max_stroke"), (r.y_max, "reach"), (-r.y_min, "lock")]
-            if crushed.size:
-                caps_named.append((float(crushed.min()), "oversqueeze"))
-            if r.collision_y is not None:
-                caps_named.append((r.collision_y - 1e-6, "collision"))
-            cap_y, cap_reason = min(caps_named, key=lambda t: t[0])
-            caps = [r.collision_y - 1e-6] if r.collision_y is not None else []
-            out.stroke = _stroke_used(r, s, caps) if r.y_full_open is not None else max(0.05, _stroke_used(r, s, caps))
-            if out.stroke < 0.05 - 1e-9:
-                continue
-            if r.y_full_open is not None and round(float(np.ceil(r.y_full_open / 0.05 - 1e-9)) * 0.05, 2) <= cap_y + 1e-9:
-                limiting = "full_open"
+        geoms_checked += 1
+
+        if multi_curve and specs is not None:
+            variants: List[LinkageParams] = []
+            l1_est = base.bar1_length
+            lo_eff = max(r_lo, 0.5 * l1_est)
+            if r_hi <= lo_eff + 1e-9:
+                radii = [round(lo_eff, 2)]
             else:
-                limiting = cap_reason
-        elif r.collision_y is not None:
-            continue
-        if p.fixed_height > 0:
-            out.bar1_length = round(r.link_length, 3)
-        # Final simulation at its exact returned stroke (chamber cycle omitted here: _candidate_record computes t90 fast).
-        r_final = compute_linkage(replace(out, chamber_volume_ml=0.0))
-        if not r_final.feasible or (s.require_seal and r_final.sealed_after_flex is False):
-            continue
-        if auto_stroke and r_final.max_flow_reached_pct < s.min_flow_pct - 1e-9:
-            continue
-        if s.objective == OBJECTIVE_CHAMBER:
-            yp = np.array(r_final.Y_positions)
-            pos = yp >= 0.0
-            g_arr = np.array([np.nan if g is None else g for g in r_final.gap_loaded_a], dtype=float)[pos]
-            t90 = _fast_chamber_t90_ms(out, yp[pos], _area_mm2(out, np.nan_to_num(g_arr, nan=0.0), r_final.closed_gap), out.stroke)
-            full_ref = tube_law.FULL_OPEN_FRACTION if tube_law.uses_fem(out) else 1.0
-            ff = min((r_final.max_flow_reached_pct / 100.0) / full_ref, 1.0)
-            sc = float(_objective_score(OBJECTIVE_CHAMBER, ff, r_final.y_open or out.stroke, np.inf, out.stroke, 0.0, 0.0, t90))
-        verified.append((float(sc), out, r_final, limiting))
+                radii = sorted({round(lo_eff, 2), round(float(np.sqrt(lo_eff * r_hi)), 2), round(r_hi, 2)})
+            for mode, flip in specs:
+                if mode == "radius":
+                    for rad in radii:
+                        variants.append(_with_curve(base, mode, flip, rad))
+                else:
+                    variants.append(_with_curve(base, mode, flip))
+        else:
+            variants = [base]
+
+        for out in variants:
+            ck = _curve_option_name(out) if out.linkage_type == TYPE_PENDULUM else None
+            if report is not None and multi_curve and ck is not None:
+                _record_curve_stat(report, ck, solved=1)
+            if auto_stroke:
+                out = replace(out, stroke=s.max_stroke)
+            r = compute_linkage(replace(out, chamber_volume_ml=0.0))
+            if s.require_seal and r.sealed_after_flex is False:
+                side["seal"] += 1
+                continue
+            limiting = "max_stroke"
+            if auto_stroke:
+                if r.collision_y is not None and r.collision_y < 0.05 - 1e-9:
+                    continue
+                crushed = _crushed(r, s, r.gap_a)
+                caps_named = [(s.max_stroke, "max_stroke"), (r.y_max, "reach"), (-r.y_min, "lock")]
+                if crushed.size:
+                    caps_named.append((float(crushed.min()), "oversqueeze"))
+                if r.collision_y is not None:
+                    caps_named.append((r.collision_y - 1e-6, "collision"))
+                cap_y, cap_reason = min(caps_named, key=lambda t: t[0])
+                caps = [r.collision_y - 1e-6] if r.collision_y is not None else []
+                stroke_use = _stroke_used(r, s, caps) if r.y_full_open is not None else max(0.05, _stroke_used(r, s, caps))
+                if stroke_use < 0.05 - 1e-9:
+                    continue
+                out = replace(out, stroke=stroke_use)
+                if r.y_full_open is not None and round(float(np.ceil(r.y_full_open / 0.05 - 1e-9)) * 0.05, 2) <= cap_y + 1e-9:
+                    limiting = "full_open"
+                else:
+                    limiting = cap_reason
+            elif r.collision_y is not None:
+                continue
+            if p.fixed_height > 0:
+                out = replace(out, bar1_length=round(r.link_length, 3))
+            # Final simulation at its exact returned stroke (chamber cycle omitted here: _candidate_record computes t90 fast).
+            r_final = compute_linkage(replace(out, chamber_volume_ml=0.0))
+            if not r_final.feasible or (s.require_seal and r_final.sealed_after_flex is False):
+                continue
+            if auto_stroke and r_final.max_flow_reached_pct < s.min_flow_pct - 1e-9:
+                continue
+            sc_use = float(sc)
+            if s.objective == OBJECTIVE_CHAMBER or multi_curve:
+                sc_use = _exact_objective_score(out, r_final, s, sc_use)
+            if report is not None and ck is not None and specs is not None:
+                _record_curve_stat(report, ck, passed=1, score=sc_use)
+            verified.append((sc_use, out, r_final, limiting))
     if not verified:
         return None, np.inf, []
     verified.sort(key=lambda t: t[0])
@@ -2348,6 +2532,10 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
     its own search with the same seeds, so a side searched within "both" finds exactly what it
     finds alone, and the better design of the two is kept (a tie keeps the normal side).
 
+    For pendulum linkages, s.link_curve_search can keep the current link curve ("current"),
+    restrict to one family ("straight", "tangent", "tangent_flip", "radius"), or search all
+    options together ("all"), tuning custom arc radii within [link_radius_min, link_radius_max].
+
     In one-piece pendulum mode, usable travel is capped by every active structural and assembly
     limit (stress, thrust, eye bearing, rod bending, clearance, oversqueeze, jam) so fast,
     low-deadband designs stop cleanly at their safe stroke instead of being discarded.
@@ -2357,7 +2545,15 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         raise ValueError("pivot_side must be one of %s" % ", ".join(PIVOT_SIDES))
     if s.objective not in OBJECTIVES:
         raise ValueError("objective must be one of %s" % ", ".join(OBJECTIVES))
+    if s.link_curve_search not in LINK_CURVE_SEARCHES:
+        raise ValueError("link_curve_search must be one of %s" % ", ".join(LINK_CURVE_SEARCHES))
     one_piece = p.compliant and p.linkage_type == TYPE_PENDULUM
+    specs = _curve_specs(p, s)
+    # Single fixed curve override (straight / tangent / tangent_flip): apply directly to p.
+    p_base = _with_curve(p, specs[0][0], specs[0][1]) if (specs is not None and len(specs) == 1 and specs[0][0] != "radius") else p
+    # When searching multiple curves / radii, pre-screen rigid geometry with a straight chord so
+    # clearance of one arbitrary curve does not drop geometries that work cleanly with another curve.
+    p_rigid = _with_curve(p_base, "straight") if (specs is not None and (len(specs) > 1 or specs[0][0] == "radius")) else p_base
     report = {
         "model": "one-piece" if one_piece else "rigid",
         "shortlist": 0,
@@ -2365,10 +2561,12 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         "rejected": {k: 0 for k in ONE_PIECE_LIMITS},
         "sides": {},
         "pivot_side": None,
+        "curves": {},
+        "link_curve": None,
         "limiting_factor": None,
         "candidates": [],
     }
-    contexts = [_rigid_search(replace(p, pivot_inverted=inverted), s) for inverted in PIVOT_SIDES[s.pivot_side]]
+    contexts = [_rigid_search(replace(p_rigid, pivot_inverted=inverted), s) for inverted in PIVOT_SIDES[s.pivot_side]]
     feasible, tested = sum(c["feasible"] for c in contexts), sum(c["tested"] for c in contexts)
     for c in contexts:
         report["sides"][_side_name(c["p"])] = {"feasible": c["feasible"], "collision": c["collision"],
@@ -2376,7 +2574,14 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
     live = [c for c in contexts if c["feasible"] > 0]
     if not live:
         return None, feasible, tested, report
-    picks = [_one_piece_pick(s, c, report) if one_piece else _rigid_pick(s, c, report["sides"][_side_name(c["p"])]) for c in live]
+    # Restore original curve settings on ctx["p"] for stage 2 when multi-curve is active (so current design competes).
+    if p_rigid is not p_base:
+        for c in live:
+            c["p"] = replace(p_base, pivot_inverted=c["p"].pivot_inverted)
+    picks = [
+        _one_piece_pick(s, c, report) if one_piece else _rigid_pick(s, c, report["sides"][_side_name(c["p"])], report)
+        for c in live
+    ]
     best, best_score = None, np.inf
     all_candidates: List[dict] = []
     for out, score, cands in picks:
@@ -2388,6 +2593,8 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         if score < best_score:
             best, best_score = out, score
             report["pivot_side"] = _side_name(out)
+            if out.linkage_type == TYPE_PENDULUM:
+                report["link_curve"] = _curve_option_name(out)
     curated = _curate_candidates(all_candidates)
     report["candidates"] = curated
     if curated:
@@ -2406,101 +2613,210 @@ def _one_piece_pick(s: LinkageSearch, ctx: dict, report: dict) -> Tuple[Optional
     side = report["sides"][_side_name(p)]
     rng = np.random.default_rng(1)   # its own stream: same answer for the same inputs
     width = np.where(np.isin(np.arange(len(names)), _searched(p, names, lo, hi)), hi - lo, 0.0)
+    specs = _curve_specs(p, s)
+    multi_curve = specs is not None and (len(specs) > 1 or specs[0][0] == "radius")
+    r_lo, r_hi = _radius_bounds(s)
+    i_bar1 = names.index("bar1_length")
 
     # Initial batch mixes: (1) current design on screen if valid, (2) diverse rigid shortlist,
     # (3) random rigid-feasible draws, and (4) fresh geometrically valid one-piece draws that
     # rigid _score may have rejected (e.g. high-gain flexures whose rigid bars would over-squeeze).
-    n_rigid = max(1, int(round(N_SHORTLIST * 0.35)))
-    n_spread = max(1, int(round(N_SHORTLIST * 0.70)))
-    batch: List[np.ndarray] = []
-    tried = set()
+    geom_target = int(round(N_SHORTLIST * (1.5 if (multi_curve and specs and len(specs) > 2) else 1.2 if multi_curve else 1.0)))
+    n_rigid = max(1, int(round(geom_target * 0.35)))
+    n_spread = max(1, int(round(geom_target * 0.70)))
+    geom_batch: List[np.ndarray] = []
+    tried_geom = set()
 
-    def add_unique(v: np.ndarray) -> bool:
+    def add_geom(v: np.ndarray) -> bool:
         vr = np.round(v, 3)
         k = tuple(vr)
-        if k in tried:
+        if k in tried_geom:
             return False
-        tried.add(k)
-        batch.append(vr)
+        tried_geom.add(k)
+        geom_batch.append(vr)
         return True
 
     # Current on-screen design competes when it sits inside the ranges and is geometrically valid.
     start = np.clip(np.array([getattr(p, n) for n in names], dtype=float), lo, hi)
     if _one_piece_geom_ok(p, s, names, start[None, :])[0]:
-        add_unique(start)
+        add_geom(start)
 
     for v in _shortlist(p, names, lo, hi, np.vstack([x for x, _ in pool]), np.concatenate([sc for _, sc in pool]), n_rigid):
-        if len(batch) >= n_rigid:
+        if len(geom_batch) >= n_rigid:
             break
-        add_unique(v)
+        add_geom(v)
 
     first_x, first_score = pool[0]
     spread_pool = np.round(first_x[np.isfinite(first_score)], 3)
     for i in rng.permutation(len(spread_pool)):
-        if len(batch) >= n_spread:
+        if len(geom_batch) >= n_spread:
             break
-        add_unique(spread_pool[i])
+        add_geom(spread_pool[i])
 
     # Fresh direct draws in the searched space, filtered only by one-piece rest-pose geometry.
-    if len(batch) < N_SHORTLIST:
-        need = N_SHORTLIST - len(batch)
+    if len(geom_batch) < geom_target:
+        need = geom_target - len(geom_batch)
         direct = lo + rng.random((max(need * 8, 64), len(names))) * width
         ok_direct = _one_piece_geom_ok(p, s, names, direct)
         for v in direct[ok_direct]:
-            if len(batch) >= N_SHORTLIST:
+            if len(geom_batch) >= geom_target:
                 break
-            add_unique(v)
+            add_geom(v)
         # Fallback to remaining rigid-feasible draws if direct draws were sparse.
-        if len(batch) < N_SHORTLIST:
+        if len(geom_batch) < geom_target:
             for i in rng.permutation(len(spread_pool)):
-                if len(batch) >= N_SHORTLIST:
+                if len(geom_batch) >= geom_target:
                     break
-                add_unique(spread_pool[i])
+                add_geom(spread_pool[i])
 
     auto_stroke = _is_auto_stroke(s.objective)
     stroke = s.max_stroke if auto_stroke else p.stroke
     ranked: List[Tuple[float, float, LinkageParams, dict]] = []
+    tried_full = set()
 
-    def solve(designs):
-        for v in designs:
-            q = replace(p, **{n: float(val) for n, val in zip(names, v)}, stroke=stroke, chamber_volume_ml=0.0)
+    def cand_key(v: np.ndarray, mode: str, flip: bool, rad: float):
+        return (tuple(v), mode, flip, rad if mode == "radius" else 0.0)
+
+    def build_params(v: np.ndarray, mode: Optional[str], flip: bool, rad: float) -> LinkageParams:
+        q = replace(p, **{n: float(val) for n, val in zip(names, v)}, stroke=stroke, chamber_volume_ml=0.0)
+        if mode is not None:
+            q = _with_curve(q, mode, flip, rad)
+        return q
+
+    def solve(designs: List[Tuple[np.ndarray, Optional[str], bool, float]]):
+        for v, mode, flip, rad in designs:
+            q = build_params(v, mode, flip, rad)
             sc, travel, broken, meta = _one_piece_eval(q, s, fast=True)
             report["shortlist"] += 1
             side["solved"] += 1
+            ck = _curve_option_name(q)
+            if specs is not None:
+                _record_curve_stat(report, ck, solved=1)
             if broken:
                 report["rejected"][broken] += 1
                 side["seal"] += broken == "seal"
             else:
+                if specs is not None:
+                    _record_curve_stat(report, ck, passed=1)
                 ranked.append((sc, travel, q, meta or {}))
         ranked.sort(key=lambda t: t[0])
 
-    solve(batch)
-    for spread in ONE_PIECE_ROUNDS:
+    if not multi_curve:
+        batch_items = [(v, None, False, p.link_radius) for v in geom_batch]
+        for v in geom_batch:
+            tried_full.add(cand_key(v, _link_curve_mode(p), p.link_curve_flip, p.link_radius))
+    else:
+        assert specs is not None
+        batch_items = []
+        batch_target = int(round(N_SHORTLIST * (1.7 if len(specs) > 2 else 1.25)))
+        # Test the top distinct geometries across every curve family for direct apples-to-apples comparison.
+        k_shared = max(1, min(len(geom_batch), N_SHORTLIST // (14 if len(specs) > 2 else 6)))
+        for idx, v in enumerate(geom_batch[:k_shared]):
+            l1_est = float(v[i_bar1])
+            for mode, flip in specs:
+                rad = _sample_radius(rng, l1_est, r_lo, r_hi) if mode == "radius" else p.link_radius
+                if idx == 0 and mode == _link_curve_mode(p) and flip == p.link_curve_flip and mode == "radius":
+                    rad = float(np.clip(p.link_radius, max(r_lo, 0.5 * l1_est), max(r_hi, 0.5 * l1_est)))
+                ckey = cand_key(v, mode, flip, rad)
+                if ckey not in tried_full:
+                    tried_full.add(ckey)
+                    batch_items.append((v, mode, flip, rad))
+        # Spread remaining geometries across all curve families round-robin for broad spatial coverage.
+        for idx, v in enumerate(geom_batch[k_shared:]):
+            if len(batch_items) >= batch_target:
+                break
+            mode, flip = specs[idx % len(specs)]
+            rad = _sample_radius(rng, float(v[i_bar1]), r_lo, r_hi) if mode == "radius" else p.link_radius
+            ckey = cand_key(v, mode, flip, rad)
+            if ckey not in tried_full:
+                tried_full.add(ckey)
+                batch_items.append((v, mode, flip, rad))
+
+    def cross_test_top(n_top: int) -> None:
+        """Evaluate the top distinct refined geometries across every searched curve family."""
+        if not multi_curve or not ranked or specs is None:
+            return
+        seen_g: List[np.ndarray] = []
+        cross_items: List[Tuple[np.ndarray, Optional[str], bool, float]] = []
+        for _, _, q, _ in ranked:
+            v = np.round(np.array([getattr(q, n) for n in names], dtype=float), 3)
+            if any(np.allclose(v, sg, atol=0.15) for sg in seen_g):
+                continue
+            seen_g.append(v)
+            l1_est = float(v[i_bar1])
+            lo_eff = max(r_lo, 0.5 * l1_est)
+            r_mid = round(float(np.sqrt(lo_eff * max(r_hi, lo_eff))), 2)
+            for mode, flip in specs:
+                rads = [r_mid] if mode == "radius" else [p.link_radius]
+                for rad in rads:
+                    ckey = cand_key(v, mode, flip, rad)
+                    if ckey not in tried_full:
+                        tried_full.add(ckey)
+                        cross_items.append((v, mode, flip, rad))
+            if len(seen_g) >= n_top:
+                break
+        if cross_items:
+            solve(cross_items)
+
+    solve(batch_items)
+    round_budget = int(round(N_ONE_PIECE_ROUND * (1.45 if (multi_curve and specs and len(specs) > 2) else 1.15 if multi_curve else 1.0)))
+    for r_idx, spread in enumerate(ONE_PIECE_ROUNDS):
         if not ranked:
             break
-        # Seed refinement from both the best overall designs AND Pareto extremes (min deadband, max flow)
-        # so the refinement finds fast low-deadband designs and builds a rich Pareto front.
+        # Seed refinement from best overall designs (weighted 2x in multi-curve mode so the winning
+        # basin gets focused local refinement), best of each curve family, AND Pareto extremes.
         elite_qs: List[LinkageParams] = [q for _, _, q, _ in ranked[:4]]
-        seen_e = {tuple(getattr(q, n) for n in names) for q in elite_qs}
+        seen_e = {(tuple(getattr(q, n) for n in names), _curve_option_name(q), q.link_radius) for q in elite_qs}
+        if multi_curve:
+            seen_fam = {_curve_option_name(q) for q in elite_qs}
+            for _, _, q, _ in ranked:
+                fam = _curve_option_name(q)
+                if fam not in seen_fam:
+                    seen_fam.add(fam)
+                    ek = (tuple(getattr(q, n) for n in names), fam, q.link_radius)
+                    seen_e.add(ek)
+                    elite_qs.append(q)
         for key_fn in (
             lambda t: (t[3].get("y_open") if t[3].get("y_open") is not None else 1e9, t[0]),
             lambda t: (-(t[3].get("flow_pct") or 0.0), t[0]),
         ):
             top = min(ranked, key=key_fn)
-            ek = tuple(getattr(top[2], n) for n in names)
+            ek = (tuple(getattr(top[2], n) for n in names), _curve_option_name(top[2]), top[2].link_radius)
             if ek not in seen_e:
                 seen_e.add(ek)
                 elite_qs.append(top[2])
-        elite = np.array([[getattr(q, n) for n in names] for q in elite_qs])
-        draws = elite[rng.integers(0, len(elite), 10 * N_ONE_PIECE_ROUND)] + rng.normal(0.0, spread, (10 * N_ONE_PIECE_ROUND, len(names))) * width
+        # Duplicate top-3 overall elites in the sampling table when multi-curve is active so they receive ~50% of draws.
+        pool_qs = (elite_qs[:3] + elite_qs) if multi_curve else elite_qs
+        elite = np.array([[getattr(q, n) for n in names] for q in pool_qs])
+        parents = rng.integers(0, len(elite), 10 * round_budget)
+        draws = elite[parents] + rng.normal(0.0, spread, (10 * round_budget, len(names))) * width
         draws = np.round(np.clip(draws, lo, hi), 3)
-        fresh = []
-        for v in draws[_one_piece_geom_ok(p, s, names, draws)]:
-            k = tuple(v)
-            if len(fresh) < N_ONE_PIECE_ROUND and k not in tried:
-                tried.add(k)
-                fresh.append(v)
+        ok_mask = _one_piece_geom_ok(p, s, names, draws)
+        fresh: List[Tuple[np.ndarray, Optional[str], bool, float]] = []
+        for idx in np.flatnonzero(ok_mask):
+            if len(fresh) >= round_budget:
+                break
+            v = draws[idx]
+            parent_q = pool_qs[int(parents[idx])]
+            if not multi_curve:
+                mode, flip, rad = None, p.link_curve_flip, p.link_radius
+                ckey = cand_key(v, _link_curve_mode(p), p.link_curve_flip, p.link_radius)
+            else:
+                assert specs is not None
+                if rng.random() < 0.12:
+                    mode, flip = specs[int(rng.integers(0, len(specs)))]
+                    rad = _sample_radius(rng, float(v[i_bar1]), r_lo, r_hi) if mode == "radius" else p.link_radius
+                else:
+                    mode = _link_curve_mode(parent_q)
+                    flip = parent_q.link_curve_flip
+                    rad = _perturb_radius(rng, parent_q.link_radius, spread, float(v[i_bar1]), r_lo, r_hi) if mode == "radius" else p.link_radius
+                ckey = cand_key(v, mode, flip, rad)
+            if ckey not in tried_full:
+                tried_full.add(ckey)
+                fresh.append((v, mode, flip, rad))
         solve(fresh)
+        if multi_curve and r_idx in (1, len(ONE_PIECE_ROUNDS) - 1):
+            cross_test_top(min(3, max(1, N_SHORTLIST // 12)))
 
     report["passed"] += len(ranked)
     side["passed"] += len(ranked)
@@ -2509,16 +2825,23 @@ def _one_piece_pick(s: LinkageSearch, ctx: dict, report: dict) -> Tuple[Optional
 
     # Build a compact, deduplicated pool of diverse finalists to verify with exact full-resolution
     # compute_linkage at each candidate's own stroke (without running full 601-pt chamber cycle per finalist).
-    max_finalists = min(8, max(4, N_SHORTLIST // 2))
+    max_finalists = min(12 if multi_curve else 8, max(6 if multi_curve else 4, N_SHORTLIST // 2))
     finalist_indices: List[int] = []
 
     def add_finalist(idx: int) -> None:
         if idx in finalist_indices or len(finalist_indices) >= max_finalists:
             return
         q = ranked[idx][2]
+        ck = _curve_option_name(q)
         for j in finalist_indices:
             qj = ranked[j][2]
-            if (abs(q.bar2_length - qj.bar2_length) < 0.2
+            if ck != _curve_option_name(qj):
+                continue
+            rad_close = True
+            if ck in ("radius_in", "radius_out"):
+                rad_close = abs(q.link_radius - qj.link_radius) < max(0.5, 0.1 * max(q.link_radius, qj.link_radius))
+            if (rad_close
+                    and abs(q.bar2_length - qj.bar2_length) < 0.2
                     and abs(q.anchor_distance - qj.anchor_distance) < 0.2
                     and abs(q.foot_length - qj.foot_length) < 0.15
                     and abs(q.foot_angle_deg - qj.foot_angle_deg) < 2.0
@@ -2526,8 +2849,15 @@ def _one_piece_pick(s: LinkageSearch, ctx: dict, report: dict) -> Tuple[Optional
                 return
         finalist_indices.append(idx)
 
-    # Always include the #1 design first, then Pareto extremes (including a higher-margin design), then next distinct top scores.
+    # Always include the #1 design first, best of each curve family (when searching curves), then Pareto extremes.
     add_finalist(0)
+    if multi_curve:
+        seen_c = {_curve_option_name(ranked[0][2])}
+        for i in range(1, len(ranked)):
+            ck = _curve_option_name(ranked[i][2])
+            if ck not in seen_c:
+                seen_c.add(ck)
+                add_finalist(i)
     best_flow_pct = max((t[3].get("flow_pct") or 0.0) for t in ranked)
     for key_fn in (
         lambda i: (ranked[i][3].get("y_open") if ranked[i][3].get("y_open") is not None else 1e9, ranked[i][0]),
@@ -2592,27 +2922,16 @@ def _one_piece_pick(s: LinkageSearch, ctx: dict, report: dict) -> Tuple[Optional
             report["rejected"][broken] += 1
             report["passed"] -= 1
             side["passed"] -= 1
+            if specs is not None:
+                _record_curve_stat(report, _curve_option_name(q), passed=-1)
             return None
         q_out = replace(q_exact, chamber_volume_ml=p.chamber_volume_ml)
         if p.fixed_height > 0:
             q_out = replace(q_out, bar1_length=round(r.link_length, 3))
         # Recompute exact score on the full-resolution result so #1 ranking is 100 % exact.
-        if auto_stroke:
-            full_ref = tube_law.FULL_OPEN_FRACTION if tube_law.uses_fem(q_out) else 1.0
-            ff = min((r.max_flow_reached_pct / 100.0) / full_ref, 1.0)
-            y_open_e = r.y_open if r.y_open is not None else travel
-            y_full_e = r.y_full_open if r.y_full_open is not None else np.inf
-            slope_norm = (r.flow_slope_mean / r.max_flow_l_min) if (r.flow_slope_mean is not None and r.max_flow_l_min > 0) else 0.0
-            accel_norm = (r.flow_accel_mean / r.max_flow_l_min) if (r.flow_accel_mean is not None and r.max_flow_l_min > 0) else 0.0
-            t90_e = None
-            if s.objective == OBJECTIVE_CHAMBER:
-                yp = np.array(r.Y_positions)
-                pos = yp >= 0.0
-                g_arr = np.array([np.nan if g is None else g for g in r.gap_loaded_a], dtype=float)[pos]
-                t90_e = _fast_chamber_t90_ms(q_out, yp[pos], _area_mm2(q_out, np.nan_to_num(g_arr, nan=0.0), r.closed_gap), travel)
-            exact_score = float(_objective_score(s.objective, ff, y_open_e, y_full_e, travel, slope_norm, accel_norm, t90_e))
-        else:
-            exact_score = float(r.rms_error if r.rms_error is not None else score)
+        exact_score = _exact_objective_score(q_out, r, s, score)
+        if specs is not None:
+            _record_curve_stat(report, _curve_option_name(q_out), score=exact_score)
         limiting = meta.get("limiting_factor", "max_stroke")
         return exact_score, q_out, r, limiting
 

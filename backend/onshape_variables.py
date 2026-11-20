@@ -68,6 +68,7 @@ VALUES = {
     "pivot_height_y0": ("Carriage pivot height at Y = 0", "mm"),
     "total_height": ("Anchor to anchor height", "mm"),
     "link_arc_radius": ("Curved link radius", "mm"),
+    "link_arc_side": ("Curved link side: 1 inward (screw side), -1 outward (tube side), 0 straight", ""),
     "pin_gap_y0": ("Pin (or pad) to the wall the tube rests on, at Y = 0, part at rest", "mm"),
     # Not in the default names: the sketches put the carriage pivot on the far side of the screw.
     "pivot_side": ("Carriage pivot side: 1 far side of the screw, -1 its tube's side (inverted)", ""),
@@ -221,6 +222,7 @@ def wanted_rows(params: LinkageParams) -> list[Row]:
         pivot_height_y0=result.pivot_height_y0,
         total_height=2.0 * result.pivot_height_y0,
         link_arc_radius=result.link_arc_radius,
+        link_arc_side=result.link_arc_side,
         # Where the pin sits against the closed tube in the shape the part is made in: the check that the CAD pinches.
         pin_gap_y0=result.closed_gap - params.preload,
     )

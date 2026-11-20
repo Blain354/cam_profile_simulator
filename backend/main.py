@@ -839,6 +839,9 @@ class LinkageRequest(KpaBody):
     member_thickness: float = Field(3.0, ge=0, le=100)
     contact_deformation: bool = True
     link_curved: bool = False
+    link_curve_mode: str = Field("", pattern="^(|straight|tangent|radius)$")
+    link_curve_flip: bool = False
+    link_radius: float = Field(10.0, ge=0, le=1000)
     compliant: bool = False
     carriage_clamped: bool = False
     carriage_pin_diameter: float = Field(1.5, ge=0, le=100)
@@ -879,6 +882,9 @@ class LinkageOptimizeRequest(LinkageRequest):
     min_flow_pct: float = Field(0.0, ge=0, le=95)
     pivot_side: str = Field("normal", pattern="^(normal|inverted|both)$")
     require_seal: bool = True
+    link_curve_search: str = Field("current", pattern="^(current|all|straight|tangent|tangent_flip|radius)$")
+    link_radius_min: float = Field(5.0, gt=0, le=1000)
+    link_radius_max: float = Field(40.0, gt=0, le=1000)
 
 
 def _linkage_params(req: LinkageRequest) -> LinkageParams:

@@ -24,6 +24,25 @@ import type { TubeModel } from './lib/tubeModel';
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
 
 export type LinkageKind = 'elbow' | 'lever' | 'pendulum';
+export type LinkCurveMode = 'straight' | 'tangent' | 'radius';
+const LINK_CURVE_MODES: LinkCurveMode[] = ['straight', 'tangent', 'radius'];
+export type LinkCurveSearch = 'current' | 'all' | 'straight' | 'tangent' | 'tangent_flip' | 'radius';
+const LINK_CURVE_SEARCHES: LinkCurveSearch[] = ['current', 'all', 'straight', 'tangent', 'tangent_flip', 'radius'];
+const LINK_CURVE_SEARCH_LABEL: Record<LinkCurveSearch, string> = {
+  current: 'Keep current',
+  all: 'Search all',
+  straight: 'Straight',
+  tangent: 'Tangent (foot)',
+  tangent_flip: 'Tangent (flipped)',
+  radius: 'Custom radius',
+};
+const CURVE_OPTION_LABEL: Record<string, string> = {
+  straight: 'Straight',
+  tangent: 'Tangent',
+  tangent_flip: 'Tangent flip',
+  radius_in: 'Radius (in)',
+  radius_out: 'Radius (out)',
+};
 
 export interface LinkageParams {
   linkage_type: LinkageKind;
@@ -59,6 +78,9 @@ export interface LinkageParams {
   member_thickness: number;
   contact_deformation: boolean;
   link_curved: boolean;
+  link_curve_mode: LinkCurveMode;
+  link_curve_flip: boolean;
+  link_radius: number;
   compliant: boolean;
   carriage_clamped: boolean;
   carriage_pin_diameter: number;
@@ -145,6 +167,11 @@ interface LinkageSearch {
   pivot_side: PivotSide;
   /** Refuse designs whose closed tube leaks at Y = 0 once the parts flex. */
   require_seal: boolean;
+  /** Link curve strategy explored by the pendulum Finder. */
+  link_curve_search: LinkCurveSearch;
+  /** Custom arc radius search bounds (mm) when link_curve_search is 'radius' or 'all'. */
+  link_radius_min: number;
+  link_radius_max: number;
   /** Dimensions kept at their current value: sent as min = max, their stored range left untouched. */
   fixed: SearchVar[];
 }
@@ -157,6 +184,7 @@ interface CandidateSummary {
   params: LinkageParams;
   score: number;
   pivot_side: 'normal' | 'inverted';
+  link_curve?: string | null;
   limiting_factor: string;
   tags: string[];
   metrics: {
@@ -183,11 +211,14 @@ interface CandidateSummary {
     min_clearance: number | null;
     max_rotation_deg: number | null;
     rms_error: number | null;
+    link_arc_radius?: number | null;
+    link_arc_half_angle_deg?: number;
   };
 }
 
 /** What one carriage pivot side gave the search: first-draw counts of the rigid model, then the beam model's. */
 interface SideReport { feasible: number; collision: number; solved: number; passed: number; seal?: number; found: boolean; score: number | null }
+interface CurveReport { solved: number; passed: number; found: boolean; score: number | null }
 
 /** Why the one-piece search turned candidates down; absent from older backends. */
 interface SearchReport {
@@ -197,6 +228,8 @@ interface SearchReport {
   rejected?: Partial<Record<'stress' | 'thrust' | 'eye' | 'rod' | 'no_flow' | 'collision' | 'seal', number>>;
   sides?: Partial<Record<'normal' | 'inverted', SideReport>>;
   pivot_side?: 'normal' | 'inverted' | null;
+  curves?: Partial<Record<string, CurveReport>>;
+  link_curve?: string | null;
   limiting_factor?: string | null;
   candidates?: CandidateSummary[];
 }
@@ -348,6 +381,9 @@ const COMMON = {
   member_thickness: 3.0,
   contact_deformation: true,
   link_curved: false,
+  link_curve_mode: 'straight' as LinkCurveMode,
+  link_curve_flip: false,
+  link_radius: 10.0,
   compliant: false,
   // The real part: the link turns on a 1.5 x 8 mm stainless rod at the carriage.
   carriage_clamped: false,
@@ -372,10 +408,10 @@ const COMMON = {
 const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   elbow: { ...COMMON, linkage_type: 'elbow', bar1_length: 13.0, bar2_length: 7.8, lever_length: 16.5, anchor_distance: 2.33, pivot_offset: 3.9, pin_diameter: 1.0 },
   lever: { ...COMMON, linkage_type: 'lever', bar1_length: 6.9, bar2_length: 6.9, lever_length: 16.5, anchor_distance: 5.05, pivot_offset: 3.97, pin_diameter: 0.4 },
-  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, compliant: true },
+  pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, link_curve_mode: 'tangent', link_curve_flip: false, link_radius: 10.0, compliant: true },
 };
 
-const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as SearchObjective, max_stroke: 3, min_flow_pct: 0, anchor_avoid_min: 0, anchor_avoid_max: 0, pinch_height_min: 0, pinch_height_max: 0, pivot_side: 'normal' as PivotSide, require_seal: true, fixed: [] as SearchVar[] };
+const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as SearchObjective, max_stroke: 3, min_flow_pct: 0, anchor_avoid_min: 0, anchor_avoid_max: 0, pinch_height_min: 0, pinch_height_max: 0, pivot_side: 'normal' as PivotSide, require_seal: true, link_curve_search: 'current' as LinkCurveSearch, link_radius_min: 5, link_radius_max: 40, fixed: [] as SearchVar[] };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6, max_stroke: 5 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
@@ -410,6 +446,28 @@ const cleanObjective = (raw: unknown): SearchObjective => (OBJECTIVES.includes(r
 /** A stored pivot side, or the normal one when it is missing (saved before the inverted pivot existed) or odd. */
 const cleanPivotSide = (raw: unknown): PivotSide => (PIVOT_SIDES.includes(raw as PivotSide) ? raw as PivotSide : 'normal');
 
+/** A stored link curve mode, falling back to the legacy link_curved boolean when absent. */
+const cleanLinkCurveMode = (raw: unknown, curved: boolean | undefined): LinkCurveMode =>
+  LINK_CURVE_MODES.includes(raw as LinkCurveMode) ? (raw as LinkCurveMode) : curved ? 'tangent' : 'straight';
+
+/** A stored link curve search strategy, defaulting to 'current'. */
+const cleanLinkCurveSearch = (raw: unknown): LinkCurveSearch =>
+  LINK_CURVE_SEARCHES.includes(raw as LinkCurveSearch) ? (raw as LinkCurveSearch) : 'current';
+
+/** Human-readable description of a pendulum's link curve configuration. */
+function formatLinkCurve(p: Partial<LinkageParams>, actualRadius?: number | null, compact = false): string {
+  const mode = cleanLinkCurveMode(p.link_curve_mode, p.link_curved);
+  if (mode === 'straight') return 'Straight';
+  if (mode === 'tangent') {
+    if (compact) return p.link_curve_flip ? 'Tangent flip' : 'Tangent';
+    return p.link_curve_flip ? 'Tangent (opposite)' : 'Tangent (continue foot)';
+  }
+  const r = actualRadius ?? p.link_radius;
+  const rTxt = typeof r === 'number' && Number.isFinite(r) ? `${r.toFixed(1)} mm` : '';
+  if (compact) return `R ${rTxt} ${p.link_curve_flip ? 'out' : 'in'}`.trim();
+  return `Radius ${rTxt} (${p.link_curve_flip ? 'outward' : 'inward'})`;
+}
+
 /** The stored list of fixed dimensions, or none when it is missing or not a list. */
 const cleanFixed = (raw: unknown): SearchVar[] => (Array.isArray(raw) ? SEARCH_VARS.filter((v) => raw.includes(v)) : []);
 
@@ -440,11 +498,36 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
     // A state saved before pressures were in kPa comes back converted.
     const raw = legacyPsiToKpa(JSON.parse(localStorage.getItem(storageKey(kind)) ?? 'null'));
     if (raw && typeof raw === 'object') {
+      const rp = (raw.params && typeof raw.params === 'object' ? raw.params : {}) as Partial<LinkageParams>;
+      const curveMode = cleanLinkCurveMode(rp.link_curve_mode, rp.link_curved ?? DEFAULT_PARAMS[kind].link_curved);
       return {
         // A state stored before the pivot rod existed had the carriage end clamped by default: the real part pivots there.
-        params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(raw.params?.tube_model), pivot_inverted: raw.params?.pivot_inverted === true, linkage_type: kind },
+        params: {
+          ...DEFAULT_PARAMS[kind],
+          ...rp,
+          ...(rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}),
+          tube_model: cleanTubeModel(rp.tube_model),
+          pivot_inverted: rp.pivot_inverted === true,
+          link_curve_mode: curveMode,
+          link_curved: curveMode !== 'straight',
+          link_curve_flip: rp.link_curve_flip === true,
+          link_radius: typeof rp.link_radius === 'number' && rp.link_radius > 0 ? rp.link_radius : DEFAULT_PARAMS[kind].link_radius,
+          linkage_type: kind,
+        },
         // Ranges stored before the foot was searched kept the anchor on the tube side only: open them up once.
-        search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}), objective: cleanObjective(raw.search?.objective), min_flow_pct: typeof raw.search?.min_flow_pct === 'number' ? raw.search.min_flow_pct : 0, pivot_side: cleanPivotSide(raw.search?.pivot_side), require_seal: raw.search?.require_seal !== false, fixed: cleanFixed(raw.search?.fixed) },
+        search: {
+          ...DEFAULT_SEARCH[kind],
+          ...raw.search,
+          ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}),
+          objective: cleanObjective(raw.search?.objective),
+          min_flow_pct: typeof raw.search?.min_flow_pct === 'number' ? raw.search.min_flow_pct : 0,
+          pivot_side: cleanPivotSide(raw.search?.pivot_side),
+          require_seal: raw.search?.require_seal !== false,
+          link_curve_search: cleanLinkCurveSearch(raw.search?.link_curve_search),
+          link_radius_min: typeof raw.search?.link_radius_min === 'number' && raw.search.link_radius_min > 0 ? raw.search.link_radius_min : DEFAULT_SEARCH[kind].link_radius_min,
+          link_radius_max: typeof raw.search?.link_radius_max === 'number' && raw.search.link_radius_max > 0 ? raw.search.link_radius_max : DEFAULT_SEARCH[kind].link_radius_max,
+          fixed: cleanFixed(raw.search?.fixed),
+        },
         profile: typeof raw.profile === 'string' ? raw.profile : null,
         chart_settings: resolveChartSettings(raw.chart_settings),
       };
@@ -457,10 +540,34 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
 function fromProfilePayload(kind: LinkageKind, raw: Record<string, unknown>): { params: LinkageParams; search: LinkageSearch; chart_settings: LinkageChartSettings } {
   const rp = (raw.params && typeof raw.params === 'object' ? raw.params : undefined) as Partial<LinkageParams> | undefined;
   const rs = (raw.search && typeof raw.search === 'object' ? raw.search : undefined) as (Partial<LinkageSearch> & { fixed?: unknown }) | undefined;
+  const curveMode = cleanLinkCurveMode(rp?.link_curve_mode, rp?.link_curved ?? false);
   return {
     // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
-    params: { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...rp, ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(rp?.tube_model), pivot_inverted: rp?.pivot_inverted === true, linkage_type: kind },
-    search: { ...DEFAULT_SEARCH[kind], ...rs, objective: cleanObjective(rs?.objective), min_flow_pct: typeof rs?.min_flow_pct === 'number' ? rs.min_flow_pct : 0, pivot_side: cleanPivotSide(rs?.pivot_side), require_seal: rs?.require_seal !== false, fixed: cleanFixed(rs?.fixed) },
+    params: {
+      ...DEFAULT_PARAMS[kind],
+      compliant: false,
+      ...rp,
+      ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}),
+      tube_model: cleanTubeModel(rp?.tube_model),
+      pivot_inverted: rp?.pivot_inverted === true,
+      link_curve_mode: curveMode,
+      link_curved: curveMode !== 'straight',
+      link_curve_flip: rp?.link_curve_flip === true,
+      link_radius: typeof rp?.link_radius === 'number' && rp.link_radius > 0 ? rp.link_radius : DEFAULT_PARAMS[kind].link_radius,
+      linkage_type: kind,
+    },
+    search: {
+      ...DEFAULT_SEARCH[kind],
+      ...rs,
+      objective: cleanObjective(rs?.objective),
+      min_flow_pct: typeof rs?.min_flow_pct === 'number' ? rs.min_flow_pct : 0,
+      pivot_side: cleanPivotSide(rs?.pivot_side),
+      require_seal: rs?.require_seal !== false,
+      link_curve_search: cleanLinkCurveSearch(rs?.link_curve_search),
+      link_radius_min: typeof rs?.link_radius_min === 'number' && rs.link_radius_min > 0 ? rs.link_radius_min : DEFAULT_SEARCH[kind].link_radius_min,
+      link_radius_max: typeof rs?.link_radius_max === 'number' && rs.link_radius_max > 0 ? rs.link_radius_max : DEFAULT_SEARCH[kind].link_radius_max,
+      fixed: cleanFixed(rs?.fixed),
+    },
     chart_settings: resolveChartSettings(raw.chart_settings),
   };
 }
@@ -480,7 +587,10 @@ export function LinkageProfilePreview({ kind, payload }: { kind: LinkageKind; pa
     ['Tube', `${p.tube_id.toFixed(2)} x ${p.tube_od.toFixed(2)} mm`],
     ['Pressure', `${formatKpa(p.input_pressure_kpa)} kPa`],
   ];
-  if (kind === 'pendulum') rows.push(['Build', p.compliant ? 'One piece' : p.link_curved ? 'Curved link' : 'Pivoted bars']);
+  if (kind === 'pendulum') {
+    rows.push(['Build', p.compliant ? 'One piece' : 'Pivoted bars']);
+    rows.push(['Link shape', formatLinkCurve(p)]);
+  }
   rows.push(['Pivot side', p.pivot_inverted ? 'Inverted (tube side)' : 'Normal (far side)']);
   const row = (label: string, value: string, tone = 'text-neutral-200') => (
     <div key={label} className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">{label}</span><span className={`text-[11px] font-mono ${tone}`}>{value}</span></div>
@@ -550,8 +660,9 @@ function linkPath(joint: Pt, pivot: Pt, halfAngleDeg: number, side: number): str
     pts.push(joint, pivot);
   } else {
     const radius = l / (2 * Math.sin(alpha));
-    for (let i = 0; i <= 24; i++) {
-      const th = -alpha + 2 * alpha * i / 24;
+    const steps = alpha > Math.PI / 2 ? 40 : 24;
+    for (let i = 0; i <= steps; i++) {
+      const th = -alpha + 2 * alpha * i / steps;
       const along = l / 2 + radius * Math.sin(th), off = side * radius * (Math.cos(th) - Math.cos(alpha));
       pts.push([joint[0] + (dx * along - dy * off) / l, joint[1] + (dy * along + dx * off) / l]);
     }
@@ -1146,6 +1257,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
   const motion = useRef({ d: 0, speed: 0, stroke: 1 });
 
   const set = <K extends keyof LinkageParams>(key: K, value: LinkageParams[K]) => setParams((p) => ({ ...p, [key]: value }));
+  const setLinkCurveMode = (mode: LinkCurveMode) => setParams((p) => ({ ...p, link_curve_mode: mode, link_curved: mode !== 'straight' }));
   const [measure, setMeasure] = useState<{ busy: boolean; ok: boolean; text: string | null }>({ busy: false, ok: true, text: null });
   /** Overwrites the inputs the CAD decides with what Onshape measures now (one read-only API call per value). */
   const syncMeasured = async () => {
@@ -1162,7 +1274,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       setMeasure({ busy: false, ok: false, text: e instanceof Error ? e.message : 'Could not read Onshape.' });
     }
   };
-  const setS = (key: Exclude<keyof LinkageSearch, 'objective' | 'fixed' | 'pivot_side' | 'require_seal'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
+  const setS = (key: Exclude<keyof LinkageSearch, 'objective' | 'fixed' | 'pivot_side' | 'require_seal' | 'link_curve_search'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
   /** Same rule as `_anchor_allowed` in backend/linkage.py: strictly inside, ends allowed, equal ends = no zone. */
   const anchorZone = [Math.min(search.anchor_avoid_min, search.anchor_avoid_max), Math.max(search.anchor_avoid_min, search.anchor_avoid_max)];
   // Pinch point height from the anchor (top) plane at Y = 0; the search limits the same quantity (rigid pose).
@@ -1381,7 +1493,8 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         return;
       }
       // An older backend returns params without the newer fields: keep those from the screen.
-      const p: LinkageParams = { ...params, ...out.params, linkage_type: kind };
+      const mergedCurve = cleanLinkCurveMode(out.params?.link_curve_mode, out.params?.link_curved ?? params.link_curved);
+      const p: LinkageParams = { ...params, ...out.params, link_curve_mode: mergedCurve, link_curved: mergedCurve !== 'straight', linkage_type: kind };
       const candidates: CandidateSummary[] = Array.isArray(out.candidates) ? out.candidates
         : Array.isArray(report?.candidates) ? report!.candidates! : [];
       setParams(p);
@@ -1399,7 +1512,8 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
   const selectCandidate = (idx: number) => {
     const cand = optOut?.candidates?.[idx];
     if (!cand) return;
-    const p: LinkageParams = { ...params, ...cand.params, linkage_type: kind };
+    const mergedCurve = cleanLinkCurveMode(cand.params?.link_curve_mode, cand.params?.link_curved ?? params.link_curved);
+    const p: LinkageParams = { ...params, ...cand.params, link_curve_mode: mergedCurve, link_curved: mergedCurve !== 'straight', linkage_type: kind };
     setParams(p);
     setOptOut((prev) => (prev ? { ...prev, params: p, selectedIdx: idx } : prev));
   };
@@ -1630,15 +1744,68 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
                   </>
                 )}
               </div>
-              <div className="space-y-1.5">
-                <Switch label="Curved link, tangent to the foot" on={params.link_curved} onChange={(v) => set('link_curved', v)}
-                  title="The link becomes an arc of a circle from the carriage pivot to the joint, arriving along the foot at Y = 0. On pivots the opening law is the same and the arc bends under the pull. In one piece the arc is a softer spring than a straight link: less thrust and less stress for the same travel." />
-                {params.link_curved && data && data.link_arc_radius != null && (
+              <div className="space-y-2">
+                <span className="text-sm text-neutral-300">Link shape</span>
+                <div className="bui-tablist flex w-full" role="group" aria-label="Link shape">
+                  {([
+                    ['straight', 'Straight'],
+                    ['tangent', 'Tangent'],
+                    ['radius', 'Custom radius'],
+                  ] as const).map(([m, lbl]) => (
+                    <button key={m} type="button" aria-pressed={params.link_curve_mode === m} onClick={() => setLinkCurveMode(m)}
+                      className={`bui-tab flex-1 px-2 py-1 text-xs${params.link_curve_mode === m ? ' bui-tab--active' : ''}`}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                {params.link_curve_mode === 'tangent' && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-neutral-400">Tangent direction</span>
+                    <div className="bui-tablist flex w-full" role="group" aria-label="Tangent direction">
+                      {([
+                        [false, 'Continue foot'],
+                        [true, 'Opposite'],
+                      ] as const).map(([flip, lbl]) => (
+                        <button key={String(flip)} type="button" aria-pressed={params.link_curve_flip === flip} onClick={() => set('link_curve_flip', flip)}
+                          className={`bui-tab flex-1 px-2 py-1 text-xs${params.link_curve_flip === flip ? ' bui-tab--active' : ''}`}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {params.link_curve_mode === 'radius' && (
+                  <div className="space-y-2">
+                    <ParameterSlider label="Arc radius (mm)" value={params.link_radius} min={3} max={60} step={0.1} onChange={(v) => set('link_radius', v)}
+                      secondaryValue={data ? `min ${(data.link_length / 2).toFixed(2)}` : undefined}
+                      description="Circular arc radius between the joint and the carriage pivot. Smaller radius curves deeper and lowers stiffness; larger radius approaches a straight bar. Clamped to half the chord (semicircle)." />
+                    <div className="space-y-1">
+                      <span className="text-xs text-neutral-400">Curve side</span>
+                      <div className="bui-tablist flex w-full" role="group" aria-label="Curve side">
+                        {([
+                          [false, 'Inward (screw)'],
+                          [true, 'Outward (tube)'],
+                        ] as const).map(([flip, lbl]) => (
+                          <button key={String(flip)} type="button" aria-pressed={params.link_curve_flip === flip} onClick={() => set('link_curve_flip', flip)}
+                            className={`bui-tab flex-1 px-2 py-1 text-xs${params.link_curve_flip === flip ? ' bui-tab--active' : ''}`}>
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {params.link_curve_mode === 'straight' && (
                   <p className="text-[10px] leading-snug text-neutral-400">
-                    {`Arc radius ${data.link_arc_radius.toFixed(2)} mm, ${data.link_arc_sag.toFixed(2)} mm off the straight line, meeting the joint at ${data.link_arc_half_angle_deg.toFixed(0)}° from it.`}
+                    Direct straight link between the carriage pivot and the joint (highest axial stiffness).
                   </p>
                 )}
-                {params.link_curved && data && data.link_arc_radius == null && (
+                {params.link_curve_mode !== 'straight' && data && data.link_arc_radius != null && (
+                  <p className="text-[10px] leading-snug text-neutral-400">
+                    {`Arc radius ${data.link_arc_radius.toFixed(2)} mm${params.link_curve_mode === 'radius' && params.link_radius < data.link_arc_radius - 0.01 ? ' (clamped to semicircle)' : ''}, ${data.link_arc_sag.toFixed(2)} mm off the straight line, ${data.link_arc_half_angle_deg.toFixed(0)}° from the chord${data.link_arc_half_angle_deg > 90 ? ' (major arc)' : ''}.`}
+                  </p>
+                )}
+                {params.link_curve_mode === 'tangent' && data && data.link_arc_radius == null && (
                   <p className="text-[10px] leading-snug text-neutral-400">The foot is already in line with the link, or has no length: the link stays straight.</p>
                 )}
               </div>
@@ -1959,6 +2126,38 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
                 : `Carriage pivot on ${search.pivot_side === 'inverted' ? "its tube's side" : 'the far side'} of the screw. Designs closer than the assembly clearance (${params.assembly_clearance.toFixed(2)} mm, Explorer > Geometry) are refused on either side.`}
             </p>
           </div>
+          {pendulum && (
+            <div className="space-y-2">
+              <span className="text-sm text-neutral-300">Link shape</span>
+              <div className="grid grid-cols-2 gap-1" role="group" aria-label="Link shape search">
+                {LINK_CURVE_SEARCHES.map((opt) => (
+                  <button key={opt} type="button" aria-pressed={search.link_curve_search === opt}
+                    onClick={() => setSearch((s) => ({ ...s, link_curve_search: opt }))}
+                    className={`bui-tab px-2 py-1 text-xs text-center rounded border ${search.link_curve_search === opt ? 'bui-tab--active border-amber-500/70' : 'border-neutral-700'}`}>
+                    {LINK_CURVE_SEARCH_LABEL[opt]}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] leading-snug text-neutral-400">
+                {search.link_curve_search === 'all'
+                  ? 'Evaluates straight, tangent (continue foot and flipped), and custom radius (inward and outward) to find the best stiffness and geometry.'
+                  : search.link_curve_search === 'radius'
+                    ? 'Searches custom arc radius on both inward (screw) and outward (tube) sides within the range below.'
+                    : search.link_curve_search === 'current'
+                      ? `Uses the link shape set in Explorer > Geometry (${formatLinkCurve(params)}).`
+                      : `Restricts the search to ${LINK_CURVE_SEARCH_LABEL[search.link_curve_search].toLowerCase()}.`}
+              </p>
+              {(search.link_curve_search === 'all' || search.link_curve_search === 'radius') && (
+                <div className="space-y-1">
+                  <RangeRow label="Arc radius (mm)" min={search.link_radius_min} max={search.link_radius_max}
+                    onMin={(x) => setS('link_radius_min', Math.max(0.5, x))} onMax={(x) => setS('link_radius_max', Math.max(0.5, x))} />
+                  <p className="text-[10px] leading-snug text-neutral-400">
+                    Lower-bounded by half the link chord (semicircle). Larger radius makes a flatter, stiffer link.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           <div className="space-y-1 rounded-lg border border-neutral-700 p-2">
             <RangeRow label="Anchor no-go zone" min={search.anchor_avoid_min} max={search.anchor_avoid_max}
               onMin={(x) => setS('anchor_avoid_min', x)} onMax={(x) => setS('anchor_avoid_max', x)} />
@@ -2053,6 +2252,16 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             })}
           </div>
         )}
+        {pendulum && report?.curves && Object.keys(report.curves).length > 1 && (
+          <div className="space-y-0.5 text-[11px] text-neutral-400">
+            {(['straight', 'tangent', 'tangent_flip', 'radius_in', 'radius_out'] as const).filter((ck) => report.curves![ck]).map((ck) => {
+              const c = report.curves![ck]!;
+              return (
+                <p key={ck}>{`${CURVE_OPTION_LABEL[ck] ?? ck}: ${c.passed} of ${c.solved} passed${c.found ? '' : ', none kept'}${report.link_curve === ck ? ' (best)' : ''}.`}</p>
+              );
+            })}
+          </div>
+        )}
         {optOut && rejectedText && (
           <p className="text-xs text-neutral-400">{`Rejected for: ${rejectedText}.`}</p>
         )}
@@ -2079,6 +2288,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
                         ))}
                         {cand.pivot_side === 'inverted' && (
                           <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] leading-none text-neutral-400">Inverted</span>
+                        )}
+                        {pendulum && (cand.link_curve || cand.params.link_curve_mode) && (
+                          <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] leading-none text-neutral-300">
+                            {formatLinkCurve(cand.params, cand.metrics.link_arc_radius, true)}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -2121,6 +2335,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             )}
             <StatRow label="Travel used" value={`${optOut.params.stroke.toFixed(2)} mm${limitingText ? ` (${limitingText})` : ''}`} />
             <StatRow label="Pivot side" value={optOut.params.pivot_inverted ? 'Inverted (tube side)' : 'Normal (far side)'} />
+            {pendulum && <StatRow label="Link shape" value={formatLinkCurve(optOut.params, res.link_arc_radius)} />}
             <StatRow label="Link" value={res.max_link_force == null ? 'N/A' : `${res.max_link_force > 0 ? 'pulls' : 'pushes'}, worst ${Math.abs(res.max_link_force).toFixed(1)} N`} />
             {res.min_clearance != null && <StatRow label="Least clearance" value={`${res.min_clearance.toFixed(2)} mm`} />}
             <StatRow label="Seal at rest" value={res.seal_pressure_y0_kpa == null ? 'N/A' : `${res.sealed_after_flex ? 'holds' : 'leaks'}, ${res.seal_pressure_y0_kpa.toFixed(0)} kPa`} />

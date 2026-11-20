@@ -153,6 +153,66 @@ test('selecting a goal and min flow sends them, and clicking Top candidates + Re
   })
 })
 
+test('pendulum link shape controls toggle straight, tangent flip, and custom radius, and Finder searches them', async () => {
+  const candidates = [
+    {
+      score: 8, pivot_side: 'inverted', link_curve: 'radius_out', limiting_factor: 'stress', tags: ['Best overall'],
+      params: { bar2_length: 14.5, bar1_length: 9.5, anchor_distance: 2.0, foot_length: 2.5, foot_angle_deg: 80, stroke: 0.4, pivot_inverted: true, link_curved: true, link_curve_mode: 'radius', link_curve_flip: true, link_radius: 12.5 },
+      metrics: { stroke: 0.4, y_open: 0.02, deadband: 0.04, y_full_open: null, response_time_ms: null, chamber_t50_ms: 300, chamber_t90_ms: 420, max_flow_l_min: 23.2, max_flow_reached_l_min: 18.0, max_flow_reached_pct: 77.6, flow_slope_mean: 40.0, flow_slope_max: 50.0, flow_accel_mean: -10.0, max_stress_mpa: 35.0, stress_margin: 1.14, thrust_needed: 12.0, motor_margin: 3.0, seal_pressure_y0_kpa: 180, sealed_after_flex: true, max_oversqueeze: 0.3, min_clearance: null, max_rotation_deg: 6.0, rms_error: null, link_arc_radius: 12.5 },
+    },
+    {
+      score: 9, pivot_side: 'inverted', link_curve: 'straight', limiting_factor: 'stress', tags: ['Higher margin'],
+      params: { bar2_length: 14.8, bar1_length: 9.8, anchor_distance: 2.2, foot_length: 2.2, foot_angle_deg: 75, stroke: 0.35, pivot_inverted: true, link_curved: false, link_curve_mode: 'straight', link_curve_flip: false, link_radius: 10.0 },
+      metrics: { stroke: 0.35, y_open: 0.03, deadband: 0.06, y_full_open: null, response_time_ms: null, chamber_t50_ms: 320, chamber_t90_ms: 450, max_flow_l_min: 23.2, max_flow_reached_l_min: 16.5, max_flow_reached_pct: 71.1, flow_slope_mean: 36.0, flow_slope_max: 45.0, flow_accel_mean: -12.0, max_stress_mpa: 26.0, stress_margin: 1.54, thrust_needed: 14.0, motor_margin: 2.6, seal_pressure_y0_kpa: 195, sealed_after_flex: true, max_oversqueeze: 0.25, min_clearance: null, max_rotation_deg: 5.0, rms_error: null, link_arc_radius: null },
+    },
+  ]
+  const bodies = stubLinkage({
+    found: true, feasible: 25, tested: 300,
+    params: candidates[0].params,
+    result: { ...minimalResult, link_arc_radius: 12.5 },
+    search_report: {
+      model: 'one-piece', shortlist: 20, passed: 10, rejected: { stress: 10 },
+      curves: { straight: { solved: 4, passed: 3, found: true, score: 9 }, radius_out: { solved: 4, passed: 4, found: true, score: 8 } },
+      link_curve: 'radius_out', limiting_factor: 'stress', candidates,
+    },
+    candidates,
+  })
+  const { getByRole, findByText } = render(<App />)
+  // In Finder, select Search all link shapes and run search.
+  fireEvent.click(getByRole('button', { name: 'Search all' }))
+  fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
+  await findByText('Found dimensions')
+  expect(bodies[0].link_curve_search).toBe('all')
+  expect(bodies[0].link_radius_min).toBe(5)
+  expect(bodies[0].link_radius_max).toBe(40)
+  await findByText('Radius 12.5 mm (outward)')
+  await findByText('Radius (out): 4 of 4 passed (best).')
+  // Clicking candidate #2 switches to Straight link mode and persists it.
+  fireEvent.click(getByRole('button', { name: /#2/ }))
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(stored.params.link_curve_mode).toBe('straight')
+    expect(stored.params.link_curved).toBe(false)
+  })
+  // Switch to Explorer and test toggling Tangent -> Opposite and Custom radius -> Outward.
+  fireEvent.click(getByRole('button', { name: 'Open in Explorer' }))
+  fireEvent.click(getByRole('button', { name: 'Tangent' }))
+  fireEvent.click(getByRole('button', { name: 'Opposite' }))
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(stored.params.link_curve_mode).toBe('tangent')
+    expect(stored.params.link_curve_flip).toBe(true)
+    expect(stored.params.link_curved).toBe(true)
+  })
+  fireEvent.click(getByRole('button', { name: 'Custom radius' }))
+  fireEvent.click(getByRole('button', { name: 'Outward (tube)' }))
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(stored.params.link_curve_mode).toBe('radius')
+    expect(stored.params.link_curve_flip).toBe(true)
+  })
+})
+
 test('a linkage state saved in psi comes back in kPa, shown with one decimal', async () => {
   localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: {} }))
   localStorage.setItem('cam-sim.linkage.pendulum.v2', JSON.stringify({ params: { input_pressure_psi: 15 }, search: {} }))
