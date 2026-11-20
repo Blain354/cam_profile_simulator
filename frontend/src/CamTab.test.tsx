@@ -60,7 +60,7 @@ test('the Cam Explorer menu lists every control once, most important first, then
   const text = panel.textContent ?? ''
   const order = [
     'Note', 'Geometry', 'Height (mm)', 'Curve Gain (K)', 'Deadband (mm)', 'Default Dist (mm)', 'Closure ramp', 'Thickness (mm)',
-    'Pneumatic system', 'Pressure (kPa)', 'Tube ID (mm)', 'Tube OD (mm)', 'Compliance', 'Chamber Vol (mL)',
+    'Pneumatic system', 'Pressure (kPa)', 'Tube ID (mm)', 'Tube OD (mm)', 'Tube model', 'Tube hardness (Shore A)', 'Compliance', 'Chamber Vol (mL)',
     'Motor and screw', 'Motor Speed', 'Results', 'Open Latency', 'Gap at Y=0', 'Max Flow (static)', 'Static flow @ Y=0.5 mm',
   ]
   let last = -1
@@ -70,7 +70,7 @@ test('the Cam Explorer menu lists every control once, most important first, then
     expect(at, label).toBeGreaterThan(last)
     last = at
   }
-  expect(within(panel).getAllByRole('spinbutton').length).toBe(11)
+  expect(within(panel).getAllByRole('spinbutton').length).toBe(12)
 
   const slider = getByLabelText('Carriage Y') as HTMLInputElement
   expect(Number(slider.min)).toBe(simulateDefault.Y_positions[0])

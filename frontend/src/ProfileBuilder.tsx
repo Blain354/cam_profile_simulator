@@ -21,6 +21,9 @@ import {
 } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
+import { TubeModelControls } from './TubeModel';
+import { useFemClosedGap } from './lib/tubeModel';
+import type { TubeModel } from './lib/tubeModel';
 import { chartDomain } from './lib/chartDomain';
 import {
   builderMotorSpeed,
@@ -129,6 +132,8 @@ type SolveStreamRequestBody = {
   input_pressure_kpa: number;
   chamber_volume_ml: number;
   compliance: number;
+  tube_model: TubeModel;
+  tube_shore_a: number;
   thickness: number;
   ramp_enabled: boolean;
   gap_at_y0_margin_mm: number;
@@ -167,6 +172,8 @@ function buildSolveStreamBody(i: {
   pressureKpa: number;
   chamberVolume: number;
   compliance: number;
+  tubeModel: TubeModel;
+  tubeShoreA: number;
   thickness: number;
   rampEnabled: boolean;
   gapAtY0MarginMm: number;
@@ -203,6 +210,8 @@ function buildSolveStreamBody(i: {
     input_pressure_kpa: i.pressureKpa,
     chamber_volume_ml: i.chamberVolume,
     compliance: i.compliance,
+    tube_model: i.tubeModel,
+    tube_shore_a: i.tubeShoreA,
     thickness: i.thickness,
     ramp_enabled: i.rampEnabled,
     gap_at_y0_margin_mm: i.gapAtY0MarginMm,
@@ -235,7 +244,7 @@ function buildSolveStreamBody(i: {
 }
 
 /** Rebuild solve body from saved `builder_params` (same defaults as ProfileBuilder initial state when a key is absent). */
-function solveStreamBodyFromBuilderParams(p: Record<string, unknown>, complianceFallback: number): SolveStreamRequestBody {
+function solveStreamBodyFromBuilderParams(p: Record<string, unknown>, complianceFallback: number, tubeModelFallback: TubeModel, shoreFallback: number): SolveStreamRequestBody {
   const num = (k: string, d: number) => (typeof p[k] === 'number' ? (p[k] as number) : d);
   const bool = (k: string, d: boolean) => (typeof p[k] === 'boolean' ? (p[k] as boolean) : d);
   const mode = (k: string, d: 'count' | 'step') => (p[k] === 'count' || p[k] === 'step' ? (p[k] as 'count' | 'step') : d);
@@ -246,6 +255,8 @@ function solveStreamBodyFromBuilderParams(p: Record<string, unknown>, compliance
     pressureKpa: num('pressureKpa', 100),
     chamberVolume: num('chamberVolume', 50),
     compliance: num('compliance', complianceFallback),
+    tubeModel: p.tubeModel === 'fem' || p.tubeModel === 'simple' ? p.tubeModel : tubeModelFallback,
+    tubeShoreA: num('tubeShoreA', shoreFallback),
     thickness: num('thickness', 2.5),
     rampEnabled: bool('rampEnabled', false),
     gapAtY0MarginMm: num('gapAtY0MarginMm', 0.025),
@@ -530,6 +541,8 @@ interface ProfileBuilderProps {
   onApplyToExplorer: (params: SimulationParams) => void;
   /** Matches Explorer tab params (including the registered default config on load). */
   explorerCompliance: number;
+  explorerTubeModel: TubeModel;
+  explorerShoreA: number;
   guidanceEnabled?: boolean;
   /** The header pill's view of the loaded profile (type cam-finder). */
   onProfileStateChange?: (state: ProfileState) => void;
@@ -646,6 +659,8 @@ function searchGridPreviewFromParams(p: Record<string, unknown>) {
 export default function ProfileBuilder({
   onApplyToExplorer,
   explorerCompliance,
+  explorerTubeModel,
+  explorerShoreA,
   guidanceEnabled = true,
   onProfileStateChange,
   profileRef,
@@ -656,6 +671,8 @@ export default function ProfileBuilder({
   const [pressureKpa, setPressureKpa] = useState(100);
   const [chamberVolume, setChamberVolume] = useState(50.0);
   const [compliance, setCompliance] = useState(explorerCompliance);
+  const [tubeModel, setTubeModel] = useState<TubeModel>(explorerTubeModel);
+  const [tubeShoreA, setTubeShoreA] = useState(explorerShoreA);
   const [thickness, setThickness] = useState(2.5);
   const [rampEnabled, setRampEnabled] = useState(false);
   /** 0 = gradual (low static d(flow)/dY for Y≥0), 1 = snappy; only used after solve with candidates[]. */
@@ -751,6 +768,8 @@ export default function ProfileBuilder({
   useEffect(() => {
     setCompliance(explorerCompliance);
   }, [explorerCompliance]);
+  useEffect(() => { setTubeModel(explorerTubeModel); }, [explorerTubeModel]);
+  useEffect(() => { setTubeShoreA(explorerShoreA); }, [explorerShoreA]);
 
   useEffect(() => {
     setDisplayedSim(null);
@@ -840,6 +859,8 @@ export default function ProfileBuilder({
         tube_od: tubeOd,
         input_pressure_kpa: pressureKpa,
         compliance,
+        tube_model: tubeModel,
+        tube_shore_a: tubeShoreA,
         chamber_volume_ml: chamberVolume,
         note: '',
       };
@@ -893,6 +914,8 @@ export default function ProfileBuilder({
     tubeOd,
     pressureKpa,
     compliance,
+    tubeModel,
+    tubeShoreA,
     chamberVolume,
   ]);
 
@@ -933,6 +956,8 @@ export default function ProfileBuilder({
             tube_od: tubeOd,
             input_pressure_kpa: pressureKpa,
             compliance,
+            tube_model: tubeModel,
+            tube_shore_a: tubeShoreA,
             chamber_volume_ml: chamberVolume,
             note: '',
           };
@@ -968,14 +993,21 @@ export default function ProfileBuilder({
     tubeOd,
     pressureKpa,
     compliance,
+    tubeModel,
+    tubeShoreA,
     chamberVolume,
   ]);
 
   /** Gap where inner_gap = 0 at Y=0 (no design margin) */
+  const femGap = useFemClosedGap({ tube_od: tubeOd, tube_id: tubeId, tube_shore_a: tubeShoreA, input_pressure_kpa: pressureKpa, tube_model: tubeModel });
+  // FEM: no gap while the tube solves or when the FEM refuses it (never the compliance law's in its place).
+  const femPending = tubeModel === 'fem' && femGap.gap == null;
   const theoreticalGapMm = useMemo(() => {
+    if (tubeModel === 'fem') return femGap.gap ?? NaN;
     const pMpa = pressureKpa * 1e-3;
     return tubeOd - tubeId - compliance * pMpa;
-  }, [tubeOd, tubeId, compliance, pressureKpa]);
+  }, [tubeOd, tubeId, compliance, pressureKpa, tubeModel, femGap.gap]);
+  const femGapText = femGap.error ? 'tube refused' : 'solving the tube…';
 
   const gapAcceptBand = useMemo(() => {
     const hi = theoreticalGapMm;
@@ -1004,7 +1036,7 @@ export default function ProfileBuilder({
   };
 
   const collectBuilderParams = (): Record<string, unknown> => ({
-    motorSpeed, tubeId, tubeOd, pressureKpa, chamberVolume, compliance, thickness, rampEnabled,
+    motorSpeed, tubeId, tubeOd, pressureKpa, chamberVolume, compliance, tubeModel, tubeShoreA, thickness, rampEnabled,
     profileAggressivity01, gapAtY0MarginMm, kMin, kMax, fixK, fixedK, kSampleMode, kSteps, kStep,
     hSearchMin, hSearchMax, fixHeight, fixedHeight, heightSampleMode, heightSteps, heightStep,
     deadbandSearchMin, deadbandSearchMax, fixDeadband, fixedDeadband, deadbandSampleMode, deadbandSteps, deadbandStep,
@@ -1034,7 +1066,7 @@ export default function ProfileBuilder({
       ),
     [
       experienceNote,
-      motorSpeed, tubeId, tubeOd, pressureKpa, chamberVolume, compliance, thickness, rampEnabled,
+      motorSpeed, tubeId, tubeOd, pressureKpa, chamberVolume, compliance, tubeModel, tubeShoreA, thickness, rampEnabled,
       gapAtY0MarginMm,
       kMin, kMax, fixK, fixedK, kSampleMode, kSteps, kStep,
       hSearchMin, hSearchMax, fixHeight, fixedHeight, heightSampleMode, heightSteps, heightStep,
@@ -1062,6 +1094,8 @@ export default function ProfileBuilder({
         pressureKpa,
         chamberVolume,
         compliance,
+        tubeModel,
+        tubeShoreA,
         thickness,
         rampEnabled,
         gapAtY0MarginMm,
@@ -1098,6 +1132,8 @@ export default function ProfileBuilder({
       pressureKpa,
       chamberVolume,
       compliance,
+      tubeModel,
+      tubeShoreA,
       thickness,
       rampEnabled,
       gapAtY0MarginMm,
@@ -1143,6 +1179,8 @@ export default function ProfileBuilder({
     if (typeof p.pressureKpa === 'number') setPressureKpa(p.pressureKpa);
     if (typeof p.chamberVolume === 'number') setChamberVolume(p.chamberVolume);
     if (typeof p.compliance === 'number') setCompliance(p.compliance);
+    if (p.tubeModel === 'fem' || p.tubeModel === 'simple') setTubeModel(p.tubeModel);
+    if (typeof p.tubeShoreA === 'number') setTubeShoreA(p.tubeShoreA);
     if (typeof p.thickness === 'number') setThickness(p.thickness);
     setRampEnabled(p.rampEnabled === true);
     if (typeof p.profileAggressivity01 === 'number') setProfileAggressivity01(p.profileAggressivity01);
@@ -1218,7 +1256,7 @@ export default function ProfileBuilder({
     setActiveExperienceName(name);
     setLastSolveRequestBody(
       tryParseLastSolveRequest(payload.last_solve_request) ??
-        solveStreamBodyFromBuilderParams(builderParams, explorerCompliance),
+        solveStreamBodyFromBuilderParams(builderParams, explorerCompliance, explorerTubeModel, explorerShoreA),
     );
     setSavedExperienceSignature(
       makeExperienceSignature(
@@ -1273,6 +1311,8 @@ export default function ProfileBuilder({
       pressureKpa,
       chamberVolume,
       compliance,
+      tubeModel,
+      tubeShoreA,
       thickness,
       rampEnabled,
       gapAtY0MarginMm,
@@ -1591,6 +1631,8 @@ export default function ProfileBuilder({
       tube_od: tubeOd,
       input_pressure_kpa: pressureKpa,
       compliance,
+      tube_model: tubeModel,
+      tube_shore_a: tubeShoreA,
       chamber_volume_ml: chamberVolume,
       note: `[Builder] candidate ${activeIdx + 1}/${Math.max(1, candidateCount)} vol=${chamberVolume}mL${experienceTag}`,
     };
@@ -1666,9 +1708,11 @@ export default function ProfileBuilder({
       tube_od: lastSolveRequestBody?.tube_od ?? tubeOd,
       input_pressure_kpa: pressureKpa,
       compliance,
+      tube_model: tubeModel,
+      tube_shore_a: tubeShoreA,
       chamber_volume_ml: chamberVolume,
     };
-  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressureKpa, compliance, chamberVolume, lastSolveRequestBody]);
+  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressureKpa, compliance, tubeModel, tubeShoreA, chamberVolume, lastSolveRequestBody]);
 
   const builderCard = (key: BuilderChartSettingsKey) => ({
     settings: builderChartSettings[key],
@@ -1865,7 +1909,9 @@ export default function ProfileBuilder({
               <ParameterSlider label="Tube OD (mm)" value={tubeOd} min={1.0} max={16.0} step={0.1} onChange={setTubeOd} description={builderTubeOd} />
               <ParameterSlider label="Pressure (kPa)" value={pressureKpa} min={5} max={1050} step={1} inputDecimals={1} onChange={setPressureKpa}
                 description={builderPressure} />
-              <ParameterSlider label="Compliance (mm/MPa)" value={compliance} min={0.0} max={5.0} step={0.01} onChange={setCompliance} description={builderCompliance} />
+              <TubeModelControls model={tubeModel} shore={tubeShoreA} onModel={setTubeModel} onShore={setTubeShoreA} />
+              <ParameterSlider label="Compliance (mm/MPa)" value={compliance} min={0.0} max={5.0} step={0.01} onChange={setCompliance} description={builderCompliance}
+                disabled={tubeModel !== 'simple'} secondaryValue={tubeModel !== 'simple' ? 'Simple model only' : undefined} />
               <ParameterSlider label="Thickness (mm)" value={thickness} min={0.1} max={5.0} step={0.1} onChange={setThickness} description={builderThickness} />
               <ClosureRampToggle value={rampEnabled} onChange={setRampEnabled} />
             </div>
@@ -1880,7 +1926,7 @@ export default function ProfileBuilder({
                 max={0.2}
                 step={0.001}
                 onChange={setGapAtY0MarginMm}
-                secondaryValue={`accept ${gapAcceptBand.lo.toFixed(3)}–${gapAcceptBand.hi.toFixed(3)} mm`}
+                secondaryValue={femPending ? femGapText : `accept ${gapAcceptBand.lo.toFixed(3)}–${gapAcceptBand.hi.toFixed(3)} mm`}
                 description={builderGapAtY0Margin}
               />
 
@@ -2012,7 +2058,7 @@ export default function ProfileBuilder({
                 secondaryValue={
                   optimizeDefaultDistance
                     ? `${(100 * defaultDistSafetyFactor).toFixed(1)}% of max admissible dd per cell`
-                    : `fixed rest gap (CAD) ≈ ${Math.max(0, theoreticalGapMm * defaultDistSafetyFactor - AXIS_BUSHING_PLAY_MM).toFixed(3)} mm`
+                    : femPending ? `fixed rest gap (CAD): ${femGapText}` : `fixed rest gap (CAD) ≈ ${Math.max(0, theoreticalGapMm * defaultDistSafetyFactor - AXIS_BUSHING_PLAY_MM).toFixed(3)} mm`
                 }
                 description={builderDefaultDistMargin}
               />
@@ -2080,7 +2126,7 @@ export default function ProfileBuilder({
             <Button variant="ghost"
               type="button"
               onClick={handleSolve}
-              disabled={theoreticalGapMm <= 0}
+              disabled={theoreticalGapMm <= 0 || femPending}
               loading={solving}
               loadingLabel="Solving"
               className={`flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-emerald-500 ${solving ? '' : 'disabled:cursor-not-allowed disabled:opacity-40'}`}
@@ -2162,6 +2208,9 @@ export default function ProfileBuilder({
           {theoreticalGapMm <= 0 && (
             <p className="text-[10px] text-red-400 text-center">Theoretical gap ≤ 0. Adjust tube dimensions, pressure, or compliance.</p>
           )}
+          {femGap.error && (
+            <p className="text-[10px] text-red-400 text-center" role="alert">{femGap.error}</p>
+          )}
           <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
           <Button variant="ghost"
             type="button"
@@ -2183,7 +2232,7 @@ export default function ProfileBuilder({
                 <div>
                   <StatRow
                     label="Theoretical opening gap"
-                    value={<span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-neutral-300'}>{theoreticalGapMm.toFixed(3)} mm</span>}
+                    value={<span className={theoreticalGapMm <= 0 || femGap.error ? 'text-red-400' : 'text-neutral-300'}>{femPending ? femGapText : `${theoreticalGapMm.toFixed(3)} mm`}</span>}
                     highlight={theoreticalGapMm <= 0}
                   />
                 </div>
@@ -2195,7 +2244,7 @@ export default function ProfileBuilder({
                     label="Acceptable gap@Y=0"
                     value={
                       <span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-cyan-400'}>
-                        {gapAcceptBand.lo.toFixed(3)} – {gapAcceptBand.hi.toFixed(3)} mm
+                        {femPending ? femGapText : `${gapAcceptBand.lo.toFixed(3)} – ${gapAcceptBand.hi.toFixed(3)} mm`}
                       </span>
                     }
                     highlight={theoreticalGapMm <= 0}

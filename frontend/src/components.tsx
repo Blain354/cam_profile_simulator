@@ -27,6 +27,9 @@ export interface SimulationParams {
   tube_od: number;
   input_pressure_kpa: number;
   compliance: number;
+  /** "fem": the bore comes from the tube's finite-element section; "simple": the compliance law. */
+  tube_model: 'fem' | 'simple';
+  tube_shore_a: number;
   chamber_volume_ml: number;
   note: string;
   /** Persisted UI settings (chart domains, etc.). */
@@ -88,6 +91,8 @@ export const defaultParams: SimulationParams = {
   tube_od: 3.0,
   input_pressure_kpa: 100,
   compliance: 0.7,
+  tube_model: 'fem',
+  tube_shore_a: 50,
   chamber_volume_ml: 0.0,
   note: '',
   chart_settings: {},
@@ -115,6 +120,8 @@ export function mergeConfigParams(input: Partial<SimulationParams> & Record<stri
     ...defaultParams,
     ...raw,
     ramp_enabled: typeof raw.ramp_enabled === 'boolean' ? raw.ramp_enabled : false,
+    tube_model: raw.tube_model === 'simple' || raw.tube_model === 'fem' ? raw.tube_model : defaultParams.tube_model,
+    tube_shore_a: typeof raw.tube_shore_a === 'number' ? raw.tube_shore_a : defaultParams.tube_shore_a,
     note: typeof raw.note === 'string' ? raw.note : defaultParams.note,
     chamber_volume_ml: typeof raw.chamber_volume_ml === 'number' ? raw.chamber_volume_ml : defaultParams.chamber_volume_ml,
     chart_settings: (raw.chart_settings && typeof raw.chart_settings === 'object') ? raw.chart_settings as Record<string, unknown> : defaultParams.chart_settings,

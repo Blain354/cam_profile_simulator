@@ -24,6 +24,7 @@ import onshape_export
 import onshape_variables
 from legacy_units import legacy_psi_to_kpa
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
+import tube_model as tube_law
 
 
 app = FastAPI(title="Cam Profile Simulation API")
@@ -89,6 +90,8 @@ class SimRequest(KpaBody):
     tube_od: float = 3.0
     input_pressure_kpa: float = 100.0
     compliance: float = 0.7
+    tube_model: str = Field(tube_law.DEFAULT_TUBE_MODEL, pattern="^(fem|simple)$")
+    tube_shore_a: float = Field(tube_law.DEFAULT_SHORE_A, ge=10, le=90)
     chamber_volume_ml: float = 0.0
     note: str = ""
     chart_settings: dict = Field(default_factory=dict)
@@ -110,9 +113,14 @@ def simulate(req: SimRequest):
         tube_od=req.tube_od,
         input_pressure_kpa=req.input_pressure_kpa,
         compliance=req.compliance,
+        tube_model=req.tube_model,
+        tube_shore_a=req.tube_shore_a,
         chamber_volume_ml=req.chamber_volume_ml,
     )
-    result = compute_simulation(params)
+    try:
+        result = compute_simulation(params)
+    except tube_law.TubeModelError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return dataclasses.asdict(result)
 
 
@@ -123,6 +131,8 @@ class SolveRequest(KpaBody):
     input_pressure_kpa: float = 100.0
     chamber_volume_ml: float = 5.0
     compliance: float = 0.7
+    tube_model: str = Field(tube_law.DEFAULT_TUBE_MODEL, pattern="^(fem|simple)$")
+    tube_shore_a: float = Field(tube_law.DEFAULT_SHORE_A, ge=10, le=90)
     thickness: float = 2.5
     ramp_enabled: bool = False
     gap_at_y0_margin_mm: float = 0.1
@@ -177,6 +187,8 @@ def _solver_params_from_request(req: SolveRequest) -> SolverParams:
         input_pressure_kpa=req.input_pressure_kpa,
         chamber_volume_ml=req.chamber_volume_ml,
         compliance=req.compliance,
+        tube_model=req.tube_model,
+        tube_shore_a=req.tube_shore_a,
         thickness=req.thickness,
         ramp_enabled=req.ramp_enabled,
         gap_at_y0_margin_mm=req.gap_at_y0_margin_mm,
@@ -241,7 +253,10 @@ def _store_candidate_simulations(result: SolverResult) -> None:
 
 @app.post("/api/solve")
 def solve(req: SolveRequest):
-    result = solve_cam_profile(_solver_params_from_request(req))
+    try:
+        result = solve_cam_profile(_solver_params_from_request(req))
+    except tube_law.TubeModelError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     _store_candidate_simulations(result)
     return _solver_result_to_dict(result)
 
@@ -748,6 +763,27 @@ def delete_builder_experience(name: str):
     return {"status": "deleted"}
 
 
+# ─── Tube section (FEM) ───────────────────────────────────────────
+
+class TubeSectionRequest(BaseModel):
+    tube_od: float = Field(3.0, gt=0, le=50)
+    tube_id: float = Field(2.0, gt=0, le=50)
+    tube_shore_a: float = Field(tube_law.DEFAULT_SHORE_A, ge=10, le=90)
+    input_pressure_kpa: float = Field(100.0, ge=0, le=2000)
+    h: float = Field(..., description="plate distance (pin or cam to wall), mm")
+
+
+@app.post("/api/tube/section")
+def tube_section(req: TubeSectionRequest):
+    """Deformed cross-section of the tube squeezed to h, from the finite-element model."""
+    if req.tube_id >= req.tube_od:
+        raise HTTPException(status_code=422, detail="The tube needs OD > ID.")
+    try:
+        return tube_law.section(req, req.h)
+    except tube_law.TubeModelError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 # ─── Bar linkage pinch valves ────────────────────────────────────
 
 class LinkageRequest(KpaBody):
@@ -770,6 +806,8 @@ class LinkageRequest(KpaBody):
     tube_od: float = 3.0
     input_pressure_kpa: float = 100.0
     compliance: float = 0.7
+    tube_model: str = Field(tube_law.DEFAULT_TUBE_MODEL, pattern="^(fem|simple)$")
+    tube_shore_a: float = Field(tube_law.DEFAULT_SHORE_A, ge=10, le=90)
     chamber_volume_ml: float = Field(10.0, ge=0, le=10000)
     motor_speed: float = Field(100.0, ge=0, le=100000)
     lead_screw_pitch: float = Field(0.5, ge=0, le=100)
@@ -824,7 +862,10 @@ def linkage_simulate(req: LinkageRequest):
 def linkage_optimize(req: LinkageOptimizeRequest):
     params = _linkage_params(req)
     names = [f.name for f in dataclasses.fields(LinkageSearch)]
-    best, feasible, tested, report = optimize_linkage(params, LinkageSearch(**{n: getattr(req, n) for n in names}))
+    try:
+        best, feasible, tested, report = optimize_linkage(params, LinkageSearch(**{n: getattr(req, n) for n in names}))
+    except tube_law.TubeModelError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     if best is None:
         return {"found": False, "feasible": feasible, "tested": tested, "search_report": report}
     return {

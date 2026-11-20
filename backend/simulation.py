@@ -11,6 +11,11 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+try:  # run from backend/ (uvicorn main:app) or as the backend package (tests)
+    import tube_model as tube_law
+except ImportError:
+    from . import tube_model as tube_law
+
 MAX_RETURNED_CANDIDATES = 100
 
 # How feasible triples are ordered for the aggressivity slider (mutually exclusive).
@@ -78,7 +83,9 @@ class SimulationParams:
     tube_id: float = 2.0             # mm
     tube_od: float = 3.0             # mm
     input_pressure_kpa: float = 100.0  # kPa gauge
-    compliance: float = 0.7          # mm/MPa - tube opening per unit pressure
+    compliance: float = 0.7          # mm/MPa - tube opening per unit pressure (simple tube model only)
+    tube_model: str = tube_law.DEFAULT_TUBE_MODEL   # "fem": bore from the tube's finite-element section; "simple": compliance law
+    tube_shore_a: float = tube_law.DEFAULT_SHORE_A  # silicone hardness (FEM only)
     chamber_volume_ml: float = 0.0   # mL (0 = static model / infinite volume)
 
 
@@ -202,7 +209,12 @@ def _compute_static_flow_vs_y_arrays(
     compliance_opening = params.compliance * pressure_mpa
     r_inner = params.tube_id / 2.0
     flow_area = np.zeros(n_sim)
+    # FEM: the cam-to-bushing gap is the plate distance of the tube's section.
+    fem_area = tube_law.law(params).area(min_gaps) if tube_law.uses_fem(params) else None
     for i, gap in enumerate(min_gaps):
+        if fem_area is not None:
+            flow_area[i] = fem_area[i]
+            continue
         inner_gap = gap - (params.tube_od - params.tube_id) + compliance_opening
         if inner_gap <= 0:
             flow_area[i] = 0.0
@@ -530,6 +542,8 @@ class SolverParams:
     input_pressure_kpa: float = 100.0
     chamber_volume_ml: float = 5.0
     compliance: float = 0.7
+    tube_model: str = tube_law.DEFAULT_TUBE_MODEL
+    tube_shore_a: float = tube_law.DEFAULT_SHORE_A
     thickness: float = 2.5
     ramp_enabled: bool = False
     bushing_diameter: float = 3.0
@@ -595,6 +609,8 @@ class SolverResult:
 
 
 def _theoretical_mechanical_gap_mm(sp: SolverParams) -> float:
+    if tube_law.uses_fem(sp):
+        return tube_law.law(sp).closed_gap
     pressure_mpa = sp.input_pressure_kpa * 1e-3
     return float((sp.tube_od - sp.tube_id) - sp.compliance * pressure_mpa)
 
@@ -639,6 +655,8 @@ def _max_default_distance_for_gap_ceiling(
                 tube_od=sp.tube_od,
                 input_pressure_kpa=sp.input_pressure_kpa,
                 compliance=sp.compliance,
+                tube_model=sp.tube_model,
+                tube_shore_a=sp.tube_shore_a,
                 ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
             )
@@ -1095,6 +1113,8 @@ def solve_cam_profile(
                             tube_od=sp.tube_od,
                             input_pressure_kpa=sp.input_pressure_kpa,
                             compliance=sp.compliance,
+                            tube_model=sp.tube_model,
+                            tube_shore_a=sp.tube_shore_a,
                             ramp_enabled=sp.ramp_enabled,
                             chamber_volume_ml=sp.chamber_volume_ml,
                         )
@@ -1183,6 +1203,8 @@ def solve_cam_profile(
                 tube_od=sp.tube_od,
                 input_pressure_kpa=sp.input_pressure_kpa,
                 compliance=sp.compliance,
+                tube_model=sp.tube_model,
+                tube_shore_a=sp.tube_shore_a,
                 ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
             )
@@ -1224,6 +1246,8 @@ def solve_cam_profile(
                 tube_od=sp.tube_od,
                 input_pressure_kpa=sp.input_pressure_kpa,
                 compliance=sp.compliance,
+                tube_model=sp.tube_model,
+                tube_shore_a=sp.tube_shore_a,
                 ramp_enabled=sp.ramp_enabled,
                 chamber_volume_ml=sp.chamber_volume_ml,
             )

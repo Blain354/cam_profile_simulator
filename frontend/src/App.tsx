@@ -23,6 +23,7 @@ import { CamSchematicCard } from './CamSchematic';
 import { interpAt, useCamTravel } from './lib/camTravel';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
+import { TubeModelControls, TubeSectionCard } from './TubeModel';
 import { chartDomain } from './lib/chartDomain';
 import type { ChartCardView } from './ChartCard';
 import ProfileBuilder, { FinderProfilePreview } from './ProfileBuilder';
@@ -43,7 +44,7 @@ import {
   explorerChamberVol,
 } from './parameterTooltips';
 
-type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime';
+type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime' | 'section';
 
 // Memoised: it stays mounted behind the other tabs and should not follow every App render.
 const KeptProfileBuilder = React.memo(ProfileBuilder);
@@ -148,6 +149,7 @@ export default function App() {
       pneumatic: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 25 },
       gapY: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 2 },
       gapTime: { autoX: true, autoY: true, xMin: 0, xMax: 100, yMin: 0, yMax: 2 },
+      section: { autoX: true, autoY: true, xMin: -2.5, xMax: 2.5, yMin: -2, yMax: 2 },
     };
     return {
       ...fallback[key],
@@ -181,6 +183,7 @@ export default function App() {
       pneumatic: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 25 },
       gapY: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 2 },
       gapTime: { autoX: true, autoY: true, xMin: 0, xMax: 100, yMin: 0, yMax: 2 },
+      section: { autoX: true, autoY: true, xMin: -2.5, xMax: 2.5, yMin: -2, yMax: 2 },
     };
     const saved = { ...fallback[key], ...((savedExplorer[key] as Partial<ChartDomainSettings> | undefined) ?? {}) };
     return JSON.stringify(cur) !== JSON.stringify(saved);
@@ -254,6 +257,11 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentParams),
         signal: ac.signal,
       });
+      if (response.status === 422) {
+        // The model refused these inputs (for example the FEM tube balloons at this pressure): say why.
+        const body = await response.json().catch(() => null);
+        if (typeof body?.detail === 'string') { setError(body.detail); return; }
+      }
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       setData(result);
@@ -401,6 +409,8 @@ export default function App() {
       maxDynamicFlow: hasDynamicModel ? Math.max(...data.dynamic_flow_l_min) : undefined,
       equalizationTime: data.equalization_time_ms,
       totalVolume: data.total_volume_ml,
+      // Largest sampled gap with no flow: the FEM tube's closed gap, read off the result.
+      zeroFlowGap: data.min_gaps.reduce((m, g, i) => (data.flow_area[i] <= 0 ? Math.max(m, g) : m), 0),
     };
   }, [data, hasDynamicModel]);
 
@@ -661,9 +671,14 @@ export default function App() {
                   />
                   <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1.0} max={12.0} step={0.1} onChange={(val) => handleParamChange('tube_id', val)} isModified={isModified('tube_id')} description={explorerTubeId} />
                   <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1.0} max={16.0} step={0.1} onChange={(val) => handleParamChange('tube_od', val)} isModified={isModified('tube_od')} description={explorerTubeOd} />
+                  <TubeModelControls model={params.tube_model} shore={params.tube_shore_a}
+                    onModel={(m) => setParams((prev) => ({ ...prev, tube_model: m }))}
+                    onShore={(val) => handleParamChange('tube_shore_a', val)}
+                    modelModified={isModified('tube_model')} shoreModified={isModified('tube_shore_a')} />
                   <ParameterSlider label="Compliance" value={params.compliance} min={0.0} max={5.0} step={0.01}
                     onChange={(val) => handleParamChange('compliance', val)}
-                    secondaryValue={`Opening: ${(params.compliance * params.input_pressure_kpa * 1e-3).toFixed(3)} mm`}
+                    secondaryValue={params.tube_model === 'simple' ? `Opening: ${(params.compliance * params.input_pressure_kpa * 1e-3).toFixed(3)} mm` : 'Simple model only'}
+                    disabled={params.tube_model !== 'simple'}
                     isModified={isModified('compliance')}
                     description={explorerCompliance}
                   />
@@ -696,7 +711,7 @@ export default function App() {
                       }
                       highlight={true} />
                     <StatRow label="Gap at Y=0" value={`${stats.gapAtY0.toFixed(3)} mm`} />
-                    {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_od - params.tube_id - params.compliance * params.input_pressure_kpa * 1e-3).toFixed(3)} mm`} />}
+                    {params.ramp_enabled && <StatRow label="Zero-flow gap ≤" value={`${(params.tube_model === 'simple' ? params.tube_od - params.tube_id - params.compliance * params.input_pressure_kpa * 1e-3 : stats.zeroFlowGap).toFixed(3)} mm`} />}
                     <StatRow label="Max Flow (static)" value={`${stats.maxFlow.toFixed(3)} L/min`} />
                     {stats.maxDynamicFlow !== undefined && (
                       <StatRow label="Max Flow (dynamic)" value={`${stats.maxDynamicFlow.toFixed(3)} L/min`} />
@@ -736,6 +751,8 @@ export default function App() {
             <ChartCard title="Gap vs Time" {...explorerCard('gapTime')}>
               {renderGapTime}
             </ChartCard>
+            <TubeSectionCard tube={params} h={data && data.Y_positions.length > 0 ? interpAt(travel.y, data.Y_positions, data.min_gaps) : null}
+              where={`cam gap at Y = ${travel.y.toFixed(2)} mm`} {...explorerCard('section')} />
           </div>
         </div>
       ) : activeTab !== 'cam' ? (
@@ -751,6 +768,8 @@ export default function App() {
             tube_od: params.tube_od,
             input_pressure_kpa: params.input_pressure_kpa,
             compliance: params.compliance,
+            tube_model: params.tube_model,
+            tube_shore_a: params.tube_shore_a,
             motor_speed: params.motor_speed,
             lead_screw_pitch: params.lead_screw_pitch,
           }}
@@ -761,6 +780,8 @@ export default function App() {
           <KeptProfileBuilder
             onApplyToExplorer={handleApplyFromBuilder}
             explorerCompliance={params.compliance}
+            explorerTubeModel={params.tube_model}
+            explorerShoreA={params.tube_shore_a}
             guidanceEnabled={guidanceMode}
             onProfileStateChange={setFinderProfile}
             profileRef={finderRef}

@@ -14,6 +14,9 @@ import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain, sameDomainSettings } from './lib/chartDomain';
 import { formatKpa, legacyPsiToKpa } from './lib/pressure';
+import { TubeModelControls, TubeSectionCard } from './TubeModel';
+import { DEFAULT_SHORE_A, DEFAULT_TUBE_MODEL, cleanTubeModel } from './lib/tubeModel';
+import type { TubeModel } from './lib/tubeModel';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
 
@@ -39,6 +42,8 @@ export interface LinkageParams {
   tube_od: number;
   input_pressure_kpa: number;
   compliance: number;
+  tube_model: TubeModel;
+  tube_shore_a: number;
   chamber_volume_ml: number;
   motor_speed: number;
   lead_screw_pitch: number;
@@ -193,7 +198,7 @@ interface LinkageResult {
   sealed_after_flex: boolean | null;
 }
 
-export type LinkageShared = Pick<LinkageParams, 'tube_id' | 'tube_od' | 'input_pressure_kpa' | 'compliance' | 'motor_speed' | 'lead_screw_pitch'>;
+export type LinkageShared = Pick<LinkageParams, 'tube_id' | 'tube_od' | 'input_pressure_kpa' | 'compliance' | 'tube_model' | 'tube_shore_a' | 'motor_speed' | 'lead_screw_pitch'>;
 
 const COMMON = {
   lever_length: 16.5,
@@ -209,6 +214,8 @@ const COMMON = {
   tube_od: 3.0,
   input_pressure_kpa: 100,
   compliance: 0.7,
+  tube_model: DEFAULT_TUBE_MODEL,
+  tube_shore_a: DEFAULT_SHORE_A,
   chamber_volume_ml: 10.0,
   motor_speed: 100.0,
   lead_screw_pitch: 0.5,
@@ -271,7 +278,7 @@ const varUnit = (v: SearchVar) => (v === 'foot_angle' ? '°' : 'mm');
 /** The stored list of fixed dimensions, or none when it is missing or not a list. */
 const cleanFixed = (raw: unknown): SearchVar[] => (Array.isArray(raw) ? SEARCH_VARS.filter((v) => raw.includes(v)) : []);
 
-type LinkageChartKey = 'flow' | 'gap' | 'force' | 'stress' | 'flex' | 'chamber';
+type LinkageChartKey = 'flow' | 'gap' | 'force' | 'stress' | 'flex' | 'chamber' | 'section';
 type LinkageChartSettings = Record<LinkageChartKey, ChartDomainSettings>;
 const AUTO_DOMAIN: ChartDomainSettings = { autoX: true, autoY: true, xMin: -1, xMax: 1, yMin: 0, yMax: 1 };
 const DEFAULT_CHART_SETTINGS: LinkageChartSettings = {
@@ -282,6 +289,7 @@ const DEFAULT_CHART_SETTINGS: LinkageChartSettings = {
   stress: AUTO_DOMAIN,
   flex: AUTO_DOMAIN,
   chamber: { ...AUTO_DOMAIN, xMin: 0 },
+  section: AUTO_DOMAIN,
 };
 
 /** Every chart's settings, the stored ones over the defaults; a missing or partial map is fine. */
@@ -299,7 +307,7 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
     if (raw && typeof raw === 'object') {
       return {
         // A state stored before the pivot rod existed had the carriage end clamped by default: the real part pivots there.
-        params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind },
+        params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(raw.params?.tube_model), linkage_type: kind },
         // Ranges stored before the foot was searched kept the anchor on the tube side only: open them up once.
         search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}), fixed: cleanFixed(raw.search?.fixed) },
         profile: typeof raw.profile === 'string' ? raw.profile : null,
@@ -316,7 +324,7 @@ function fromProfilePayload(kind: LinkageKind, raw: Record<string, unknown>): { 
   const rs = (raw.search && typeof raw.search === 'object' ? raw.search : undefined) as (Partial<LinkageSearch> & { fixed?: unknown }) | undefined;
   return {
     // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
-    params: { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...rp, ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), linkage_type: kind },
+    params: { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...rp, ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(rp?.tube_model), linkage_type: kind },
     search: { ...DEFAULT_SEARCH[kind], ...rs, fixed: cleanFixed(rs?.fixed) },
     chart_settings: resolveChartSettings(raw.chart_settings),
   };
@@ -1175,6 +1183,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       const res = await apiFetch('/api/linkage/optimize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...params, ...ranges, ...pinned }),
       });
+      if (res.status === 422) {
+        // The tube model refused these inputs (the FEM tube balloons at this pressure, for example).
+        const body = await res.json().catch(() => null);
+        if (typeof body?.detail === 'string') { setOptMessage({ ok: false, text: body.detail }); return; }
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const out = await res.json();
       const report: SearchReport | undefined = out.search_report && typeof out.search_report === 'object' ? out.search_report : undefined;
@@ -1257,7 +1270,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       <ParameterSlider label="Pressure (kPa)" value={params.input_pressure_kpa} min={0} max={1050} step={1} inputDecimals={1} onChange={(v) => set('input_pressure_kpa', v)} />
       <ParameterSlider label="Tube ID (mm)" value={params.tube_id} min={1} max={12} step={0.1} onChange={(v) => set('tube_id', v)} />
       <ParameterSlider label="Tube OD (mm)" value={params.tube_od} min={1} max={16} step={0.1} onChange={(v) => set('tube_od', v)} />
-      <ParameterSlider label="Compliance" value={params.compliance} min={0} max={5} step={0.01} onChange={(v) => set('compliance', v)} />
+      <TubeModelControls model={params.tube_model} shore={params.tube_shore_a} onModel={(m) => set('tube_model', m)} onShore={(v) => set('tube_shore_a', v)} />
+      <ParameterSlider label="Compliance" value={params.compliance} min={0} max={5} step={0.01} onChange={(v) => set('compliance', v)}
+        disabled={params.tube_model !== 'simple'} secondaryValue={params.tube_model !== 'simple' ? 'Simple model only' : undefined} />
       <ParameterSlider label="Chamber vol (mL)" value={params.chamber_volume_ml} min={0} max={200} step={0.5} onChange={(v) => set('chamber_volume_ml', v)}
         secondaryValue={params.chamber_volume_ml === 0 ? 'no traces' : undefined}
         description="Chamber fed by tube A and vented by tube B, for the in / out traces." />
@@ -1832,6 +1847,8 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
           </LineChart>
           </FitChart>)}
         </ChartCard>
+        <TubeSectionCard tube={params} h={data && data.Y_positions.length > 0 ? interpAt(yPose, data.Y_positions, data.gap_loaded_a) : null}
+          where={`tube A at Y = ${yPose.toFixed(2)} mm`} {...cardProps('section')} />
         {forces && (
           <ChartCard title="Pin force and screw thrust vs carriage Y" {...cardProps('force')}>
             {({ settings: c }) => (<FitChart>
