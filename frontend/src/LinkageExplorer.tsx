@@ -447,15 +447,26 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   };
   // Tube B's linkage is tube A's turned half a turn about the carriage pivot at Y = 0: it sits at -Y.
   const flip = (pt: [number, number] | null): [number, number] | null => (pt ? [-pt[0], top - pt[1]] : null);
-  // tip_x is the pose of rigid bars; once the tube pushes the pin back, the gap is gap_loaded. The pin
-  // is drawn there, moved away from the wall by the difference (and drawn at its own radius, floor included).
-  const pushedBack = (yy: number) => {
-    const rigid = interpAt(yy, data.Y_positions, data.gap_a), loaded = interpAt(yy, data.Y_positions, data.gap_loaded_a);
-    return (rigid == null || loaded == null ? 0 : loaded - rigid) + rPin - params.pin_diameter / 2;
+  const gapA = interpAt(y, data.Y_positions, data.gap_loaded_a);
+  const gapB = interpAt(y, data.Y_positions, data.gap_loaded_b);
+  // The pin (or pad) is drawn at the gap the labels and the section card read. tip_x is the rigid-bar
+  // pose for the hinged linkages (the tube pushes the pin back from it) and already the loaded pose for
+  // the one-piece part, so the pin is moved square to the wall by whatever the drawn gap still lacks
+  // (a few passes: a pad turns with the pin), the drawn radius floor included.
+  const padLength = pendulum ? params.pad_length : 0;
+  const atGap = (pose: Pose, sign: 1 | -1, gap: number | null): Pose => {
+    let p = pose;
+    for (let k = 0; k < 4 && p.tip && gap != null; k++) {
+      const ends = padEnds(p, padLength);
+      if (!ends) break;
+      const d = gap - (Math.min(...ends.map(([px]) => wall - sign * px)) - rPin);
+      if (Math.abs(d) < 1e-6) break;
+      p = { ...p, tip: [p.tip[0] - sign * d, p.tip[1]] };
+    }
+    return p;
   };
-  const loadedTip = (pt: Pt | null, sign: 1 | -1, d: number): Pt | null => (pt ? [pt[0] - sign * d, pt[1]] : null);
-  const poseA: Pose = { anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: loadedTip(at(y, data.tip_x, data.tip_y), -1, pushedBack(y)) };
-  const poseB: Pose = { anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: loadedTip(flip(at(-y, data.tip_x, data.tip_y)), 1, pushedBack(-y)) };
+  const poseA = atGap({ anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) }, -1, gapA);
+  const poseB = atGap({ anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) }, 1, gapB);
 
   // One-piece part: its bent centre lines, from the rest shape and the two bending shapes.
   const flexLines = (yy: number, place: (pt: Pt) => Pt): Pt[][] | undefined => {
@@ -471,8 +482,6 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   poseA.lines = flexLines(y, upright);
   poseB.lines = flexLines(-y, (pt) => { const q = upright(pt); return [-q[0], top - q[1]]; });
 
-  const gapA = interpAt(y, data.Y_positions, data.gap_loaded_a);
-  const gapB = interpAt(y, data.Y_positions, data.gap_loaded_b);
   // Bars drawn at their real width, kept readable on very thin or very wide sections.
   const barW = Math.min(Math.max(params.member_width, 0.3), 3);
   // A top-anchored frame is drawn mirrored, which turns the arc's bulge to the other side.
