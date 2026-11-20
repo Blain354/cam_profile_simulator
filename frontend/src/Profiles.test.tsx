@@ -227,6 +227,8 @@ test('a linkage profile round-trips its params, ranges and chart settings, and i
   fireEvent.doubleClick(await first.findByText('custom-interessant'))
   await waitFor(() => expect(first.getByTestId('profile-name').textContent).toBe('custom-interessant'))
   await waitFor(() => expect(JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!).profile).toBe('custom-interessant'))
+  // Saved before the inverted pivot existed: it loads with the carriage pivot on the far side.
+  expect(first.getByRole('button', { name: 'Normal' }).getAttribute('aria-pressed')).toBe('true')
 
   // Save as new: the owner names it; the loaded note is offered.
   fireEvent.click(first.getByRole('button', { name: 'Save as new profile' }))
@@ -244,6 +246,10 @@ test('a linkage profile round-trips its params, ranges and chart settings, and i
   expect(payload.search.bar1_min).toBe(7)
   expect(payload.search.bar1_max).toBe(15)
   expect(payload.search.fixed).toEqual(['foot'])
+  expect(payload.params.pivot_inverted).toBe(false)
+  expect(payload.search.pivot_side).toBe('normal')
+  expect(payload.search.require_seal).toBe(true)
+  expect(payload.params.linkage_plane_spacing).toBe(10.75)
   expect(payload.chart_settings.flow).toEqual(saved.chart_settings.flow)
 
   // Update keeps the note stored with the profile, since the linkage tabs have no note field.

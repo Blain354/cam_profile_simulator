@@ -65,6 +65,16 @@ export interface LinkageParams {
   carriage_pin_length: number;
   member_strength_mpa: number;
   carriage_pin_strength_mpa: number;
+  /** Carriage pivot on its own tube's side of the screw axis (at -pivot_offset). */
+  pivot_inverted: boolean;
+  /** Least gap the two linkages must keep over the stroke (mm). */
+  assembly_clearance: number;
+  /** The two linkages' planes and the carriage block between them (mm), from the pendulum's CAD. */
+  linkage_plane_spacing: number;
+  carriage_block_width: number;
+  carriage_block_length: number;
+  carriage_block_height: number;
+  carriage_block_offset: number;
 }
 
 /** A dimension the optimizer searches; its range is `${key}_min` to `${key}_max` in the search. */
@@ -98,16 +108,28 @@ interface LinkageSearch {
   max_oversqueeze: number;
   objective: 'response' | 'target';
   max_stroke: number;
+  /** Carriage pivot side the Finder searches: far side, tube side, or each and keep the better. */
+  pivot_side: PivotSide;
+  /** Refuse designs whose closed tube leaks at Y = 0 once the parts flex. */
+  require_seal: boolean;
   /** Dimensions kept at their current value: sent as min = max, their stored range left untouched. */
   fixed: SearchVar[];
 }
+
+type PivotSide = 'normal' | 'inverted' | 'both';
+const PIVOT_SIDES: PivotSide[] = ['normal', 'inverted', 'both'];
+
+/** What one carriage pivot side gave the search: first-draw counts of the rigid model, then the beam model's. */
+interface SideReport { feasible: number; collision: number; solved: number; passed: number; seal?: number; found: boolean; score: number | null }
 
 /** Why the one-piece search turned candidates down; absent from older backends. */
 interface SearchReport {
   model?: 'one-piece' | 'rigid';
   shortlist?: number;
   passed?: number;
-  rejected?: Partial<Record<'stress' | 'thrust' | 'eye' | 'rod' | 'no_flow', number>>;
+  rejected?: Partial<Record<'stress' | 'thrust' | 'eye' | 'rod' | 'no_flow' | 'collision' | 'seal', number>>;
+  sides?: Partial<Record<'normal' | 'inverted', SideReport>>;
+  pivot_side?: 'normal' | 'inverted' | null;
 }
 
 type Series = (number | null)[];
@@ -147,6 +169,9 @@ interface LinkageResult {
   flow_target: Series;
   anchor_x: number;
   anchor_on_top: boolean;
+  /** Carriage pivot x in the backend frame and the sign of its travel there; absent from older backends. */
+  pivot_x?: number;
+  travel_sign?: number;
   link_length: number;
   pivot_height_y0: number;
   wall_x: number;
@@ -160,6 +185,14 @@ interface LinkageResult {
   sensitivity_y0: number;
   pinch_slide: number;
   max_oversqueeze: number;
+  /** Least gap between the two linkages' members over the stroke, where, and the first |Y| below the clearance. */
+  min_clearance?: number | null;
+  min_clearance_y?: number | null;
+  min_clearance_where?: string | null;
+  collision_y?: number | null;
+  /** Gap across the planes from the nearest item that reaches toward the other linkage to the slab it could hit. */
+  plane_gap?: number | null;
+  plane_gap_where?: string | null;
   max_flow_l_min: number;
   rms_error: number | null;
   time_ms: number[];
@@ -246,6 +279,16 @@ const COMMON = {
   // Assumed: about printed PETG at yield.
   member_strength_mpa: 40,
   carriage_pin_strength_mpa: 300,
+  pivot_inverted: false,
+  // Assumed: room enough to assemble printed parts side by side.
+  assembly_clearance: 0.3,
+  // Read from the pendulum's CAD (MINIVALVE, "SMART_VALVE_MOTOR_V3_compliant links"): tube holes at
+  // X = ±5.375 mm, carriage block X ±2.75 x 17.5 x 5 mm, its centre 0.95 mm past the pivot rods.
+  linkage_plane_spacing: 10.75,
+  carriage_block_width: 5.5,
+  carriage_block_length: 17.5,
+  carriage_block_height: 5.0,
+  carriage_block_offset: 0.95,
 };
 
 // All sets were measured on the concept sketches (about 30 px/mm).
@@ -255,7 +298,7 @@ const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, compliant: true },
 };
 
-const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, anchor_avoid_min: 0, anchor_avoid_max: 0, pinch_height_min: 0, pinch_height_max: 0, fixed: [] as SearchVar[] };
+const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, anchor_avoid_min: 0, anchor_avoid_max: 0, pinch_height_min: 0, pinch_height_max: 0, pivot_side: 'normal' as PivotSide, require_seal: true, fixed: [] as SearchVar[] };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6, max_stroke: 5 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
@@ -283,6 +326,9 @@ const VAR_LABEL: Record<LinkageKind, Record<SearchVar, string>> = {
   elbow: { bar1: 'Bar 1, L1', bar2: 'Bar 2, L2', anchor: 'Anchor, a', lever: 'Lever, L', foot: 'Foot, f', foot_angle: 'Foot angle' },
 };
 const varUnit = (v: SearchVar) => (v === 'foot_angle' ? '°' : 'mm');
+
+/** A stored pivot side, or the normal one when it is missing (saved before the inverted pivot existed) or odd. */
+const cleanPivotSide = (raw: unknown): PivotSide => (PIVOT_SIDES.includes(raw as PivotSide) ? raw as PivotSide : 'normal');
 
 /** The stored list of fixed dimensions, or none when it is missing or not a list. */
 const cleanFixed = (raw: unknown): SearchVar[] => (Array.isArray(raw) ? SEARCH_VARS.filter((v) => raw.includes(v)) : []);
@@ -316,9 +362,9 @@ function loadStored(kind: LinkageKind, shared: LinkageShared): { params: Linkage
     if (raw && typeof raw === 'object') {
       return {
         // A state stored before the pivot rod existed had the carriage end clamped by default: the real part pivots there.
-        params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(raw.params?.tube_model), linkage_type: kind },
+        params: { ...DEFAULT_PARAMS[kind], ...raw.params, ...(raw.params && raw.params.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(raw.params?.tube_model), pivot_inverted: raw.params?.pivot_inverted === true, linkage_type: kind },
         // Ranges stored before the foot was searched kept the anchor on the tube side only: open them up once.
-        search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}), fixed: cleanFixed(raw.search?.fixed) },
+        search: { ...DEFAULT_SEARCH[kind], ...raw.search, ...(raw.search && raw.search.foot_min === undefined ? { anchor_min: Math.min(raw.search.anchor_min ?? 0, DEFAULT_SEARCH[kind].anchor_min) } : {}), pivot_side: cleanPivotSide(raw.search?.pivot_side), require_seal: raw.search?.require_seal !== false, fixed: cleanFixed(raw.search?.fixed) },
         profile: typeof raw.profile === 'string' ? raw.profile : null,
         chart_settings: resolveChartSettings(raw.chart_settings),
       };
@@ -333,8 +379,8 @@ function fromProfilePayload(kind: LinkageKind, raw: Record<string, unknown>): { 
   const rs = (raw.search && typeof raw.search === 'object' ? raw.search : undefined) as (Partial<LinkageSearch> & { fixed?: unknown }) | undefined;
   return {
     // A profile saved before the curved link and the one-piece part existed was straight and pivoted: keep its figures as they were.
-    params: { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...rp, ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(rp?.tube_model), linkage_type: kind },
-    search: { ...DEFAULT_SEARCH[kind], ...rs, fixed: cleanFixed(rs?.fixed) },
+    params: { ...DEFAULT_PARAMS[kind], link_curved: false, compliant: false, ...rp, ...(rp && rp.carriage_pin_diameter === undefined ? { carriage_clamped: false } : {}), tube_model: cleanTubeModel(rp?.tube_model), pivot_inverted: rp?.pivot_inverted === true, linkage_type: kind },
+    search: { ...DEFAULT_SEARCH[kind], ...rs, pivot_side: cleanPivotSide(rs?.pivot_side), require_seal: rs?.require_seal !== false, fixed: cleanFixed(rs?.fixed) },
     chart_settings: resolveChartSettings(raw.chart_settings),
   };
 }
@@ -355,6 +401,7 @@ export function LinkageProfilePreview({ kind, payload }: { kind: LinkageKind; pa
     ['Pressure', `${formatKpa(p.input_pressure_kpa)} kPa`],
   ];
   if (kind === 'pendulum') rows.push(['Build', p.compliant ? 'One piece' : p.link_curved ? 'Curved link' : 'Pivoted bars']);
+  rows.push(['Pivot side', p.pivot_inverted ? 'Inverted (tube side)' : 'Normal (far side)']);
   const row = (label: string, value: string, tone = 'text-neutral-200') => (
     <div key={label} className="flex justify-between gap-4"><span className="text-[11px] text-neutral-400">{label}</span><span className={`text-[11px] font-mono ${tone}`}>{value}</span></div>
   );
@@ -444,7 +491,11 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   const rPin = Math.max(params.pin_diameter / 2, 0.18);
   const top = 2 * h0;
   const margin = 1.7;
-  const hB = h0 + y;
+  // A link that pulls opens its tube with the carriage running the other way (backend travel_sign).
+  const carriageDir = data.travel_sign == null ? 1 : data.travel_sign * (onTop ? -1 : 1);
+  const hB = h0 + carriageDir * y;
+  // Tube A's carriage pivot: far side of the screw, or its own tube's side when inverted.
+  const pivotA = data.pivot_x ?? (params.pivot_inverted ? -params.pivot_offset : params.pivot_offset);
 
   // The backend frame has the anchor at y = 0; a top-anchored linkage is that frame upside down.
   const at = (yy: number, xs: Series, ys: Series): [number, number] | null => {
@@ -471,8 +522,8 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
     }
     return p;
   };
-  const poseA = atGap({ anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) }, -1, gapA);
-  const poseB = atGap({ anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) }, 1, gapB);
+  const poseA = atGap({ anchor: [data.anchor_x, onTop ? top : 0], pivotX: pivotA, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) }, -1, gapA);
+  const poseB = atGap({ anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -pivotA, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) }, 1, gapB);
 
   // One-piece part: its bent centre lines, from the rest shape and the two bending shapes.
   const flexLines = (yy: number, place: (pt: Pt) => Pt): Pt[][] | undefined => {
@@ -1211,8 +1262,10 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       if (!out.found) {
         setOptOut({ found: false, report, vars: sentVars, fixed: sentFixed });
         const widen = `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze (it must be above the preload).`;
+        const leaked = Object.values(report?.sides ?? {}).reduce((n, side) => n + (side?.seal ?? 0), 0);
         setOptMessage({ ok: false, text: !report ? widen
           : (report.shortlist ?? 0) > 0 ? 'No design passed the limits. The design on screen was kept.'
+          : out.feasible > 0 && leaked > 0 ? `${out.feasible} of ${out.tested} first draws were feasible, but the ${leaked} best tried all leak at rest. Turn off Seal at rest under Limits to see them. The design on screen was kept.`
           : `${widen} The design on screen was kept.` });
         return;
       }
@@ -1301,7 +1354,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       <ParameterSlider label="Stroke (mm)" value={params.stroke} min={0.5} max={10} step={0.1} onChange={(v) => set('stroke', v)}
         description="Carriage travel each way from closed (Y = 0) to the target full opening." />
       <ParameterSlider label="Pivot offset (mm)" value={params.pivot_offset} min={0} max={10} step={0.05} onChange={(v) => set('pivot_offset', v)}
-        description="Carriage pivot distance from the screw axis, on the side opposite its tube." />
+        description="Carriage pivot distance from the screw axis: on the side opposite its tube, or on its tube's side when the pivot is inverted (Geometry)." />
       <ParameterSlider label="Tube centre (mm)" value={params.tube_center_x} min={3} max={20} step={0.05} onChange={(v) => set('tube_center_x', v)}
         secondaryValue={data ? `wall ${data.wall_x.toFixed(2)}` : undefined}
         description="Tube axis distance from the screw axis. The tube rests on a wall half an OD further out." />
@@ -1320,6 +1373,61 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       <ParameterSlider label="Preload (mm)" value={params.preload} min={0} max={0.5} step={0.01} onChange={(v) => set('preload', v)}
         description="Extra squeeze past the just-closed gap at Y = 0, as a sealing margin. It is also the dead band around Y = 0." />
     </>
+  );
+
+  // ─── Carriage pivot side and assembly clearance ───
+
+  const clear = data?.min_clearance ?? null;
+  const clearTooSmall = clear != null && clear < params.assembly_clearance - 1e-9;
+  const GAP_ITEM: Record<string, string> = { slabs: 'the two linkages', 'pivot rod': 'pivot rod to the other linkage', carriage: 'carriage block to a linkage' };
+  const clearanceStat = data && (clear != null ? (
+    <StatRow label="Least clearance between the linkages" value={
+      <span className={clearTooSmall ? 'text-red-400' : undefined}>
+        {`${clear.toFixed(2)} mm at Y = ±${(data.min_clearance_y ?? 0).toFixed(2)} mm${data.min_clearance_where ? ` (${data.min_clearance_where})` : ''}`}
+      </span>} />
+  ) : data.plane_gap != null && (
+    <StatRow label="Gap across the planes" value={`${data.plane_gap.toFixed(2)} mm, ${GAP_ITEM[data.plane_gap_where ?? ''] ?? data.plane_gap_where}${data.plane_gap < params.assembly_clearance ? ', nothing near it in plane' : ''}`} />
+  ));
+  const pivotControls = (
+    <div className="space-y-2">
+      <span className="text-sm text-neutral-300">Pivot side</span>
+      {/* Plain buttons with the kit's tab classes: a kit ghost Button paints over the selected state. */}
+      <div className="bui-tablist flex w-full">
+        {([false, true] as const).map((inv) => (
+          <button key={String(inv)} type="button" aria-pressed={params.pivot_inverted === inv} onClick={() => set('pivot_inverted', inv)}
+            className={`bui-tab flex-1 px-2 py-1 text-xs${params.pivot_inverted === inv ? ' bui-tab--active' : ''}`}>
+            {inv ? 'Inverted' : 'Normal'}
+          </button>
+        ))}
+      </div>
+      <p className="text-[10px] leading-snug text-neutral-400">
+        {params.pivot_inverted
+          ? "The carriage pivot sits on its own tube's side of the screw. When the link reaches the joint from the tube side of the arm, it pulls the arm onto the tube instead of pushing it, and the carriage runs the other way to open."
+          : 'The carriage pivot sits on the far side of the screw from its tube; the link pushes the arm onto the tube.'}
+      </p>
+      <ParameterSlider label="Assembly clearance (mm)" value={params.assembly_clearance} min={0} max={3} step={0.05} onChange={(v) => set('assembly_clearance', v)}
+        description="Least gap kept between the two linkages over the whole stroke. Each linkage works in its own plane, a slab as thick as its bars; only what reaches toward the other plane can hit it: the carriage pivot rod and the carriage block, checked in plane where they come this close to a slab across the planes. The Finder refuses designs that come closer. 0.3 mm is assumed." />
+      <ParameterSlider label="Plane spacing (mm)" value={params.linkage_plane_spacing} min={0} max={30} step={0.05} onChange={(v) => set('linkage_plane_spacing', v)}
+        description="Distance between the two linkages' mid-planes (the CAD's tube holes sit at ±5.375 mm). The bar thickness under Material and section sets each slab." />
+      <ParameterSlider label="Carriage block width (mm)" value={params.carriage_block_width} min={0} max={20} step={0.05} onChange={(v) => set('carriage_block_width', v)}
+        description="Carriage block size across the planes, between the two linkages (5.5 mm in the CAD). Half the pivot rod sits in it from its face." />
+      <ParameterSlider label="Carriage block length (mm)" value={params.carriage_block_length} min={0} max={40} step={0.05} onChange={(v) => set('carriage_block_length', v)}
+        description="Carriage block size in the plane, square to the travel (17.5 mm in the CAD)." />
+      <ParameterSlider label="Carriage block height (mm)" value={params.carriage_block_height} min={0} max={20} step={0.05} onChange={(v) => set('carriage_block_height', v)}
+        description="Carriage block size in the plane, along the travel (5 mm in the CAD)." />
+      <ParameterSlider label="Carriage block offset (mm)" value={params.carriage_block_offset} min={-10} max={10} step={0.05} onChange={(v) => set('carriage_block_offset', v)}
+        description="How far the block's centre sits past the pivot rods, away from tube A's anchor wall (0.95 mm in the CAD)." />
+      {!onePiece && (
+        <ParameterSlider label="Pivot rod length (mm)" value={params.carriage_pin_length} min={2} max={20} step={0.5} onChange={(v) => set('carriage_pin_length', v)}
+          description="Carriage pivot rod (8 mm in the CAD): half sits in the carriage, half in the link's eye. Only its reach toward the other linkage counts here." />
+      )}
+      {clearanceStat}
+      {clearTooSmall && data && (
+        <p className="text-[10px] leading-snug text-red-400" role="alert">
+          {`${clear! < 0 ? `Overlap of ${(-clear!).toFixed(2)} mm` : `Only ${clear!.toFixed(2)} mm left`} (${data.min_clearance_where})${data.collision_y != null ? `, closer than the ${params.assembly_clearance.toFixed(2)} mm asked from Y = ±${data.collision_y.toFixed(2)} mm` : ''}: this does not assemble.`}
+        </p>
+      )}
+    </div>
   );
 
   // ─── Explorer menu ───
@@ -1364,6 +1472,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       <Accordion title="Geometry">
         <div className="space-y-5 pt-2">
           {searchVars.map((v) => geometrySliders[v])}
+          {pivotControls}
           {padSlider}
           {pendulum && (
             <>
@@ -1563,7 +1672,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               <StatRow label="Motor thrust available" value={n2(data.thrust_available, 'N', 1)} />
               <StatRow label="Pin pushed back at Y=0" value={n2(data.flex_y0, 'mm', 4)} />
               <StatRow label="Bar stiffness at the pin" value={n2(data.pin_stiffness, 'N/mm', 0)} />
-              {!data.flexure && <StatRow label="Worst link force" value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />}
+              <StatRow label={data.flexure ? 'Worst link force, at the carriage' : 'Worst link force'} value={data.max_link_force == null ? 'N/A' : `${Math.abs(data.max_link_force).toFixed(1)} N ${data.max_link_force < 0 ? 'push' : 'pull'}`} />
               <StatRow label="Worst side load on carriage" value={n2(data.max_side_load, 'N', 1)} />
               {data.link_bending_stress_mpa != null && (
                 <StatRow label="Curved link bending" value={`${data.link_bending_stress_mpa.toFixed(1)} MPa, ${data.link_arc_sag.toFixed(2)} mm off line`} />
@@ -1589,6 +1698,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               <StatRow label="Closed-tube over-squeeze" value={`${data.max_oversqueeze.toFixed(3)} mm`} />
               <StatRow label="Deviation from target" value={data.rms_error != null ? `${(data.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />
               <StatRow label="Pivot height at Y=0" value={`${data.pivot_height_y0.toFixed(3)} mm`} highlight />
+              {clearanceStat}
               {pinchHeight != null && <StatRow label="Pinch point from top plane" value={`${pinchHeight.toFixed(3)} mm`} />}
               <StatRow label="Anchor to anchor height" value={`${(2 * data.pivot_height_y0).toFixed(2)} mm`} />
               <StatRow label="Gain at Y=0" value={`${data.sensitivity_y0.toFixed(3)} mm/mm`} />
@@ -1610,7 +1720,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
   const report = optOut?.report;
   const rejected = report?.rejected;
   const rejectedText = rejected
-    ? ([['stress', 'part stress'], ['thrust', 'screw thrust'], ['eye', 'eye pressure'], ['rod', 'rod bending'], ['no_flow', 'no flow']] as const)
+    ? ([['stress', 'part stress'], ['thrust', 'screw thrust'], ['eye', 'eye pressure'], ['rod', 'rod bending'], ['no_flow', 'no flow'], ['collision', 'linkages too close'], ['seal', 'leaks at rest']] as const)
       .filter(([k]) => typeof rejected[k] === 'number' && rejected[k]! > 0)
       .map(([k, name]) => `${name} ${rejected[k]}`).join(', ')
     : '';
@@ -1680,6 +1790,22 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             );
           })}
           <p className="text-[10px] leading-snug text-neutral-400">A fixed dimension keeps its value on screen; the others are searched between their two ends.</p>
+          <div className="space-y-1">
+            <span className="text-sm text-neutral-300">Pivot side</span>
+            <div className="bui-tablist flex w-full">
+              {PIVOT_SIDES.map((side) => (
+                <button key={side} type="button" aria-pressed={search.pivot_side === side} onClick={() => setSearch((s) => ({ ...s, pivot_side: side }))}
+                  className={`bui-tab flex-1 px-2 py-1 text-xs${search.pivot_side === side ? ' bui-tab--active' : ''}`}>
+                  {side === 'normal' ? 'Normal' : side === 'inverted' ? 'Inverted' : 'Search both'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] leading-snug text-neutral-400">
+              {search.pivot_side === 'both'
+                ? 'Searches each side on its own and keeps the better design: it takes as long as two searches.'
+                : `Carriage pivot on ${search.pivot_side === 'inverted' ? "its tube's side" : 'the far side'} of the screw. Designs closer than the assembly clearance (${params.assembly_clearance.toFixed(2)} mm, Explorer > Geometry) are refused on either side.`}
+            </p>
+          </div>
           <div className="space-y-1 rounded-lg border border-neutral-700 p-2">
             <RangeRow label="Anchor no-go zone" min={search.anchor_avoid_min} max={search.anchor_avoid_max}
               onMin={(x) => setS('anchor_avoid_min', x)} onMax={(x) => setS('anchor_avoid_max', x)} />
@@ -1693,6 +1819,8 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
 
       <Accordion title="Limits">
         <div className="space-y-3 pt-2">
+          <Switch label="Seal at rest" on={search.require_seal} onChange={(v) => setSearch((s) => ({ ...s, require_seal: v }))}
+            title="Refuse designs whose closed tube leaks at Y = 0 once the bars (or the one-piece part) flex under the tube: the seal must still hold the inlet pressure there." />
           <ParameterSlider label="Max over-squeeze" value={search.max_oversqueeze} min={0.05} max={2} step={0.05} onChange={(v) => setS('max_oversqueeze', v)}
             description="How far past closure the closed tube may be crushed while the other one opens over the stroke." />
           {!heightFixed && <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />}
@@ -1728,7 +1856,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         </Button>
         {optimizing && (
           <p className="text-xs text-neutral-400" role="status">
-            {onePiece ? 'Checking the one-piece part can take about ten seconds.' : 'Searching…'}
+            {onePiece
+              ? `Checking the one-piece part can take about half a minute${search.pivot_side === 'both' ? ', twice that for both pivot sides' : ''}.`
+              : 'Searching…'}
           </p>
         )}
         {optMessage && (
@@ -1741,6 +1871,17 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
           <p className="text-[10px] leading-snug text-amber-400">
             This search worked on the pivoted version of this linkage. Check what it found against the one-piece figures.
           </p>
+        )}
+        {report?.sides && Object.keys(report.sides).length > 0 && (
+          <div className="space-y-0.5 text-[11px] text-neutral-400">
+            {(['normal', 'inverted'] as const).filter((side) => report.sides![side]).map((side) => {
+              const r = report.sides![side]!;
+              const beam = report.model === 'one-piece' ? `, ${r.passed} of ${r.solved} held in one piece` : '';
+              return (
+                <p key={side}>{`${side === 'normal' ? 'Normal' : 'Inverted'}: ${r.feasible} feasible, ${r.collision} refused for the clearance${beam}${r.seal ? `, ${r.seal} leaking at rest` : ''}${r.found ? '' : ', nothing found'}${report.pivot_side === side ? ' (kept)' : ''}.`}</p>
+              );
+            })}
+          </div>
         )}
         {optOut && !optOut.found && rejectedText && (
           <p className="text-xs text-neutral-400">{`Rejected for: ${rejectedText}.`}</p>
@@ -1758,6 +1899,10 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               : res.max_flow_l_min > 0 ? `${(100 * Math.max(0, ...res.flow_a.map((f) => f ?? 0)) / res.max_flow_l_min).toFixed(0)} % of full` : 'N/A'} />
             <StatRow label="Dead band (both ways)" value={res.y_open != null ? `${(2 * res.y_open).toFixed(2)} mm` : 'N/A'} />
             <StatRow label="Travel used" value={`${optOut.params.stroke.toFixed(2)} mm`} />
+            <StatRow label="Pivot side" value={optOut.params.pivot_inverted ? 'Inverted (tube side)' : 'Normal (far side)'} />
+            <StatRow label="Link" value={res.max_link_force == null ? 'N/A' : `${res.max_link_force > 0 ? 'pulls' : 'pushes'}, worst ${Math.abs(res.max_link_force).toFixed(1)} N`} />
+            {res.min_clearance != null && <StatRow label="Least clearance" value={`${res.min_clearance.toFixed(2)} mm`} />}
+            <StatRow label="Seal at rest" value={res.seal_pressure_y0_kpa == null ? 'N/A' : `${res.sealed_after_flex ? 'holds' : 'leaks'}, ${res.seal_pressure_y0_kpa.toFixed(0)} kPa`} />
             {!fast && <StatRow label="Deviation from target" value={res.rms_error != null ? `${(res.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />}
             <StatRow label="Over-squeeze" value={`${res.max_oversqueeze.toFixed(2)} mm`} />
             {res.flexure && (
@@ -1819,6 +1964,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         <div className="order-1 shrink-0 mb-3 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2 text-sm">
             <label htmlFor={`linkage-y-${kind}`} className="font-medium text-neutral-300">Carriage Y</label>
+            {data?.travel_sign != null && data.travel_sign * (data.anchor_on_top ? -1 : 1) < 0 && (
+              <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the charts. This link pulls, so its carriage moves the other way from a link that pushes for the same Y: the motor turns the other way.">
+                link pulls: carriage runs the other way
+              </span>
+            )}
             <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
           </div>
           <div className="order-last flex items-center justify-between gap-2 pt-1">

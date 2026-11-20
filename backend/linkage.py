@@ -28,6 +28,32 @@ The second tube has the same linkage mirrored twice, left/right and top/bottom
 (a half turn about the carriage pivot at Y = 0, its anchor on the top wall at
 y = 2 * h0). It therefore sees the first tube's law at -Y: the carriage opens one
 tube while it squeezes the other. Tube A feeds the chamber, tube B vents it.
+
+Inverted pivot (pivot_inverted): B = (-pivot_offset, h0 + Y), on its own tube's side of the
+screw axis instead of the far side, for all three types (the other linkage's pivot moves to the
+far side with it, so the two pivots swap). The joint C stays on the side of the line A->B that
+the closed pose at Y = 0 puts it on (_branch). Which side that is decides the link's load:
+  C on the left of A->B (B outside the arm's line A-C, as always with the normal pivot): the
+    link holds the pin back from the tube in compression, it pushes.
+  C on the right (B on the tube side of the arm's line): the link holds it in tension, it
+    pulls. The same carriage travel then moves the joint the other way, so the carriage runs
+    the other way to open tube A: B = (x_B, h0 + travel_sign * Y) with travel_sign = -1 for a
+    normal-frame type (elbow, lever) and +1 for the pendulum's upside-down frame.
+  elbow: B stays above C and the arm rises from A to C, so B is always above the arm's line:
+    the link pushes, from another angle.
+  lever: B stays above C; it pulls only when B is further out than C and under the lever's line,
+    which takes a short link and is rare.
+  pendulum: B is between the anchor wall and C; when B is further out than the hanging arm at
+    its height (the anchor nearer the screw than B), the link pulls.
+
+Assembly (assembly_clearance): the two linkages sit in parallel planes linkage_plane_spacing
+apart, so their members only meet if the slabs overlap; what does cross toward the other plane is
+the carriage pivot rod and the carriage block. Each is checked in plane, against the members it
+could hit, only when it comes within assembly_clearance of their slab across the planes (see the
+section above _plane_gaps). compute_linkage reports the gap across the planes and, when something
+is checked, the least clearance and where (_clearance_exact); the search ends a design's
+travel where it is not met (_clearance_search). A member's clash with its own linkage, the tubes,
+the walls or the screw is not checked.
 """
 
 from dataclasses import dataclass, field, replace
@@ -49,6 +75,8 @@ TYPE_PENDULUM = "pendulum"
 OBJECTIVE_RESPONSE = "response"
 OBJECTIVE_TARGET = "target"
 
+PIVOT_SIDES = {"normal": (False,), "inverted": (True,), "both": (False, True)}
+
 N_SAMPLES = 241
 N_SCORE = 60
 N_RESPONSE = 121
@@ -67,7 +95,7 @@ class LinkageParams:
     pad_length: float = 0.0          # mm, flat contact segment centred on P, square to the foot (pendulum only)
     fixed_height: float = 0.0        # mm, imposed anchor-to-anchor height 2 * h0; bar 1 is then solved (0 = free)
     anchor_distance: float = 2.33    # mm from the base centre (elbow: tube side, lever: far side)
-    pivot_offset: float = 3.9        # mm, carriage pivot offset from the screw axis (far side)
+    pivot_offset: float = 3.9        # mm, carriage pivot offset from the screw axis (far side; tube side when inverted)
     tube_center_x: float = 8.0       # mm, tube axis distance from the screw axis
     pin_diameter: float = 1.0        # mm, pinch pin
     preload: float = 0.1             # mm, extra squeeze past closure at Y = 0
@@ -100,6 +128,20 @@ class LinkageParams:
     carriage_pin_length: float = 8.0    # mm, that rod's length: half sits in the carriage, half in the link's eye
     member_strength_mpa: float = 40.0   # MPa, stress the material may see (assumed: about printed PETG at yield)
     carriage_pin_strength_mpa: float = 300.0  # MPa, bending the carriage rod may see (assumed: stainless steel)
+    # Inverted pivot: the carriage pivot sits at x = -pivot_offset, on its own tube's side of the screw
+    # axis, and the link reaches the joint from there. See _pivot_x and _branch.
+    pivot_inverted: bool = False
+    # Assembly: least gap kept between the two linkages over the stroke (assumed, not measured).
+    assembly_clearance: float = 0.3
+    # Where the two linkages sit across their planes, and the carriage block between them. Defaults
+    # read from the pendulum's CAD (MINIVALVE, Part Studio "SMART_VALVE_MOTOR_V3_compliant links"):
+    # tube holes at X = +-5.375 mm; carriage block X +-2.75, 17.5 mm long, 5 mm tall along the travel,
+    # its centre 0.95 mm further from the anchor wall than the pivot rods. See _plane_gaps.
+    linkage_plane_spacing: float = 10.75     # mm between the two linkages' mid-planes
+    carriage_block_width: float = 5.5        # mm across the planes
+    carriage_block_length: float = 17.5      # mm in the plane, square to the travel
+    carriage_block_height: float = 5.0       # mm in the plane, along the travel
+    carriage_block_offset: float = 0.95      # mm, block centre past the pivot rods, away from linkage A's anchor
 
 
 @dataclass
@@ -144,6 +186,8 @@ class LinkageResult:
     flow_target: List[Optional[float]] = field(default_factory=list)
     anchor_x: float = 0.0
     anchor_on_top: bool = False      # the frame is the real mechanism upside down
+    pivot_x: float = 0.0             # carriage pivot x in this frame: + far side of the screw axis, - tube side (inverted)
+    travel_sign: float = 0.0         # the carriage pivot sits at h0 + travel_sign * Y in this frame
     link_length: float = 0.0         # bar 1 actually used (solved when the height is fixed)
     pivot_height_y0: float = 0.0     # h0; the mirrored anchor sits at 2 * h0
     wall_x: float = 0.0
@@ -157,6 +201,14 @@ class LinkageResult:
     sensitivity_y0: float = 0.0      # d(gap)/dY at Y = 0
     pinch_slide: float = 0.0         # pinch point travel along the tube over the stroke
     max_oversqueeze: float = 0.0     # worst squeeze past closure of the closed tube
+    # Assembly (_clearance_exact): clearance of what reaches the other linkage (in plane, and across the
+    # planes when a gap is left there; see _with_across), None when nothing does.
+    min_clearance: Optional[float] = None
+    min_clearance_y: Optional[float] = None    # |Y| where it occurs
+    min_clearance_where: Optional[str] = None  # "<member> A / <member> B": arm, foot or link
+    collision_y: Optional[float] = None        # first |Y| where it is below assembly_clearance
+    plane_gap: Optional[float] = None          # mm across the planes from the nearest crossing item to the slab it could hit
+    plane_gap_where: Optional[str] = None      # "slabs" | "pivot rod" | "carriage"
     max_flow_l_min: float = 0.0
     rms_error: Optional[float] = None
     # Chamber cycle 0 -> +stroke -> 0 -> -stroke -> 0 at the motor's loaded linear speed.
@@ -203,15 +255,36 @@ class LinkageResult:
     sealed_after_flex: Optional[bool] = None
 
 
-def _joint(l1, l2, xa, xb, h):
-    """Joint C for carriage pivot height h; NaN where the bars cannot reach."""
+def _joint(l1, l2, xa, xb, h, branch=1.0):
+    """Joint C for carriage pivot height h; NaN where the bars cannot reach.
+
+    branch +1 puts C on the left of the line A->B (the tube side when the pivot is on the far
+    side), -1 on its right. The assembly keeps the branch it is built in at Y = 0 (_branch).
+    """
     dx = xb - xa
     d = np.sqrt(dx * dx + h * h)
     along = (l2 * l2 - l1 * l1 + d * d) / (2.0 * d)
     perp_sq = l2 * l2 - along * along
-    perp = np.sqrt(np.where(perp_sq >= 0.0, perp_sq, np.nan))
-    # C on the tube side of the A->B line.
+    perp = branch * np.sqrt(np.where(perp_sq >= 0.0, perp_sq, np.nan))
     return xa + (along * dx - perp * h) / d, (along * h + perp * dx) / d
+
+
+def _pivot_x(p: LinkageParams, inverted=None):
+    """Carriage pivot x: +pivot_offset on the far side of the screw axis, -pivot_offset when inverted."""
+    inverted = p.pivot_inverted if inverted is None else inverted
+    return np.where(inverted, -p.pivot_offset, p.pivot_offset) if isinstance(inverted, np.ndarray) else (-p.pivot_offset if inverted else p.pivot_offset)
+
+
+def _branch(inverted, xa, xb, h0, cx0, cy0):
+    """Side of the line A->B the joint is built on at Y = 0 (+1 left, -1 right), kept over the stroke.
+
+    With the pivot on the far side the closed joint is always on the left (+1, as before the
+    inverted pivot existed). With the pivot on the tube's side it can be on either side: the
+    closed pose decides. The side also decides the link's load: on the left a link that holds
+    the pin is in compression (it pushes), on the right in tension (it pulls); see _forces.
+    """
+    cross = (xb - xa) * cy0 - h0 * (cx0 - xa)
+    return np.where(inverted, np.where(cross < 0.0, -1.0, 1.0), 1.0)
 
 
 def _closure(p: LinkageParams) -> Tuple[float, float, float]:
@@ -337,6 +410,207 @@ def _chamber_cycle(p: LinkageParams, y: np.ndarray, area_a: np.ndarray, area_b: 
 
 
 N_FOOT = 161
+
+# ─── Assembly clearance between the two linkages ─────────────────
+# The two linkages work in parallel planes linkage_plane_spacing apart (CAD X). Each is a slab
+# member_thickness thick centred on its plane; in its plane each member is a capsule member_width
+# wide around its centre line. Three things can still meet the other linkage (_plane_gaps):
+#   "slabs"      the two slabs themselves, when they overlap across the planes: every member of
+#                one against every member of the other, in plane;
+#   "pivot rod"  the carriage pivot rod, half in the carriage, half in its link's eye: its carriage
+#                end points at the other slab; in plane a disc carriage_pin_diameter across;
+#   "carriage"   the carriage block, between the planes: in plane a rectangle that moves with the
+#                carriage, against both linkages' members.
+# Each is checked in plane only when its extent across the planes comes within assembly_clearance
+# of the slab it could hit. Its clearance then counts both ways: with a gap g across the planes and
+# d in plane (negative where the outlines overlap), the faces are hypot(g, max(d, 0)) apart, or d
+# when nothing is left across the planes (g <= 0); see _with_across. The second linkage is the
+# first turned half a turn about (0, h0) at -Y.
+N_ARC_EXACT = 24    # chords of a curved link in the Explorer's check
+N_ARC_SEARCH = 4    # and in the search; both subtract the chords' sag, so they never overstate the clearance
+BOX_POSES = 16       # travel steps per box when skipping the pairs of items that stay apart
+
+
+def _seg_dist(ax, ay, bx, by, cx, cy, dx, dy):
+    """Distance between segments A-B and C-D (broadcast arrays); 0 where they cross."""
+    ux, uy, vx, vy = bx - ax, by - ay, dx - cx, dy - cy
+    lu, lv = ux * ux + uy * uy, vx * vx + vy * vy
+    lu, lv = np.where(lu > 0.0, lu, 1.0), np.where(lv > 0.0, lv, 1.0)
+
+    def to_seg_sq(px, py, x1, y1, wx, wy, lw):
+        rx, ry = px - x1, py - y1
+        t = np.clip((rx * wx + ry * wy) / lw, 0.0, 1.0)
+        rx, ry = rx - t * wx, ry - t * wy
+        return rx * rx + ry * ry
+
+    d2 = np.minimum(np.minimum(to_seg_sq(ax, ay, cx, cy, vx, vy, lv), to_seg_sq(bx, by, cx, cy, vx, vy, lv)),
+                    np.minimum(to_seg_sq(cx, cy, ax, ay, ux, uy, lu), to_seg_sq(dx, dy, ax, ay, ux, uy, lu)))
+    o1 = ux * (cy - ay) - uy * (cx - ax)
+    o2 = ux * (dy - ay) - uy * (dx - ax)
+    o3 = vx * (ay - cy) - vy * (ax - cx)
+    o4 = vx * (by - cy) - vy * (bx - cx)
+    return np.where((o1 * o2 < 0.0) & (o3 * o4 < 0.0), 0.0, np.sqrt(d2))
+
+
+def _arc_points(jx, jy, bx, by, l1, alpha, side, n, at=None):
+    """n + 1 points of the link from the joint to the carriage pivot: the chord, or the arc of
+    half angle alpha bulging to `side` (as _Flexure builds it). Also how far the arc may stray
+    from each of the n chords (their sag) and from the whole chord. l1, alpha and side may be per
+    design while the poses are many per design: `at` then gives each pose's design."""
+    alpha = np.asarray(alpha, dtype=float)
+    curved = alpha > 0.0
+    a = np.where(curved, alpha, 1.0)
+    radius = np.where(curved, l1 / (2.0 * np.sin(a)), 0.0)
+    pick = (lambda v: np.asarray(v)[at]) if at is not None else (lambda v: v)
+    ux, uy = (bx - jx) / pick(l1), (by - jy) / pick(l1)
+    pts = []
+    for i in range(n + 1):
+        th = a * (2.0 * i / n - 1.0)
+        along = pick(np.where(curved, l1 / 2.0 + radius * np.sin(th), l1 * i / n))
+        off = pick(np.where(curved, side * radius * (np.cos(th) - np.cos(a)), 0.0))
+        pts.append((jx + ux * along - uy * off, jy + uy * along + ux * off))
+    sag, whole = (pick(np.where(curved, radius * (1.0 - np.cos(a / k)), 0.0)) for k in (n, 1))
+    return pts, sag, whole
+
+
+def _members(pendulum, xa, jx, jy, tx, ty, bx, by, l1, alpha, side, n_arc, at=None):
+    """Centre-line segments (x1, y1, x2, y2) of one linkage, their names, and how far each may sit
+    from the member it stands for (the sag of a curved link's chords, 0 for a straight one).
+    Last, the link as its single chord and how far the link may stray from that.
+
+    The arm runs from the anchor to the joint (the lever to its pinch point), the pendulum's foot
+    from the joint to the pinch point, the link from the joint to the carriage pivot.
+    """
+    segs = [(xa + 0.0 * jx, 0.0 * jy, jx, jy) if pendulum else (xa + 0.0 * tx, 0.0 * ty, tx, ty)]
+    names = ["arm"]
+    if pendulum:
+        segs.append((jx, jy, tx, ty))
+        names.append("foot")
+    curved = np.any(np.asarray(alpha) > 0.0)
+    pts, sag, whole = _arc_points(jx, jy, bx, by, l1, alpha, side, n_arc if curved else 1, at)
+    segs += [(x1, y1, x2, y2) for (x1, y1), (x2, y2) in zip(pts[:-1], pts[1:])]
+    names += ["link"] * (len(pts) - 1)
+    chord = (pts[0][0], pts[0][1], pts[-1][0], pts[-1][1])
+    return segs, names, [0.0] * (len(names) - len(pts) + 1) + [sag] * (len(pts) - 1), (chord, whole)
+
+
+def _turned(segs, h0):
+    """The same segments turned half a turn about (0, h0): the other linkage."""
+    return [(-x1, 2.0 * h0 - y1, -x2, 2.0 * h0 - y2) for x1, y1, x2, y2 in segs]
+
+
+def _plane_gaps(p: LinkageParams) -> dict:
+    """Gap across the planes (CAD X, mm) between each item that reaches toward the other linkage and
+    the slab it could hit; below p.assembly_clearance that item is checked in plane."""
+    near = (p.linkage_plane_spacing - p.member_thickness) / 2.0   # each slab's near face, from the mid-plane
+    gaps = {"slabs": 2.0 * near, "carriage": near - p.carriage_block_width / 2.0}
+    if not (p.compliant and p.linkage_type == TYPE_PENDULUM and p.carriage_clamped) and p.carriage_pin_length > 0:
+        # The rod sits half in the carriage from its face: its far end is that far past the mid-plane.
+        gaps["pivot rod"] = near + p.carriage_block_width / 2.0 - p.carriage_pin_length / 2.0
+    return gaps
+
+
+def _checks(p: LinkageParams) -> dict:
+    """The items of _plane_gaps that come within p.assembly_clearance across the planes, with their gap."""
+    return {k: g for k, g in _plane_gaps(p).items() if g < p.assembly_clearance}
+
+
+def _with_across(d, across):
+    """Clearance of two parts d apart in plane (negative: their outlines overlap) and `across` apart
+    across the planes: their faces are parallel to the planes, so hypot(across, max(d, 0)) when
+    there is a gap across, d when there is none."""
+    return np.hypot(across, np.maximum(d, 0.0)) if across > 0.0 else d
+
+
+def _clearance_flat(p: LinkageParams, checks, seg_a, names, sag_a, seg_b, sag_b, pivot_x, pivot_y, starts, group):
+    """Least clearance per pose (flat arrays, poses grouped by `starts` / `group`) over the checks
+    asked ({item: gap across the planes}, _checks): linkage A's members seg_a, linkage B's seg_b (already turned),
+    carriage pivots at (+-pivot_x, pivot_y). Returns (clearance, label per pose); +inf where no
+    item comes near. A pair of items whose boxes over a group stay apart is not measured there."""
+    n = np.shape(pivot_y)[0]
+    flat = lambda v: np.broadcast_to(np.asarray(v, dtype=float), (n,))
+    w = p.member_width / 2.0
+    items = {}
+
+    def item(key, segs, half, sags, label):
+        prepared = []
+        for seg, g, name in zip(segs, sags, label):
+            seg = tuple(flat(v) for v in seg)
+            box = (np.fmin.reduceat(np.fmin(seg[0], seg[2]), starts), np.fmax.reduceat(np.fmax(seg[0], seg[2]), starts),
+                   np.fmin.reduceat(np.fmin(seg[1], seg[3]), starts), np.fmax.reduceat(np.fmax(seg[1], seg[3]), starts))
+            prepared.append((seg, flat(g) + half, box, name))
+        items[key] = prepared
+
+    item("A", seg_a, w, sag_a, [nm + " A" for nm in names])
+    item("B", seg_b, w, sag_b, [nm + " B" for nm in names])
+    pairs = []
+    if "slabs" in checks:
+        pairs.append(("A", "B", checks["slabs"]))
+    if "pivot rod" in checks:
+        # Each linkage's rod, a disc in plane, against the other linkage's members.
+        for sign, mine, other in ((-1.0, "B", "A"), (1.0, "A", "B")):
+            rod = (sign * pivot_x + 0.0 * pivot_y, pivot_y, sign * pivot_x + 0.0 * pivot_y, pivot_y)
+            item("rod " + mine, [rod], p.carriage_pin_diameter / 2.0, [0.0], ["pivot rod " + mine])
+            pairs.append(("rod " + mine, other, checks["pivot rod"]))
+    if "carriage" in checks:
+        hx, cy, hy = p.carriage_block_length / 2.0, pivot_y + p.carriage_block_offset, p.carriage_block_height / 2.0
+        corners = [(-hx, cy - hy), (hx, cy - hy), (hx, cy + hy), (-hx, cy + hy)]
+        edges = [(x1 + 0.0 * cy, y1, x2 + 0.0 * cy, y2) for (x1, y1), (x2, y2) in zip(corners, corners[1:] + corners[:1])]
+        item("carriage", edges, 0.0, [0.0] * 4, ["carriage"] * 4)
+        pairs += [("carriage", "A", checks["carriage"]), ("carriage", "B", checks["carriage"])]
+    best, label, labels = np.full(n, np.inf), np.full(n, -1), []
+    need = p.assembly_clearance
+    for key_x, key_y, across in pairs:
+        for sx, gx, bx, nx in items[key_x]:
+            for sy, gy, by, ny in items[key_y]:
+                apart = np.hypot(np.fmax(np.fmax(by[0] - bx[1], bx[0] - by[1]), 0.0), np.fmax(np.fmax(by[2] - bx[3], bx[2] - by[3]), 0.0))
+                margin = gx + gy
+                at = np.flatnonzero((~(apart - margin[starts] >= need))[group])
+                if not at.size:
+                    continue
+                d = _with_across(_seg_dist(*(v[at] for v in sx), *(v[at] for v in sy)) - margin[at], across)
+                better = ~(d >= best[at])
+                labels.append("%s / %s" % (nx.replace("carriage", "carriage block"), ny))
+                best[at[better]], label[at[better]] = d[better], len(labels) - 1
+    if "carriage" in checks:
+        # A member with an end inside the block's outline overlaps it, edges or not.
+        for key in ("A", "B"):
+            for sy, gy, _, ny in items[key]:
+                inside = np.zeros(n, dtype=bool)
+                for px, py in ((sy[0], sy[1]), (sy[2], sy[3])):
+                    inside |= (np.abs(px) <= hx) & (np.abs(py - cy) <= hy)
+                d = np.where(inside, _with_across(-gy, checks["carriage"]), np.inf)
+                better = d < best
+                if np.any(better):
+                    labels.append("carriage block / %s" % ny)
+                    best[better], label[better] = d[better], len(labels) - 1
+    return best, label, labels
+
+
+def _clearance_exact(p: LinkageParams, out: "LinkageResult", y, segs, names, sag, xb, pivot_y, h0) -> None:
+    """Assembly figures of compute_linkage from linkage A's pose at each Y (segs: arrays over all
+    of y). Fills plane_gap(_where), and min_clearance(_y, _where) and collision_y when something
+    reaches the other linkage's plane (or the carriage reaches a slab)."""
+    gaps = _plane_gaps(p)
+    out.plane_gap_where = min(gaps, key=gaps.get)
+    out.plane_gap = float(gaps[out.plane_gap_where])
+    checks = _checks(p)
+    if not checks:
+        return
+    n = len(y)
+    seg_b = _turned([tuple(np.broadcast_to(v, (n,))[::-1] for v in seg) for seg in segs], h0)
+    chunk = np.arange(n) // BOX_POSES
+    new_group = np.r_[True, chunk[1:] != chunk[:-1]]
+    with np.errstate(invalid="ignore"):
+        clear, label, labels = _clearance_flat(p, checks, segs, names, sag, seg_b, sag, xb, pivot_y,
+                                               np.flatnonzero(new_group), np.cumsum(new_group) - 1)
+    if not np.any(np.isfinite(clear)):
+        return
+    k = int(np.lexsort((np.abs(y), np.where(np.isfinite(clear), clear, np.inf)))[0])   # the least, nearest rest on a tie
+    out.min_clearance, out.min_clearance_y = float(clear[k]), float(abs(y[k]))
+    out.min_clearance_where = labels[label[k]]
+    hit = np.abs(y[clear < p.assembly_clearance - 1e-9])
+    out.collision_y = float(hit.min()) if hit.size else None
 
 
 def _link_arc(p: LinkageParams, l1, cx, cy, bx, by, px, py) -> Tuple[float, float]:
@@ -683,6 +957,16 @@ class _Flexure:
         self.compliance = float(self.u_n[i_p, 0])       # mm of pin per N on the pin
         self.r_pin = p.pin_diameter / 2.0
 
+    def segments(self, y, force):
+        """Centre-line segments of the bent part at each Y under the pin force, for the clearance check."""
+        travel = self.sgn * y
+        segs, names = [], []
+        for name, idx in self.lines.items():
+            pts = self.xy[idx][:, :, None] + self.u_mm[idx, :2][:, :, None] * travel + self.u_n[idx, :2][:, :, None] * force
+            segs += [(pts[k, 0], pts[k, 1], pts[k + 1, 0], pts[k + 1, 1]) for k in range(len(idx) - 1)]
+            names += [name] * (len(idx) - 1)
+        return segs, names, [0.0] * len(names)
+
     def _reach(self, travel):
         """Pad's nearer end ahead of its centre; the foot turns with the part."""
         if self.half == 0.0:
@@ -738,6 +1022,7 @@ class _Flexure:
                 parts = _pinch_force(p, gap + pushed, st, ct)
             force = sum(parts)
         loaded = gap + pushed
+        self.force = force
 
         # Pose under load, for the drawing.
         for name, i in (("joint", self.i_c), ("tip", i_p)):
@@ -788,6 +1073,10 @@ class _Flexure:
         out.max_axial_stress_mpa = float((axial / self.area)[:, valid].max())
         if alpha_link := [i for i, part in enumerate(self.parts) if part == "link"]:
             out.link_bending_stress_mpa = float((bending[alpha_link] / self.section)[:, valid].max())
+            # Signed axial force where the link meets the carriage: + tension (it pulls), - compression.
+            e = alpha_link[-1]
+            axial_link = (self.s_mm[e, 0] * travel + self.s_n[e, 0] * force)[valid]
+            out.max_link_force = float(axial_link[np.argmax(np.abs(axial_link))])
         if p.member_strength_mpa > 0 and out.max_stress_mpa > 1e-9:
             out.stress_margin = float(p.member_strength_mpa / out.max_stress_mpa)
             over = np.abs(y[valid & (stress > p.member_strength_mpa)])
@@ -831,7 +1120,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         return LinkageResult(False, "Lengths, stroke and tube sizes must be positive, with OD > ID.")
     l1, l2 = p.bar1_length, p.bar2_length
     side, root, sgn = _layout(p)
-    xa, xb = side * p.anchor_distance, p.pivot_offset
+    xa, xb = side * p.anchor_distance, _pivot_x(p)
     reach, delta = _body(p, l2, p.lever_length)
     half, phi = _pad(p)
     try:
@@ -856,9 +1145,14 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
             anchor_x=xa, wall_x=wall_x, closed_gap=closed_gap, full_open_gap=full_open_gap,
         )
 
+    on_top = sgn < 0.0
+    # A link built on the right of A->B (it pulls) moves the joint the other way for the same
+    # carriage travel: Y keeps meaning "tube A opens", so the carriage runs the other way.
+    branch = float(_branch(p.pivot_inverted, xa, xb, h0, cx0, cy0))
+    sgn *= branch
     y = np.linspace(-p.stroke, p.stroke, N_SAMPLES)
     with np.errstate(invalid="ignore"):
-        jx, jy = _joint(l1, l2, xa, xb, h0 + sgn * y)
+        jx, jy = _joint(l1, l2, xa, xb, h0 + sgn * y, branch)
         # Below the anchor line the hinged bar has gone through dead centre: not a usable pose.
         ok = np.isfinite(jx) & (jy >= -_EPS) & (h0 + sgn * y > 0.0)
     jx, jy = np.where(ok, jx, np.nan), np.where(ok, jy, np.nan)
@@ -870,7 +1164,7 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         # the beam model instead of the pivots.
         flexure = _Flexure(p, xa, xb, h0, sgn, l1, float(cx0), float(cy0), reach / l2, delta, half, phi, wall_x)
         if flexure.error:
-            return LinkageResult(False, flexure.error, anchor_x=xa, anchor_on_top=sgn < 0.0, link_length=l1, pivot_height_y0=h0,
+            return LinkageResult(False, flexure.error, anchor_x=xa, anchor_on_top=on_top, link_length=l1, pivot_height_y0=h0,
                                  wall_x=wall_x, closed_gap=closed_gap, full_open_gap=full_open_gap)
         ok = np.ones(N_SAMPLES, dtype=bool)
         jx, jy, tx, ty, gap_a = flexure.free_pose(y)
@@ -903,7 +1197,9 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         gap_a=_nan_to_none(gap_a),
         gap_b=_nan_to_none(gap_a[::-1]),
         anchor_x=xa,
-        anchor_on_top=sgn < 0.0,
+        anchor_on_top=on_top,
+        pivot_x=xb,
+        travel_sign=sgn,
         link_length=l1,
         pivot_height_y0=h0,
         wall_x=wall_x,
@@ -919,6 +1215,13 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
         loaded = flexure.forces(out, y, gap_a, closed_gap)
     else:
         loaded = _forces(p, out, y, ok, l1, xa, xb, h0, sgn, jx, jy, tx, ty, gap_a, closed_gap, half, phi)
+    if flexure is not None:
+        segs = flexure.segments(y, flexure.force)
+    elif ok[i0]:
+        alpha, arc_side = _link_arc(p, l1, jx[i0], jy[i0], xb, h0, tx[i0], ty[i0])
+        segs = _members(p.linkage_type == TYPE_PENDULUM, xa, jx, jy, tx, ty, xb, h0 + sgn * y, l1, alpha, arc_side, N_ARC_EXACT)[:3]
+    if flexure is not None or ok[i0]:
+        _clearance_exact(p, out, y, *segs, xb, h0 + sgn * y, h0)
     # What the air sees: the gap once the tube has pushed the pin back, when that is solved.
     out.contact_solved = bool(p.contact_deformation and loaded is not None)
     gap_air = np.where(ok, loaded, np.nan) if out.contact_solved else gap_a
@@ -985,6 +1288,10 @@ class LinkageSearch:
     max_oversqueeze: float = 0.5      # mm, closed tube over the travel used
     objective: str = OBJECTIVE_RESPONSE
     max_stroke: float = 3.0           # mm, longest travel the response search may use
+    pivot_side: str = "normal"        # carriage pivot: "normal" (far side), "inverted" (tube side) or "both"
+    # Refuse a design whose closed tube leaks at Y = 0 once the parts flex (sealed_after_flex False).
+    # A design with no force figures (no compliance, no pin or pad) has no verdict and is not refused.
+    require_seal: bool = True
 
 
 def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
@@ -1005,14 +1312,51 @@ def _anchor_allowed(s: LinkageSearch, a) -> np.ndarray:
     return np.ones_like(a, dtype=bool) if hi <= lo else ~((a > lo) & (a < hi))
 
 
-def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=None, foot_angle_deg=None) -> np.ndarray:
+def _arc_angle(l1, cx, cy, bx, by, px, py, foot):
+    """_link_arc for arrays of designs: the curved link's half angle and bulge side (0 when straight)."""
+    ux, uy = (bx - cx) / l1, (by - cy) / l1
+    fx, fy = (px - cx) / foot, (py - cy) / foot
+    dot, cross = ux * fx + uy * fy, ux * fy - uy * fx
+    flip = dot < 0.0
+    dot, cross = np.where(flip, -dot, dot), np.where(flip, -cross, cross)
+    alpha = np.arctan2(np.abs(cross), dot)
+    good = np.isfinite(alpha) & (alpha >= 1e-4) & (foot > 0)
+    return np.where(good, alpha, 0.0), np.where(good, np.sign(cross), 0.0)
+
+
+def _clearance_search(p: LinkageParams, checks, measure, xa, xb, l1, h0, sgn, y, pose_a, pose_b, alpha, side) -> np.ndarray:
+    """Clearance per design (rows) and per Y >= 0 (columns) where `measure` is True, over
+    the checks _plane_gaps asks for; +inf elsewhere. pose_a: linkage A's (joint x, y, pinch x, y)
+    at +Y; pose_b the same at -Y, which turned half a turn about (0, h0) is linkage B at +Y.
+    A curved link is N_ARC_SEARCH chords less their sag."""
+    out = np.full(pose_a[0].shape, np.inf)
+    rows, cols = np.nonzero(measure)          # row-major: each design's poses are contiguous
+    if rows.size == 0 or not checks:
+        return out
+    pend = p.linkage_type == TYPE_PENDULUM
+    flat = rows * len(y) + cols
+    yy, h, sg = y[cols], h0[rows], sgn[rows]
+    xa_, l1_ = (np.broadcast_to(v, measure.shape[:1]) for v in (xa, l1))
+    chunk = rows * len(y) + cols // BOX_POSES
+    new_group = np.r_[True, chunk[1:] != chunk[:-1]]
+    seg_a, names, sag, _ = _members(pend, xa_[rows], *(np.take(v, flat) for v in pose_a), xb, h + sg * yy, l1_, alpha, side, N_ARC_SEARCH, rows)
+    seg_b, _, _, _ = _members(pend, xa_[rows], *(np.take(v, flat) for v in pose_b), xb, h - sg * yy, l1_, alpha, side, N_ARC_SEARCH, rows)
+    clear, _, _ = _clearance_flat(p, checks, seg_a, names, sag, _turned(seg_b, h), sag, xb, h + sg * yy,
+                                  np.flatnonzero(new_group), np.cumsum(new_group) - 1)
+    out[rows, cols] = clear
+    return out
+
+
+def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=None, foot_angle_deg=None, stats=None) -> np.ndarray:
     """Score for arrays of candidates (one per row), lower is better; inf where infeasible.
 
     "target": RMS distance of the opening from (Y / stroke) ** exponent over the stroke.
     "response": most flow first, then the narrowest dead band, then the shortest travel.
     The carriage may travel until the closed tube is squeezed past the limit, the bars
-    lock, or max_stroke. The flow is the best opening reached within that travel; a
-    design that cannot reach full bore is ranked by how far it gets, not thrown out.
+    lock, the two linkages come closer than p.assembly_clearance, or max_stroke. The flow
+    is the best opening reached within that travel; a design that cannot reach full bore
+    is ranked by how far it gets, not thrown out.
+    stats (dict, optional): stats["collision"] counts the designs feasible but for the clearance.
     """
     if p.linkage_type == TYPE_PENDULUM and foot is not None:
         p = replace(p, foot_length=foot, foot_angle_deg=foot_angle_deg)
@@ -1020,7 +1364,7 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
     side, root, sgn = _layout(p)
-    xa, xb = side * a, p.pivot_offset
+    xa, xb = side * a, _pivot_x(p)
     reach, delta = _body(p, l2, lever_length)
     delta_ = delta[..., None] if isinstance(delta, np.ndarray) else delta
     fast = s.objective == OBJECTIVE_RESPONSE
@@ -1033,37 +1377,75 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
             l1 = np.hypot(xb - cx0, h0 - cy0)
         else:
             h0 = _pivot_height_y0(l1, root, xb, cx0, cy0)
+        branch = _branch(p.pivot_inverted, xa, xb, h0, cx0, cy0)
+        sgn = sgn * branch      # the carriage runs the way that opens tube A (see compute_linkage)
         y = np.linspace(0.0, s.max_stroke, N_RESPONSE) if fast else np.linspace(0.0, p.stroke, N_SCORE)
         ratio = (reach / l2)[..., None]
         xa_ = xa[..., None]
         # Tube A opening over the travel; the same linkage at -Y is what the closed tube sees.
-        jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn * y)
-        cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn * y)
+        jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn[..., None] * y, branch[..., None])
+        cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn[..., None] * y, branch[..., None])
         tip_x, tip_y = _tip(xa_, jx, jy, ratio, delta_)
+        ctip_x, ctip_y = _tip(xa_, cx, cy, ratio, delta_)
         gap = wall_x + tip_x - _pad_reach(xa_, jx, jy, half, phi_) - r_pin
         pinch_height = tip_y[..., 0]   # Y = 0 is the first sample of the sweep
-        squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - _pad_reach(xa_, cx, cy, half, phi_) - r_pin)
+        squeeze = closed_gap - (wall_x + ctip_x - _pad_reach(xa_, cx, cy, half, phi_) - r_pin)
         pose_ok = np.isfinite(jx) & (jy >= 0.0) & np.isfinite(cx) & (cy >= 0.0)
+        # What does not depend on the travel.
+        row_ok = ((reach >= l2) | (p.linkage_type != TYPE_LEVER)) & _anchor_allowed(s, a)
+        row_ok &= pinch_height >= s.pinch_height_min
+        if s.pinch_height_max > 0:
+            row_ok &= pinch_height <= s.pinch_height_max
+        if p.fixed_height > 0:
+            row_ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
+        else:
+            row_ok &= h0 >= s.min_pivot_height
+        if p.link_curved and p.linkage_type == TYPE_PENDULUM:
+            alpha, arc_side = _arc_angle(l1, cx0, cy0, xb, h0, *_tip(xa, cx0, cy0, reach / l2, delta), p.foot_length)
+        else:
+            alpha, arc_side = np.zeros_like(l2), np.zeros_like(l2)
+
+        checks = _checks(p)
+
+        def clearance(measure):
+            return _clearance_search(p, checks, measure, xa, xb, l1, h0, sgn, y, (jx, jy, tip_x, tip_y), (cx, cy, ctip_x, ctip_y), alpha, arc_side)
+
         if fast:
-            # Travel the design can use: up to the first pose that locks or crushes the closed tube.
-            usable = np.logical_and.accumulate(pose_ok & (squeeze <= s.max_oversqueeze) & (h0[..., None] > y), axis=-1)
+            # Travel the design can use: up to the first pose that locks, crushes the closed tube
+            # or brings the two linkages closer than the clearance.
+            base = pose_ok & (squeeze <= s.max_oversqueeze) & (h0[..., None] > y)
             if p.fixed_height <= 0:
-                usable &= h0[..., None] + y <= s.max_pivot_height
-            # Credit a travel only if the design is still fine 0.05 mm further (the stroke is
-            # rounded up to that) and the bars are still 0.2 mm short of locking: a design
-            # that works right at dead centre does not survive a real assembly.
+                base &= h0[..., None] + y <= s.max_pivot_height
+            # The clearance only matters where the travel may still go: within the poses that hold
+            # and up to full bore plus the 0.05 mm look-ahead below; past that the score is the same.
             step = y[1] - y[0]
-            for ahead, good in ((0.05, usable), (0.2, np.logical_and.accumulate(pose_ok, axis=-1))):
-                k = min(int(np.ceil(ahead / step - 1e-9)), N_RESPONSE - 1)
-                usable = usable & np.concatenate([good[..., k:], np.repeat(good[..., -1:], k, axis=-1)], axis=-1)
-            seen = np.where(usable, gap, -np.inf)
-            bore = full_open_gap - closed_gap
-            flow = np.clip(np.max(seen, axis=-1) - closed_gap, 0.0, bore) / bore
-            y_open = np.minimum(_crossing(y, seen, closed_gap), s.max_stroke)
-            y_full = _crossing(y, seen, full_open_gap)
-            travel = np.where(np.isfinite(y_full), y_full, y[np.sum(usable, axis=-1) - 1])
-            score = 100.0 * (1.0 - flow) + 2.0 * y_open + 0.2 * travel
-            ok = usable[..., 0] & (flow > 0.0)
+            ahead = min(int(np.ceil(0.05 / step - 1e-9)), N_RESPONSE - 1)
+            reach_full = np.logical_or.accumulate(gap >= full_open_gap, axis=-1)
+            past_full = np.concatenate([np.zeros_like(reach_full[..., :ahead + 1]), reach_full[..., :-ahead - 1]], axis=-1)
+            measure = np.logical_and.accumulate(base, axis=-1) & ~past_full & row_ok[..., None]
+            clear_ok = clearance(measure) >= p.assembly_clearance
+
+            def travel_score(clear_ok):
+                usable = np.logical_and.accumulate(base & clear_ok, axis=-1)
+                # Credit a travel only if the design is still fine 0.05 mm further (the stroke is
+                # rounded up to that) and the bars are still 0.2 mm short of locking: a design
+                # that works right at dead centre does not survive a real assembly.
+                step = y[1] - y[0]
+                for ahead, good in ((0.05, usable), (0.2, np.logical_and.accumulate(pose_ok, axis=-1))):
+                    k = min(int(np.ceil(ahead / step - 1e-9)), N_RESPONSE - 1)
+                    usable = usable & np.concatenate([good[..., k:], np.repeat(good[..., -1:], k, axis=-1)], axis=-1)
+                seen = np.where(usable, gap, -np.inf)
+                bore = full_open_gap - closed_gap
+                flow = np.clip(np.max(seen, axis=-1) - closed_gap, 0.0, bore) / bore
+                y_open = np.minimum(_crossing(y, seen, closed_gap), s.max_stroke)
+                y_full = _crossing(y, seen, full_open_gap)
+                travel = np.where(np.isfinite(y_full), y_full, y[np.sum(usable, axis=-1) - 1])
+                score = 100.0 * (1.0 - flow) + 2.0 * y_open + 0.2 * travel
+                return score, usable[..., 0] & (flow > 0.0) & np.isfinite(score) & row_ok
+
+            score, ok = travel_score(clear_ok)
+            if stats is not None and checks:
+                stats["collision"] = stats.get("collision", 0) + int(np.sum(travel_score(True)[1] & ~ok))
         else:
             target = closed_gap + (full_open_gap - closed_gap) * (y / p.stroke) ** p.target_exponent
             err = (np.minimum(gap, full_open_gap) - target) / (full_open_gap - closed_gap)
@@ -1075,14 +1457,11 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
             )
             if p.fixed_height <= 0:
                 ok &= h0 + p.stroke <= s.max_pivot_height
-        ok &= np.isfinite(score) & ((reach >= l2) | (p.linkage_type != TYPE_LEVER)) & _anchor_allowed(s, a)
-        ok &= pinch_height >= s.pinch_height_min
-        if s.pinch_height_max > 0:
-            ok &= pinch_height <= s.pinch_height_max
-        if p.fixed_height > 0:
-            ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
-        else:
-            ok &= h0 >= s.min_pivot_height
+            ok &= np.isfinite(score) & row_ok
+            clear_ok = np.all(clearance(np.broadcast_to(ok[..., None], gap.shape)) >= p.assembly_clearance, axis=-1)
+            if stats is not None:
+                stats["collision"] = stats.get("collision", 0) + int(np.sum(ok & ~clear_ok))
+            ok &= clear_ok
     return np.where(ok, score, np.inf)
 
 
@@ -1100,7 +1479,7 @@ N_SHORTLIST = 50
 SHORTLIST_CELLS = (4, 25)
 N_ONE_PIECE_ROUND = 20                 # beam solves per round around the best designs that hold
 ONE_PIECE_ROUNDS = (0.15, 0.08, 0.04)  # spread of each round, as a share of each searched range
-ONE_PIECE_LIMITS = ("stress", "thrust", "eye", "rod", "no_flow")
+ONE_PIECE_LIMITS = ("stress", "thrust", "eye", "rod", "no_flow", "collision", "seal")
 
 
 def _crushed(r: LinkageResult, s: LinkageSearch, gap) -> np.ndarray:
@@ -1111,14 +1490,15 @@ def _crushed(r: LinkageResult, s: LinkageSearch, gap) -> np.ndarray:
 
 def _stroke_used(r: LinkageResult, s: LinkageSearch, caps=(), gap=None) -> float:
     """Travel a response design uses: full bore rounded up to 0.05 mm when that fits under
-    max_stroke and every cap, else as far as the closed tube (squeeze read on `gap`, default
-    the bars' own gap_a) and the caps allow, rounded down to 0.05 mm (can come out below 0.05)."""
-    if r.y_full_open is not None:
-        full = min(s.max_stroke, round(float(np.ceil(r.y_full_open / 0.05 - 1e-9)) * 0.05, 2))
-        if not caps or full <= min(caps):
-            return full
+    max_stroke, every cap, the bars' reach both ways and the closed tube's squeeze, else as far
+    as those allow (squeeze read on `gap`, default the bars' own gap_a), rounded down to 0.05 mm
+    (can come out below 0.05)."""
     crushed = _crushed(r, s, r.gap_a if gap is None else gap)
     limit = min([s.max_stroke, r.y_max, -r.y_min] + ([float(crushed.min())] if crushed.size else []) + list(caps))
+    if r.y_full_open is not None:
+        full = min(s.max_stroke, round(float(np.ceil(r.y_full_open / 0.05 - 1e-9)) * 0.05, 2))
+        if full <= limit + 1e-9:
+            return full
     return round(float(np.floor(limit / 0.05 + 1e-9)) * 0.05, 2)
 
 
@@ -1154,21 +1534,31 @@ def _one_piece_score(q: LinkageParams, s: LinkageSearch):
     Returns (score, travel, reason). reason is "no_flow" when the part has no travel to use: the
     solve fails, the pin presses onto its tube, or (response) the tube does not open before the
     closed one jams, is squeezed past max_oversqueeze or the carriage height runs out, or (target)
-    the whole stroke does not run without that jam or squeeze. Otherwise it is the first limit
+    the whole stroke does not run without that jam or squeeze. It is "collision" when the two
+    parts come closer than q.assembly_clearance within 0.05 mm of rest (response) or anywhere on the
+    stroke (target); further out the travel stops short of it. It is "seal" when s.require_seal and
+    the closed tube leaks at Y = 0 once the part has flexed (sealed_after_flex). Otherwise it is the first limit
     broken over that travel (_one_piece_limit), else None.
     """
     r = compute_linkage(q)
     if not r.feasible or r.flexure is None:
         return np.inf, 0.0, "no_flow"
+    if s.require_seal and r.sealed_after_flex is False:
+        return np.inf, 0.0, "seal"
     # The part gives way, so the closed tube's squeeze is read on the loaded gap, as jam_y is.
     crushed = _crushed(r, s, r.gap_loaded_a)
     if s.objective != OBJECTIVE_RESPONSE:
         if r.rms_error is None or r.jam_y is not None or crushed.size > 0:
             return np.inf, q.stroke, "no_flow"
+        if r.collision_y is not None:
+            return np.inf, q.stroke, "collision"
         return r.rms_error, q.stroke, _one_piece_limit(q, r, q.stroke)
-    # Travel: as for the pivoted design, stopping short of crushing or jamming the closed tube
-    # and within the carriage height limits of _score.
-    caps = [r.pivot_height_y0 - 1e-6] + [v - 1e-6 for v in (r.jam_y, float(crushed.min()) if crushed.size else None) if v is not None]
+    if r.collision_y is not None and r.collision_y < 0.05 - 1e-9:
+        return np.inf, 0.0, "collision"
+    # Travel: as for the pivoted design, stopping short of crushing or jamming the closed tube,
+    # of the two parts coming closer than the assembly clearance, and within the carriage height
+    # limits of _score.
+    caps = [r.pivot_height_y0 - 1e-6] + [v - 1e-6 for v in (r.jam_y, float(crushed.min()) if crushed.size else None, r.collision_y) if v is not None]
     if q.fixed_height <= 0:
         caps.append(s.max_pivot_height - r.pivot_height_y0)
     travel = _stroke_used(r, s, caps, r.gap_loaded_a)
@@ -1209,34 +1599,12 @@ def _shortlist(p: LinkageParams, names, lo, hi, x, score, n) -> np.ndarray:
     return x[np.sort(picked)]
 
 
-def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[LinkageParams], int, int, dict]:
-    """Random draw over the ranges, then rounds of tighter draws around the best designs.
-
-    Searched: the bar lengths and the anchor distance, plus the lever length (lever) or the
-    foot length and angle (pendulum). With a fixed height bar 1 is solved, not searched.
-    A range with min = max holds that value.
-
-    The draws use rigid bars. A one-piece pendulum (compliant) bends instead, so designs from
-    the rigid search are then run through the beam model: N_SHORTLIST of them (half the best
-    distinct rigid designs, half drawn at random among the rigid-feasible ones of the first
-    draw), then ONE_PIECE_ROUNDS rounds of N_ONE_PIECE_ROUND draws around the best that hold.
-    They are ranked by the same objective on the loaded gap (also for the closed tube's squeeze,
-    as jam_y is; the result's max_oversqueeze stays the unloaded figure) and kept only if the part
-    holds over the travel it uses: stress, screw thrust, and with a free carriage end the rod's
-    eye and the rod itself. A limit whose strength is 0 is not checked.
-
-    Returns (best params or None, feasible, tested, report). feasible is how many designs of the
-    first draw the rigid model accepts, tested the size of that draw: in one-piece mode feasible
-    can be above 0 with no design returned, when the beam model rejects every one it solved.
-    report = {"model": "one-piece" | "rigid", "shortlist", "passed", "rejected"}: shortlist is
-    how many designs the beam model solved, passed how many of those hold every limit, rejected
-    counts each other one once under the first reason it fails ("no_flow" first: no travel that
-    opens the tube, see _one_piece_score; then "stress", "thrust", "eye", "rod" over that
-    travel). shortlist = passed + sum(rejected). All zero in rigid mode.
-    """
-    one_piece = p.compliant and p.linkage_type == TYPE_PENDULUM
-    report = {"model": "one-piece" if one_piece else "rigid", "shortlist": 0, "passed": 0,
-              "rejected": {k: 0 for k in ONE_PIECE_LIMITS}}
+def _rigid_search(p: LinkageParams, s: LinkageSearch) -> dict:
+    """Rigid-bar search of one carriage pivot side (p.pivot_inverted): a random draw over the
+    ranges, then rounds of tighter draws around the best designs. Returns the columns searched
+    and their ranges, every draw with its score (pool, first draw first), the scoring function,
+    and the counts of the first draw: tested, feasible, and collision (refused only for the
+    clearance between the two linkages)."""
     names = ["bar1_length", "bar2_length", "anchor_distance"]
     bounds = [(s.bar1_min, s.bar1_max), (s.bar2_min, s.bar2_max), (s.anchor_min, s.anchor_max)]
     if p.linkage_type == TYPE_LEVER:
@@ -1250,19 +1618,20 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
     width = hi - lo
     rng = np.random.default_rng(0)   # same answer for the same inputs
 
-    def evaluate(x):
+    def evaluate(x, stats=None):
         col = dict(zip(names, x.T))
         return _score(p, s, col["bar1_length"], col["bar2_length"], col["anchor_distance"],
-                      col.get("lever_length"), col.get("foot_length"), col.get("foot_angle_deg"))
+                      col.get("lever_length"), col.get("foot_length"), col.get("foot_angle_deg"), stats)
 
     # The design on screen competes too when it lies inside the ranges.
     start = np.clip(np.array([getattr(p, n) for n in names], dtype=float), lo, hi)
     x = np.vstack([start, lo + rng.random((N_FIRST, len(names))) * width])
-    score = evaluate(x)
-    tested, feasible = len(x), int(np.isfinite(score).sum())
-    if feasible == 0:
-        return None, 0, tested, report
-    pool = [(x, score)]
+    stats = {"collision": 0}
+    score = evaluate(x, stats)
+    ctx = {"p": p, "names": names, "lo": lo, "hi": hi, "evaluate": evaluate, "pool": [(x, score)],
+           "tested": len(x), "feasible": int(np.isfinite(score).sum()), "collision": stats["collision"]}
+    if ctx["feasible"] == 0:
+        return ctx
     spread = 0.12
     for _ in range(6):
         order = np.argsort(score)[:N_ELITE]
@@ -1271,25 +1640,138 @@ def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[Linka
         draws = elite[rng.integers(0, len(elite), N_ROUND)] + rng.normal(0.0, spread, (N_ROUND, len(names))) * width
         x = np.vstack([elite, np.clip(draws, lo, hi)])
         score = evaluate(x)
-        pool.append((x, score))
+        ctx["pool"].append((x, score))
         spread *= 0.5
-    if one_piece:
-        return _one_piece_pick(p, s, names, lo, hi, pool, evaluate, report), feasible, tested, report
-    best = x[int(np.argmin(score))]
-    out = replace(p, **{name: round(float(v), 3) for name, v in zip(names, best)})
-    if s.objective == OBJECTIVE_RESPONSE:
-        # Show and run exactly the travel the design uses: full bore, or as far as the closed
-        # tube allows, rounded to 0.05 mm.
-        out.stroke = s.max_stroke
-        r = compute_linkage(out)
-        out.stroke = _stroke_used(r, s) if r.y_full_open is not None else max(0.05, _stroke_used(r, s))
-    if p.fixed_height > 0:
-        out.bar1_length = round(compute_linkage(out).link_length, 3)
-    return out, feasible, tested, report
+    return ctx
 
 
-def _one_piece_pick(p, s, names, lo, hi, pool, evaluate, report) -> Optional[LinkageParams]:
-    """Stage two for the one-piece pendulum: rank designs from the rigid search with the beam model."""
+def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[LinkageParams], float]:
+    """Best rigid design that compute_linkage also finds clear of the other linkage over the travel
+    it uses (the search's chords and sampling are not quite its own) and, with s.require_seal,
+    sealed at Y = 0 once the bars flex: the forces are only solved here. Without the seal limit the
+    best designs of the last round are tried in turn. With it, the last round's best and then the
+    best design of each cell of the searched ranges over every round (_shortlist), best first, for
+    spread: the last round's designs are near copies, which leak or seal together.
+    A design is also passed over when its dimensions rounded to 1 um no longer score (see below).
+    side["seal"] counts the designs refused as leaking."""
+    p, names = ctx["p"], ctx["names"]
+    x, score = ctx["pool"][-1]
+    order = np.argsort(score, kind="stable")[:N_ELITE]
+    candidates = [(x[i], score[i]) for i in order if np.isfinite(score[i])]
+    if s.require_seal:
+        pool_x = np.vstack([v for v, _ in ctx["pool"]])
+        spread = _shortlist(p, names, ctx["lo"], ctx["hi"], pool_x, np.concatenate([sc for _, sc in ctx["pool"]]), N_ELITE)
+        candidates = candidates[:1] + list(zip(spread, ctx["evaluate"](spread)))
+    tried = set()
+    for v, sc in candidates:
+        out = replace(p, **{name: round(float(val), 3) for name, val in zip(names, v)})
+        key = tuple(getattr(out, n) for n in names)
+        if key in tried or not np.isfinite(sc):
+            continue
+        tried.add(key)
+        # Score the design as returned, rounded to 1 um: near a singular closed pose the rounding
+        # can land on another pose, or on none (a pivot below the anchor line), that the search never saw.
+        sc = float(ctx["evaluate"](np.array([key], dtype=float))[0])
+        if not np.isfinite(sc):
+            continue
+        if s.objective == OBJECTIVE_RESPONSE:
+            # Show and run exactly the travel the design uses: full bore, or as far as the closed
+            # tube and the clearance between the two linkages allow, rounded to 0.05 mm.
+            out.stroke = s.max_stroke
+        r = compute_linkage(replace(out, chamber_volume_ml=0.0))
+        if s.require_seal and r.sealed_after_flex is False:
+            side["seal"] += 1
+            continue
+        if s.objective == OBJECTIVE_RESPONSE:
+            if r.collision_y is not None and r.collision_y < 0.05 - 1e-9:
+                continue
+            caps = [r.collision_y - 1e-6] if r.collision_y is not None else []
+            out.stroke = _stroke_used(r, s, caps) if r.y_full_open is not None else max(0.05, _stroke_used(r, s, caps))
+            if out.stroke < 0.05 - 1e-9:
+                continue   # no travel left before the two linkages meet
+        elif r.collision_y is not None:
+            continue
+        if p.fixed_height > 0:
+            out.bar1_length = round(r.link_length, 3)
+        return out, float(sc)
+    return None, np.inf
+
+
+def optimize_linkage(p: LinkageParams, s: LinkageSearch) -> Tuple[Optional[LinkageParams], int, int, dict]:
+    """Random draw over the ranges, then rounds of tighter draws around the best designs.
+
+    Searched: the bar lengths and the anchor distance, plus the lever length (lever) or the
+    foot length and angle (pendulum). With a fixed height bar 1 is solved, not searched.
+    A range with min = max holds that value. The carriage pivot side (s.pivot_side) is "normal"
+    (far side of the screw), "inverted" (its tube's side, see _pivot_x) or "both": each side has
+    its own search with the same seeds, so a side searched within "both" finds exactly what it
+    finds alone, and the better design of the two is kept (a tie keeps the normal side). "both"
+    therefore takes as long as the two searches.
+
+    The draws use rigid bars. A one-piece pendulum (compliant) bends instead, so designs from
+    the rigid search are then run through the beam model: N_SHORTLIST of them (half the best
+    distinct rigid designs, half drawn at random among the rigid-feasible ones of the first
+    draw), then ONE_PIECE_ROUNDS rounds of N_ONE_PIECE_ROUND draws around the best that hold.
+    They are ranked by the same objective on the loaded gap (also for the closed tube's squeeze,
+    as jam_y is; the result's max_oversqueeze stays the unloaded figure) and kept only if the part
+    holds over the travel it uses: stress, screw thrust, and with a free carriage end the rod's
+    eye and the rod itself. A limit whose strength is 0 is not checked.
+
+    The two linkages must keep p.assembly_clearance between their members over the travel
+    used: the rigid draws end the travel where they come closer (_score), the beam model of a
+    one-piece part likewise (_one_piece_score), and the design returned is checked once more on
+    compute_linkage's own clearance.
+
+    Returns (best params or None, feasible, tested, report). feasible is how many designs of the
+    first draw(s) the rigid model accepts, tested the size of that draw (both sides added up):
+    in one-piece mode feasible can be above 0 with no design returned, when the beam model rejects
+    every one it solved.
+    report = {"model": "one-piece" | "rigid", "shortlist", "passed", "rejected", "sides",
+    "pivot_side"}: shortlist is how many designs the beam model solved, passed how many of those
+    hold every limit, rejected counts each other one once under the first reason it fails
+    ("no_flow" first: no travel that opens the tube, see _one_piece_score; "collision": the two
+    parts too close from rest on; then "stress", "thrust", "eye", "rod" over that travel).
+    shortlist = passed + sum(rejected). All zero in rigid mode. sides[side] for each side
+    searched = {"feasible", "collision" (first draw, rigid), "solved", "passed" (beam model), "seal"
+    (designs refused for leaking at Y = 0, see LinkageSearch.require_seal: by the beam model, or
+    by _rigid_pick for rigid bars), "found", "score" (its best design's)}; pivot_side is the side
+    of the design returned.
+    """
+    if s.pivot_side not in PIVOT_SIDES:
+        raise ValueError("pivot_side must be one of %s" % ", ".join(PIVOT_SIDES))
+    one_piece = p.compliant and p.linkage_type == TYPE_PENDULUM
+    report = {"model": "one-piece" if one_piece else "rigid", "shortlist": 0, "passed": 0,
+              "rejected": {k: 0 for k in ONE_PIECE_LIMITS}, "sides": {}, "pivot_side": None}
+    contexts = [_rigid_search(replace(p, pivot_inverted=inverted), s) for inverted in PIVOT_SIDES[s.pivot_side]]
+    feasible, tested = sum(c["feasible"] for c in contexts), sum(c["tested"] for c in contexts)
+    for c in contexts:
+        report["sides"][_side_name(c["p"])] = {"feasible": c["feasible"], "collision": c["collision"],
+                                               "solved": 0, "passed": 0, "seal": 0, "found": False, "score": None}
+    live = [c for c in contexts if c["feasible"] > 0]
+    if not live:
+        return None, feasible, tested, report
+    picks = [_one_piece_pick(s, c, report) if one_piece else _rigid_pick(s, c, report["sides"][_side_name(c["p"])]) for c in live]
+    best, best_score = None, np.inf
+    for out, score in picks:
+        if out is None:
+            continue
+        side = report["sides"][_side_name(out)]
+        side["found"], side["score"] = True, float(score)
+        if score < best_score:
+            best, best_score = out, score
+            report["pivot_side"] = _side_name(out)
+    return best, feasible, tested, report
+
+
+def _side_name(p: LinkageParams) -> str:
+    return "inverted" if p.pivot_inverted else "normal"
+
+
+def _one_piece_pick(s: LinkageSearch, ctx: dict, report: dict) -> Tuple[Optional[LinkageParams], float]:
+    """Stage two for the one-piece pendulum: rank designs from the rigid search of one pivot side
+    with the beam model. Returns (the best design that holds or None, its score)."""
+    p, names, lo, hi, pool, evaluate = (ctx[k] for k in ("p", "names", "lo", "hi", "pool", "evaluate"))
+    side = report["sides"][_side_name(p)]
     rng = np.random.default_rng(1)   # its own stream: same answer for the same inputs
     n_rigid = N_SHORTLIST - N_SHORTLIST // 2
     batch = list(_shortlist(p, names, lo, hi, np.vstack([x for x, _ in pool]), np.concatenate([sc for _, sc in pool]), n_rigid))
@@ -1311,8 +1793,10 @@ def _one_piece_pick(p, s, names, lo, hi, pool, evaluate, report) -> Optional[Lin
             q = replace(p, **{n: float(val) for n, val in zip(names, v)}, stroke=stroke, chamber_volume_ml=0.0)
             sc, travel, broken = _one_piece_score(q, s)
             report["shortlist"] += 1
+            side["solved"] += 1
             if broken:
                 report["rejected"][broken] += 1
+                side["seal"] += broken == "seal"
             else:
                 ranked.append((sc, travel, q))
         ranked.sort(key=lambda t: t[0])
@@ -1333,19 +1817,22 @@ def _one_piece_pick(p, s, names, lo, hi, pool, evaluate, report) -> Optional[Lin
                 tried.add(tuple(v))
                 fresh.append(v)
         solve(fresh)
-    report["passed"] = len(ranked)
-    for _, travel, q in ranked:
+    report["passed"] += len(ranked)
+    side["passed"] += len(ranked)
+    for score, travel, q in ranked:
         q = replace(q, stroke=travel)
         r = compute_linkage(q)
         # Keep it only on a solve of exactly the design returned, at its own stroke.
         unusable = not r.feasible or r.jam_y is not None or _crushed(r, s, r.gap_loaded_a).size > 0
-        broken = "no_flow" if unusable else _one_piece_limit(q, r, travel)
+        broken = ("no_flow" if unusable else "collision" if r.collision_y is not None
+                  else "seal" if s.require_seal and r.sealed_after_flex is False else _one_piece_limit(q, r, travel))
         if broken:
             report["rejected"][broken] += 1
             report["passed"] -= 1
+            side["passed"] -= 1
             continue
         out = replace(q, chamber_volume_ml=p.chamber_volume_ml)
         if p.fixed_height > 0:
             out.bar1_length = round(r.link_length, 3)
-        return out
-    return None
+        return out, float(score)
+    return None, np.inf

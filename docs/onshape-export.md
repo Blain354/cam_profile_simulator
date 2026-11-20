@@ -315,6 +315,9 @@ The value keys are listed in `VALUES` in the same file. Derived values can be se
 (pin or pad to the wall the tube rests on at Y = 0, written as `pend_pin_gap`, `lever_pin_gap`, `elbow_pin_gap`:
 measure it in the sketch to check that the CAD pinches the tube as the simulator does). A straight link has no
 `link_arc_radius`, so that name is left out of the list.
+`pivot_side` (1 far side of the screw, -1 its tube's side) is in no default mapping: the sketches draw the
+carriage pivot on the far side, and `pivot_offset` stays a positive distance. A design with the inverted pivot
+is therefore refused (HTTP 409, nothing sent) until a sketch variable is mapped to `pivot_side`.
 
 These calls are made from the container and are not in `~/automation/state/onshape-appels.jsonl`.
 A bad table name comes back as HTTP 422 with the rule. Duplicate table names, missing keys, an

@@ -69,6 +69,8 @@ VALUES = {
     "total_height": ("Anchor to anchor height", "mm"),
     "link_arc_radius": ("Curved link radius", "mm"),
     "pin_gap_y0": ("Pin (or pad) to the wall the tube rests on, at Y = 0, part at rest", "mm"),
+    # Not in the default names: the sketches put the carriage pivot on the far side of the screw.
+    "pivot_side": ("Carriage pivot side: 1 far side of the screw, -1 its tube's side (inverted)", ""),
 }
 
 _TUBE = {"pinch_tube_OD": "tube_od", "pinch_tube_ID": "tube_id"}
@@ -222,8 +224,17 @@ def wanted_rows(params: LinkageParams) -> list[Row]:
         # Where the pin sits against the closed tube in the shape the part is made in: the check that the CAD pinches.
         pin_gap_y0=result.closed_gap - params.preload,
     )
+    mapping = mapping_for(params.linkage_type)
+    if params.pivot_inverted and "pivot_side" not in mapping.values():
+        # pivot_offset is a distance: written alone it would build the pivot on the far side.
+        raise LinkageOnshapeError(
+            "This design has the carriage pivot on its tube's side (inverted), which the Part Studio cannot draw: "
+            "its sketch puts the pivot on the far side of the screw. Nothing was sent. Add a pivot side variable to "
+            "the sketch and map it to pivot_side in ONSHAPE_LINKAGE_MAPPING first."
+        )
+    values["pivot_side"] = -1.0 if params.pivot_inverted else 1.0
     rows = []
-    for name, key in mapping_for(params.linkage_type).items():
+    for name, key in mapping.items():
         value = values.get(key)
         if value is None or not math.isfinite(float(value)):
             continue   # e.g. no arc radius on a straight link

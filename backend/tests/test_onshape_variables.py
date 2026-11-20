@@ -370,6 +370,22 @@ class OnshapeVariablesTests(unittest.TestCase):
         with self.assertRaises(ov.LinkageOnshapeError):
             ov.wanted_rows(replace(LinkageParams(), bar2_length=-1.0))
 
+    def test_an_inverted_pivot_is_written_only_where_the_sketch_can_draw_it(self):
+        normal = [(r.name, r.new_expression) for r in ov.wanted_rows(PENDULUM)]
+        self.assertNotIn("pivot_side", [r.key for r in ov.wanted_rows(PENDULUM)])   # the default rows are as before
+        inverted = replace(PENDULUM, pivot_inverted=True, bar1_length=8.713, bar2_length=18.0, anchor_distance=-1.405,
+                           foot_length=3.468, foot_angle_deg=105.909, stroke=0.3)
+        with self.assertRaises(ov.LinkageOnshapeError) as refused:
+            ov.wanted_rows(inverted)
+        self.assertIn("Nothing was sent", str(refused.exception))
+        mapping = '{"pendulum": {"pend_arm_L": "bar2_length", "pend_pivot_offset": "pivot_offset", "pend_pivot_side": "pivot_side"}}'
+        with mock.patch.dict(ov.os.environ, {"ONSHAPE_LINKAGE_MAPPING": mapping}):
+            rows = {r.name: r.new_expression for r in ov.wanted_rows(inverted)}
+            self.assertEqual(rows["pend_pivot_side"], "-1")
+            self.assertEqual(rows["pend_pivot_offset"], "4 mm")   # a distance, the side says where
+            self.assertEqual({r.name: r.new_expression for r in ov.wanted_rows(PENDULUM)}["pend_pivot_side"], "1")
+        self.assertEqual([(r.name, r.new_expression) for r in ov.wanted_rows(PENDULUM)], normal)
+
 
 def metres(mm):
     return {"btType": "com.belmonttech.serialize.fsvalue.BTFSValueWithUnits", "unitToPower": {"METER": 1}, "value": mm / 1000.0}
