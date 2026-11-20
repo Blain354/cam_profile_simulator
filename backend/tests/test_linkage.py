@@ -577,7 +577,7 @@ class LinkageTests(unittest.TestCase):
         hand = min(float(linkage._seg_dist(-xb, py, -xb, py, *seg)) for k, py in enumerate(by)
                    for seg in ((r.anchor_x, 0.0, r.joint_x[k], r.joint_y[k]), (xb, py, r.joint_x[k], r.joint_y[k]))) - 0.75 - 1.0
         self.assertAlmostEqual(r.min_clearance, hand, places=9)
-        self.assertTrue(r.min_clearance_where.startswith("pivot rod B / "))
+        self.assertTrue(r.min_clearance_where.startswith("pivot rod "), r.min_clearance_where)   # A against B is the same at -Y
         # Slabs thick enough to reach the carriage block: the link's eye sits in the block.
         r = compute_linkage(replace(PENDULUM_INV, member_thickness=6.0, compliant=True))
         self.assertEqual(r.plane_gap_where, "carriage")
@@ -604,7 +604,9 @@ class LinkageTests(unittest.TestCase):
                 found = optimize_linkage(q, s)[0]
                 r = compute_linkage(found)
                 self.assertIsNone(r.collision_y)
-                self.assertGreaterEqual(r.min_clearance, q.assembly_clearance)
+                self.assertEqual(r.plane_gap_where, "pivot rod")
+                # None: the rod reaches the other plane but nothing there comes near it.
+                self.assertTrue(r.min_clearance is None or r.min_clearance >= q.assembly_clearance, r.min_clearance)
 
     def test_the_finder_keeps_only_designs_that_seal_at_rest(self):
         on = optimize_linkage(LEVER, LEVER_SEARCH)

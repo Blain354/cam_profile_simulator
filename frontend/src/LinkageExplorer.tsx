@@ -1384,7 +1384,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         {`${clear.toFixed(2)} mm at Y = ±${(data.min_clearance_y ?? 0).toFixed(2)} mm${data.min_clearance_where ? ` (${data.min_clearance_where})` : ''}`}
       </span>} />
   ) : data.plane_gap != null && (
-    <StatRow label="Gap across the planes" value={`${data.plane_gap.toFixed(2)} mm, ${GAP_ITEM[data.plane_gap_where ?? ''] ?? data.plane_gap_where}`} />
+    <StatRow label="Gap across the planes" value={`${data.plane_gap.toFixed(2)} mm, ${GAP_ITEM[data.plane_gap_where ?? ''] ?? data.plane_gap_where}${data.plane_gap < params.assembly_clearance ? ', nothing near it in plane' : ''}`} />
   ));
   const pivotControls = (
     <div className="space-y-2">

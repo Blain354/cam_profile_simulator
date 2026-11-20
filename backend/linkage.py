@@ -531,10 +531,11 @@ def _clearance_flat(p: LinkageParams, checks, seg_a, names, sag_a, seg_b, sag_b,
     if "slabs" in checks:
         pairs.append(("A", "B"))
     if "pivot rod" in checks:
-        # B's rod against A's members; by the half turn that is also A's rod against B's at -Y.
-        rod = (-pivot_x + 0.0 * pivot_y, pivot_y, -pivot_x + 0.0 * pivot_y, pivot_y)
-        item("rod", [rod], p.carriage_pin_diameter / 2.0, [0.0], ["pivot rod B"])
-        pairs.append(("rod", "A"))
+        # Each linkage's rod, a disc in plane, against the other linkage's members.
+        for sign, mine, other in ((-1.0, "B", "A"), (1.0, "A", "B")):
+            rod = (sign * pivot_x + 0.0 * pivot_y, pivot_y, sign * pivot_x + 0.0 * pivot_y, pivot_y)
+            item("rod " + mine, [rod], p.carriage_pin_diameter / 2.0, [0.0], ["pivot rod " + mine])
+            pairs.append(("rod " + mine, other))
     if "carriage" in checks:
         hx, cy, hy = p.carriage_block_length / 2.0, pivot_y + p.carriage_block_offset, p.carriage_block_height / 2.0
         corners = [(-hx, cy - hy), (hx, cy - hy), (hx, cy + hy), (-hx, cy + hy)]
@@ -1663,6 +1664,8 @@ def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[Linka
                 continue
             caps = [r.collision_y - 1e-6] if r.collision_y is not None else []
             out.stroke = _stroke_used(r, s, caps) if r.y_full_open is not None else max(0.05, _stroke_used(r, s, caps))
+            if out.stroke < 0.05 - 1e-9:
+                continue   # no travel left before the two linkages meet
         elif r.collision_y is not None:
             continue
         if p.fixed_height > 0:
