@@ -14,9 +14,16 @@ Model
     * Material: compressible neo-Hookean, W = mu/2 (J^-2/3 I1 - 3) + kappa/4 (J^2 - 1 - 2 ln J),
       mu = E / (2 (1 + nu)), kappa = E / (3 (1 - 2 nu)), nu = 0.49 by default (silicone is
       nearly incompressible: kappa is about 50 mu).
-    * Elements: 9-node quadrilaterals, 3 x 3 Gauss points for the shear part, the volume term
-      on each element's mean dilatation (Q9/P0 mixed element, pressure condensed out), so the
-      section does not lock as nu -> 0.5 (test_tube_fem checks the stiffness from 0.49 to 0.4999).
+    * Elements: 9-node quadrilaterals, 3 x 3 Gauss points; the volume term uses J projected,
+      element by element, onto a linear field (Q9/P3 mixed element, discontinuous linear pressure
+      condensed out), so the section neither locks as nu -> 0.5 nor goes soft in bending
+      (test_tube_fem checks the ring stiffness from nu = 0.3 to 0.4999 against Castigliano).
+    * Mesh: by default 1 element through the wall and 12 around the quarter (48 around the
+      tube). Against 1 x 24 and 3 x 24: closing h within 1.5 %, force within 3 % on the open
+      tube and 6 % just past closure. A finer radial mesh resolves the crease that forms on the
+      inner surface of each fold (neo-Hookean creasing, near 35 % compression of that surface):
+      the static path then snaps, and the solver crosses it by dynamic relaxation (fem.relax),
+      slowly and not always; the default mesh does not resolve the crease.
     * Symmetry: with frictionless parallel plates the section is symmetric about the mid-plane
       between the plates and about the axis normal to them. A quarter is meshed (x >= 0, y >= 0).
       The bore closing on itself becomes contact of the inner wall with the mid-plane y = 0.
@@ -24,7 +31,9 @@ Model
       (y >= 0 on the inner wall), node to rigid line, penalty plus augmented-Lagrange updates
       until the worst penetration is under 1e-3 of the wall thickness.
     * Air: the gauge pressure acts as a follower load on the part of the bore wall that is not
-      resting on the mid-plane. The opening of the tube under pressure comes out of the
+      resting on the mid-plane. A neo-Hookean tube balloons past about mu ln(OD/ID) of pressure
+      (0.136 E for ID/OD = 2/3, so 330 kPa at Shore 50): the free inflation then fails with a
+      TubeFemError that says so. The opening of the tube under pressure comes out of the
       elasticity; no empirical compliance.
     * Loading: free inflation first, then the plates close in steps of h, Newton at each step,
       the step cut back when Newton or the contact loop fails, grown when it converges fast.
@@ -49,10 +58,13 @@ Not modelled
     Axial effects (the tube's bending along its axis on either side of a narrow pin, and its
     stiffening at the pin's round ends: the caller decides what length of tube to charge),
     friction on the plates and in the bore, contact between two tubes, viscoelasticity and
-    the Mullins softening of silicone, the tube's own pre-stress.
+    the Mullins softening of silicone, its stiffening at large stretch (neo-Hookean has none),
+    the tube's own pre-stress. With nu = 0.49 the section loses up to 5 % of its area at 50 %
+    squeeze past closure (the mean stress over kappa); nu = 0.4999 keeps it within 0.1 %.
 
-Speed: the response depends only on ID/OD, p/E and nu, so it is solved dimensionless and
-cached on those (in memory, and on disk when a cache directory is given).
+Speed: about 0.8 s for a tube under pressure (two sweeps) in the production image. The
+response depends only on ID/OD, p/E and nu, so it is solved dimensionless and cached on
+those (in memory, and on disk when a cache directory is given).
 """
 
 import hashlib

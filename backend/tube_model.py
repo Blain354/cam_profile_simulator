@@ -74,7 +74,8 @@ class FemLaw:
         h = np.maximum(np.asarray(h, dtype=float), 0.05 * (r.od - r.id))
         dry = r.force_dry_per_mm(h)
         folded = r.force_dry_per_mm(np.maximum(h, r.h_closed))
-        return folded, dry - folded, r.force_per_mm(h) - dry
+        # The air only pushes the walls apart: a negative share is interpolation noise past closure.
+        return folded, dry - folded, np.maximum(r.force_per_mm(h) - dry, 0.0)
 
     def held_kpa(self, h) -> np.ndarray:
         ref = self.response if self.response.pressure_kpa > 0 else self.reference
@@ -122,8 +123,8 @@ def section(params, h: float) -> dict:
         "h": float(h),
         "outer": shape["outer"],
         "inner": shape["inner"],
-        "force_per_mm": float(r.force_per_mm(h)),
-        "pressure_share_per_mm": float(r.force_per_mm(h) - r.force_dry_per_mm(h)),
+        "force_per_mm": float(sum(fl.slices(np.array([h])))[0]),
+        "pressure_share_per_mm": float(fl.slices(np.array([h]))[2][0]),
         "open_area_mm2": float(fl.area(h)),
         "bore_area_mm2": fl.bore,
         "h_contact": float(r.h_contact),
