@@ -24,7 +24,7 @@ Model
     * Mesh: by default 1 element through the wall and 12 around the quarter (48 around the
       tube). Against 2 x 32 for the 3 x 2 mm tube, at 0 and 100 kPa: closing h 0.5 to 0.7 %
       lower, open bore within 0.5 % of the unloaded bore, force within 3.5 % while the tube
-      folds and within 1 % from 10 to 50 % past closure. A wall too thin for that mesh (ID/OD
+      folds and within 1 % from 10 to 40 % past closure (the solved range). A wall too thin for that mesh (ID/OD
       above about 0.85) can stop converging before the bore closes: the sweep is then redone
       once on twice the elements around. Where the static path ends in a snap (the inner
       surface of a fold creasing shut, neo-Hookean creasing), the solver crosses it by dynamic

@@ -999,12 +999,15 @@ export default function ProfileBuilder({
   ]);
 
   /** Gap where inner_gap = 0 at Y=0 (no design margin) */
-  const femClosedGap = useFemClosedGap({ tube_od: tubeOd, tube_id: tubeId, tube_shore_a: tubeShoreA, input_pressure_kpa: pressureKpa, tube_model: tubeModel });
+  const femGap = useFemClosedGap({ tube_od: tubeOd, tube_id: tubeId, tube_shore_a: tubeShoreA, input_pressure_kpa: pressureKpa, tube_model: tubeModel });
+  // FEM: no gap while the tube solves or when the FEM refuses it (never the compliance law's in its place).
+  const femPending = tubeModel === 'fem' && femGap.gap == null;
   const theoreticalGapMm = useMemo(() => {
-    if (tubeModel === 'fem' && femClosedGap != null) return femClosedGap;
+    if (tubeModel === 'fem') return femGap.gap ?? NaN;
     const pMpa = pressureKpa * 1e-3;
     return tubeOd - tubeId - compliance * pMpa;
-  }, [tubeOd, tubeId, compliance, pressureKpa, tubeModel, femClosedGap]);
+  }, [tubeOd, tubeId, compliance, pressureKpa, tubeModel, femGap.gap]);
+  const femGapText = femGap.error ? 'tube refused' : 'solving the tube…';
 
   const gapAcceptBand = useMemo(() => {
     const hi = theoreticalGapMm;
@@ -1923,7 +1926,7 @@ export default function ProfileBuilder({
                 max={0.2}
                 step={0.001}
                 onChange={setGapAtY0MarginMm}
-                secondaryValue={`accept ${gapAcceptBand.lo.toFixed(3)}–${gapAcceptBand.hi.toFixed(3)} mm`}
+                secondaryValue={femPending ? femGapText : `accept ${gapAcceptBand.lo.toFixed(3)}–${gapAcceptBand.hi.toFixed(3)} mm`}
                 description={builderGapAtY0Margin}
               />
 
@@ -2055,7 +2058,7 @@ export default function ProfileBuilder({
                 secondaryValue={
                   optimizeDefaultDistance
                     ? `${(100 * defaultDistSafetyFactor).toFixed(1)}% of max admissible dd per cell`
-                    : `fixed rest gap (CAD) ≈ ${Math.max(0, theoreticalGapMm * defaultDistSafetyFactor - AXIS_BUSHING_PLAY_MM).toFixed(3)} mm`
+                    : femPending ? `fixed rest gap (CAD): ${femGapText}` : `fixed rest gap (CAD) ≈ ${Math.max(0, theoreticalGapMm * defaultDistSafetyFactor - AXIS_BUSHING_PLAY_MM).toFixed(3)} mm`
                 }
                 description={builderDefaultDistMargin}
               />
@@ -2123,7 +2126,7 @@ export default function ProfileBuilder({
             <Button variant="ghost"
               type="button"
               onClick={handleSolve}
-              disabled={theoreticalGapMm <= 0}
+              disabled={theoreticalGapMm <= 0 || femPending}
               loading={solving}
               loadingLabel="Solving"
               className={`flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-lg transition-all hover:bg-emerald-500 ${solving ? '' : 'disabled:cursor-not-allowed disabled:opacity-40'}`}
@@ -2205,6 +2208,9 @@ export default function ProfileBuilder({
           {theoreticalGapMm <= 0 && (
             <p className="text-[10px] text-red-400 text-center">Theoretical gap ≤ 0. Adjust tube dimensions, pressure, or compliance.</p>
           )}
+          {femGap.error && (
+            <p className="text-[10px] text-red-400 text-center" role="alert">{femGap.error}</p>
+          )}
           <div className="rounded-xl border border-neutral-700/70 bg-neutral-900/35 overflow-hidden">
           <Button variant="ghost"
             type="button"
@@ -2226,7 +2232,7 @@ export default function ProfileBuilder({
                 <div>
                   <StatRow
                     label="Theoretical opening gap"
-                    value={<span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-neutral-300'}>{theoreticalGapMm.toFixed(3)} mm</span>}
+                    value={<span className={theoreticalGapMm <= 0 || femGap.error ? 'text-red-400' : 'text-neutral-300'}>{femPending ? femGapText : `${theoreticalGapMm.toFixed(3)} mm`}</span>}
                     highlight={theoreticalGapMm <= 0}
                   />
                 </div>
@@ -2238,7 +2244,7 @@ export default function ProfileBuilder({
                     label="Acceptable gap@Y=0"
                     value={
                       <span className={theoreticalGapMm <= 0 ? 'text-red-400' : 'text-cyan-400'}>
-                        {gapAcceptBand.lo.toFixed(3)} – {gapAcceptBand.hi.toFixed(3)} mm
+                        {femPending ? femGapText : `${gapAcceptBand.lo.toFixed(3)} – ${gapAcceptBand.hi.toFixed(3)} mm`}
                       </span>
                     }
                     highlight={theoreticalGapMm <= 0}

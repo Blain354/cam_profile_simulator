@@ -70,8 +70,10 @@ export function useSection(tube: TubeSpec, h: number | null) {
   return { section: current?.section ?? null, error: current?.error ?? null };
 }
 
-/** The FEM's closed gap (the plate distance at which the bore shuts against the pressure), or null while unknown. */
-export function useFemClosedGap(tube: TubeSpec): number | null {
-  const { section } = useSection(tube, tube.tube_od);
-  return tube.tube_model === 'fem' && section ? section.h_sealed : null;
+/** The FEM's closed gap (the plate distance at which the bore shuts against the pressure): null while it
+ * solves or when the FEM refuses the tube (error says why). */
+export function useFemClosedGap(tube: TubeSpec): { gap: number | null; error: string | null } {
+  const { section, error } = useSection(tube, tube.tube_od);
+  if (tube.tube_model !== 'fem') return { gap: null, error: null };
+  return { gap: section ? section.h_sealed : null, error };
 }
