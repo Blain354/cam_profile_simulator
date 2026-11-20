@@ -1262,8 +1262,10 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       if (!out.found) {
         setOptOut({ found: false, report, vars: sentVars, fixed: sentFixed });
         const widen = `No feasible geometry among ${out.tested} combinations. Widen the ranges, ${heightFixed ? 'change the total height' : 'raise the pivot height limit'}${fast ? ', allow more travel' : ''} or allow more over-squeeze (it must be above the preload).`;
+        const leaked = Object.values(report?.sides ?? {}).reduce((n, side) => n + (side?.seal ?? 0), 0);
         setOptMessage({ ok: false, text: !report ? widen
           : (report.shortlist ?? 0) > 0 ? 'No design passed the limits. The design on screen was kept.'
+          : out.feasible > 0 && leaked > 0 ? `${out.feasible} of ${out.tested} first draws were feasible, but the ${leaked} best tried all leak at rest. Turn off Seal at rest under Limits to see them. The design on screen was kept.`
           : `${widen} The design on screen was kept.` });
         return;
       }
@@ -1406,7 +1408,19 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       <ParameterSlider label="Assembly clearance (mm)" value={params.assembly_clearance} min={0} max={3} step={0.05} onChange={(v) => set('assembly_clearance', v)}
         description="Least gap kept between the two linkages over the whole stroke. Each linkage works in its own plane, a slab as thick as its bars; only what reaches toward the other plane can hit it: the carriage pivot rod and the carriage block, checked in plane where they come this close to a slab across the planes. The Finder refuses designs that come closer. 0.3 mm is assumed." />
       <ParameterSlider label="Plane spacing (mm)" value={params.linkage_plane_spacing} min={0} max={30} step={0.05} onChange={(v) => set('linkage_plane_spacing', v)}
-        description="Distance between the two linkages' mid-planes (the CAD's tube holes sit at ±5.375 mm). The bar thickness under Material and section sets each slab. The carriage block (5.5 mm across, 17.5 x 5 mm in plane) and the 8 mm pivot rod come from the CAD too." />
+        description="Distance between the two linkages' mid-planes (the CAD's tube holes sit at ±5.375 mm). The bar thickness under Material and section sets each slab." />
+      <ParameterSlider label="Carriage block width (mm)" value={params.carriage_block_width} min={0} max={20} step={0.05} onChange={(v) => set('carriage_block_width', v)}
+        description="Carriage block size across the planes, between the two linkages (5.5 mm in the CAD). Half the pivot rod sits in it from its face." />
+      <ParameterSlider label="Carriage block length (mm)" value={params.carriage_block_length} min={0} max={40} step={0.05} onChange={(v) => set('carriage_block_length', v)}
+        description="Carriage block size in the plane, square to the travel (17.5 mm in the CAD)." />
+      <ParameterSlider label="Carriage block height (mm)" value={params.carriage_block_height} min={0} max={20} step={0.05} onChange={(v) => set('carriage_block_height', v)}
+        description="Carriage block size in the plane, along the travel (5 mm in the CAD)." />
+      <ParameterSlider label="Carriage block offset (mm)" value={params.carriage_block_offset} min={-10} max={10} step={0.05} onChange={(v) => set('carriage_block_offset', v)}
+        description="How far the block's centre sits past the pivot rods, away from tube A's anchor wall (0.95 mm in the CAD)." />
+      {!onePiece && (
+        <ParameterSlider label="Pivot rod length (mm)" value={params.carriage_pin_length} min={2} max={20} step={0.5} onChange={(v) => set('carriage_pin_length', v)}
+          description="Carriage pivot rod (8 mm in the CAD): half sits in the carriage, half in the link's eye. Only its reach toward the other linkage counts here." />
+      )}
       {clearanceStat}
       {clearTooSmall && data && (
         <p className="text-[10px] leading-snug text-red-400" role="alert">
@@ -1950,6 +1964,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         <div className="order-1 shrink-0 mb-3 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2 text-sm">
             <label htmlFor={`linkage-y-${kind}`} className="font-medium text-neutral-300">Carriage Y</label>
+            {data?.travel_sign != null && data.travel_sign * (data.anchor_on_top ? -1 : 1) < 0 && (
+              <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the charts. This link pulls, so its carriage moves the other way from a link that pushes for the same Y: the motor turns the other way.">
+                link pulls: carriage runs the other way
+              </span>
+            )}
             <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
           </div>
           <div className="order-last flex items-center justify-between gap-2 pt-1">

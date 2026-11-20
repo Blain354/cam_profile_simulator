@@ -51,7 +51,7 @@ apart, so their members only meet if the slabs overlap; what does cross toward t
 the carriage pivot rod and the carriage block. Each is checked in plane, against the members it
 could hit, only when it comes within assembly_clearance of their slab across the planes (see the
 section above _plane_gaps). compute_linkage reports the gap across the planes and, when something
-is checked, the least in-plane clearance and where (_clearance_exact); the search ends a design's
+is checked, the least clearance and where (_clearance_exact); the search ends a design's
 travel where it is not met (_clearance_search). A member's clash with its own linkage, the tubes,
 the walls or the screw is not checked.
 """
@@ -201,7 +201,8 @@ class LinkageResult:
     sensitivity_y0: float = 0.0      # d(gap)/dY at Y = 0
     pinch_slide: float = 0.0         # pinch point travel along the tube over the stroke
     max_oversqueeze: float = 0.0     # worst squeeze past closure of the closed tube
-    # Assembly (_clearance_exact): in-plane clearance of what reaches the other linkage, None when nothing does.
+    # Assembly (_clearance_exact): clearance of what reaches the other linkage (in plane, and across the
+    # planes when a gap is left there; see _with_across), None when nothing does.
     min_clearance: Optional[float] = None
     min_clearance_y: Optional[float] = None    # |Y| where it occurs
     min_clearance_where: Optional[str] = None  # "<member> A / <member> B": arm, foot or link
@@ -421,7 +422,10 @@ N_FOOT = 161
 #   "carriage"   the carriage block, between the planes: in plane a rectangle that moves with the
 #                carriage, against both linkages' members.
 # Each is checked in plane only when its extent across the planes comes within assembly_clearance
-# of the slab it could hit. The second linkage is the first turned half a turn about (0, h0) at -Y.
+# of the slab it could hit. Its clearance then counts both ways: with a gap g across the planes and
+# d in plane (negative where the outlines overlap), the faces are hypot(g, max(d, 0)) apart, or d
+# when nothing is left across the planes (g <= 0); see _with_across. The second linkage is the
+# first turned half a turn about (0, h0) at -Y.
 N_ARC_EXACT = 24    # chords of a curved link in the Explorer's check
 N_ARC_SEARCH = 4    # and in the search; both subtract the chords' sag, so they never overstate the clearance
 BOX_POSES = 16       # travel steps per box when skipping the pairs of items that stay apart
@@ -506,9 +510,21 @@ def _plane_gaps(p: LinkageParams) -> dict:
     return gaps
 
 
+def _checks(p: LinkageParams) -> dict:
+    """The items of _plane_gaps that come within p.assembly_clearance across the planes, with their gap."""
+    return {k: g for k, g in _plane_gaps(p).items() if g < p.assembly_clearance}
+
+
+def _with_across(d, across):
+    """Clearance of two parts d apart in plane (negative: their outlines overlap) and `across` apart
+    across the planes: their faces are parallel to the planes, so hypot(across, max(d, 0)) when
+    there is a gap across, d when there is none."""
+    return np.hypot(across, np.maximum(d, 0.0)) if across > 0.0 else d
+
+
 def _clearance_flat(p: LinkageParams, checks, seg_a, names, sag_a, seg_b, sag_b, pivot_x, pivot_y, starts, group):
-    """Least in-plane clearance per pose (flat arrays, poses grouped by `starts` / `group`) over the
-    checks asked (see _plane_gaps): linkage A's members seg_a, linkage B's seg_b (already turned),
+    """Least clearance per pose (flat arrays, poses grouped by `starts` / `group`) over the checks
+    asked ({item: gap across the planes}, _checks): linkage A's members seg_a, linkage B's seg_b (already turned),
     carriage pivots at (+-pivot_x, pivot_y). Returns (clearance, label per pose); +inf where no
     item comes near. A pair of items whose boxes over a group stay apart is not measured there."""
     n = np.shape(pivot_y)[0]
@@ -529,22 +545,22 @@ def _clearance_flat(p: LinkageParams, checks, seg_a, names, sag_a, seg_b, sag_b,
     item("B", seg_b, w, sag_b, [nm + " B" for nm in names])
     pairs = []
     if "slabs" in checks:
-        pairs.append(("A", "B"))
+        pairs.append(("A", "B", checks["slabs"]))
     if "pivot rod" in checks:
         # Each linkage's rod, a disc in plane, against the other linkage's members.
         for sign, mine, other in ((-1.0, "B", "A"), (1.0, "A", "B")):
             rod = (sign * pivot_x + 0.0 * pivot_y, pivot_y, sign * pivot_x + 0.0 * pivot_y, pivot_y)
             item("rod " + mine, [rod], p.carriage_pin_diameter / 2.0, [0.0], ["pivot rod " + mine])
-            pairs.append(("rod " + mine, other))
+            pairs.append(("rod " + mine, other, checks["pivot rod"]))
     if "carriage" in checks:
         hx, cy, hy = p.carriage_block_length / 2.0, pivot_y + p.carriage_block_offset, p.carriage_block_height / 2.0
         corners = [(-hx, cy - hy), (hx, cy - hy), (hx, cy + hy), (-hx, cy + hy)]
         edges = [(x1 + 0.0 * cy, y1, x2 + 0.0 * cy, y2) for (x1, y1), (x2, y2) in zip(corners, corners[1:] + corners[:1])]
         item("carriage", edges, 0.0, [0.0] * 4, ["carriage"] * 4)
-        pairs += [("carriage", "A"), ("carriage", "B")]
+        pairs += [("carriage", "A", checks["carriage"]), ("carriage", "B", checks["carriage"])]
     best, label, labels = np.full(n, np.inf), np.full(n, -1), []
     need = p.assembly_clearance
-    for key_x, key_y in pairs:
+    for key_x, key_y, across in pairs:
         for sx, gx, bx, nx in items[key_x]:
             for sy, gy, by, ny in items[key_y]:
                 apart = np.hypot(np.fmax(np.fmax(by[0] - bx[1], bx[0] - by[1]), 0.0), np.fmax(np.fmax(by[2] - bx[3], bx[2] - by[3]), 0.0))
@@ -552,7 +568,7 @@ def _clearance_flat(p: LinkageParams, checks, seg_a, names, sag_a, seg_b, sag_b,
                 at = np.flatnonzero((~(apart - margin[starts] >= need))[group])
                 if not at.size:
                     continue
-                d = _seg_dist(*(v[at] for v in sx), *(v[at] for v in sy)) - margin[at]
+                d = _with_across(_seg_dist(*(v[at] for v in sx), *(v[at] for v in sy)) - margin[at], across)
                 better = ~(d >= best[at])
                 labels.append("%s / %s" % (nx.replace("carriage", "carriage block"), ny))
                 best[at[better]], label[at[better]] = d[better], len(labels) - 1
@@ -563,7 +579,7 @@ def _clearance_flat(p: LinkageParams, checks, seg_a, names, sag_a, seg_b, sag_b,
                 inside = np.zeros(n, dtype=bool)
                 for px, py in ((sy[0], sy[1]), (sy[2], sy[3])):
                     inside |= (np.abs(px) <= hx) & (np.abs(py - cy) <= hy)
-                d = np.where(inside, -gy, np.inf)
+                d = np.where(inside, _with_across(-gy, checks["carriage"]), np.inf)
                 better = d < best
                 if np.any(better):
                     labels.append("carriage block / %s" % ny)
@@ -578,7 +594,7 @@ def _clearance_exact(p: LinkageParams, out: "LinkageResult", y, segs, names, sag
     gaps = _plane_gaps(p)
     out.plane_gap_where = min(gaps, key=gaps.get)
     out.plane_gap = float(gaps[out.plane_gap_where])
-    checks = [k for k, g in gaps.items() if g < p.assembly_clearance]
+    checks = _checks(p)
     if not checks:
         return
     n = len(y)
@@ -1273,7 +1289,9 @@ class LinkageSearch:
     objective: str = OBJECTIVE_RESPONSE
     max_stroke: float = 3.0           # mm, longest travel the response search may use
     pivot_side: str = "normal"        # carriage pivot: "normal" (far side), "inverted" (tube side) or "both"
-    require_seal: bool = True         # refuse a design whose closed tube leaks at Y = 0 once the parts flex
+    # Refuse a design whose closed tube leaks at Y = 0 once the parts flex (sealed_after_flex False).
+    # A design with no force figures (no compliance, no pin or pad) has no verdict and is not refused.
+    require_seal: bool = True
 
 
 def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
@@ -1307,7 +1325,7 @@ def _arc_angle(l1, cx, cy, bx, by, px, py, foot):
 
 
 def _clearance_search(p: LinkageParams, checks, measure, xa, xb, l1, h0, sgn, y, pose_a, pose_b, alpha, side) -> np.ndarray:
-    """In-plane clearance per design (rows) and per Y >= 0 (columns) where `measure` is True, over
+    """Clearance per design (rows) and per Y >= 0 (columns) where `measure` is True, over
     the checks _plane_gaps asks for; +inf elsewhere. pose_a: linkage A's (joint x, y, pinch x, y)
     at +Y; pose_b the same at -Y, which turned half a turn about (0, h0) is linkage B at +Y.
     A curved link is N_ARC_SEARCH chords less their sag."""
@@ -1387,8 +1405,7 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
         else:
             alpha, arc_side = np.zeros_like(l2), np.zeros_like(l2)
 
-        gaps = _plane_gaps(p)
-        checks = [k for k, g in gaps.items() if g < p.assembly_clearance]
+        checks = _checks(p)
 
         def clearance(measure):
             return _clearance_search(p, checks, measure, xa, xb, l1, h0, sgn, y, (jx, jy, tip_x, tip_y), (cx, cy, ctip_x, ctip_y), alpha, arc_side)
@@ -1526,7 +1543,7 @@ def _one_piece_score(q: LinkageParams, s: LinkageSearch):
     r = compute_linkage(q)
     if not r.feasible or r.flexure is None:
         return np.inf, 0.0, "no_flow"
-    if s.require_seal and not r.sealed_after_flex:
+    if s.require_seal and r.sealed_after_flex is False:
         return np.inf, 0.0, "seal"
     # The part gives way, so the closed tube's squeeze is read on the loaded gap, as jam_y is.
     crushed = _crushed(r, s, r.gap_loaded_a)
@@ -1656,7 +1673,7 @@ def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[Linka
             # tube and the clearance between the two linkages allow, rounded to 0.05 mm.
             out.stroke = s.max_stroke
         r = compute_linkage(replace(out, chamber_volume_ml=0.0))
-        if s.require_seal and not r.sealed_after_flex:
+        if s.require_seal and r.sealed_after_flex is False:
             side["seal"] += 1
             continue
         if s.objective == OBJECTIVE_RESPONSE:
@@ -1802,7 +1819,7 @@ def _one_piece_pick(s: LinkageSearch, ctx: dict, report: dict) -> Tuple[Optional
         # Keep it only on a solve of exactly the design returned, at its own stroke.
         unusable = not r.feasible or r.jam_y is not None or _crushed(r, s, r.gap_loaded_a).size > 0
         broken = ("no_flow" if unusable else "collision" if r.collision_y is not None
-                  else "seal" if s.require_seal and not r.sealed_after_flex else _one_piece_limit(q, r, travel))
+                  else "seal" if s.require_seal and r.sealed_after_flex is False else _one_piece_limit(q, r, travel))
         if broken:
             report["rejected"][broken] += 1
             report["passed"] -= 1

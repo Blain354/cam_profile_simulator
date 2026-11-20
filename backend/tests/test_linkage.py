@@ -584,6 +584,21 @@ class LinkageTests(unittest.TestCase):
         self.assertAlmostEqual(r.min_clearance, -1.0)                 # half a bar inside
         self.assertTrue(r.min_clearance_where.startswith("carriage block / "))
         self.assertEqual(r.collision_y, 0.0)
+        # A gap left across the planes counts: a rod 0.1 mm short of the other slab, over A's link in
+        # plane, is 0.1 mm clear of it, not overlapping; and 4.75 mm slabs leave the block 0.25 mm.
+        q = replace(LinkageParams(), carriage_pin_length=13.05)
+        r = compute_linkage(q)
+        self.assertAlmostEqual(r.plane_gap, 0.1)
+        y = np.array(r.Y_positions)
+        by = r.pivot_height_y0 + r.travel_sign * y
+        flat = np.array([min(float(linkage._seg_dist(-xb, py, -xb, py, *seg)) for seg in ((r.anchor_x, 0.0, r.joint_x[k], r.joint_y[k]), (xb, py, r.joint_x[k], r.joint_y[k])))
+                         for k, py in enumerate(by)]) - 0.75 - 1.0
+        self.assertLess(flat.min(), 0.0)
+        self.assertAlmostEqual(r.min_clearance, 0.1, places=9)
+        self.assertAlmostEqual(r.collision_y, float(np.abs(y[np.hypot(0.1, np.maximum(flat, 0.0)) < 0.3 - 1e-9]).min()), places=9)
+        r = compute_linkage(replace(PENDULUM, compliant=True, member_thickness=4.75))
+        self.assertEqual((r.plane_gap_where, r.collision_y), ("carriage", 0.0))
+        self.assertAlmostEqual(r.min_clearance, 0.25)
         # The inverted elbow keeps its rod on its own side: the same gaps as normal.
         self.assertEqual(compute_linkage(ELBOW_INV).plane_gap, 1.125)
 
@@ -617,6 +632,12 @@ class LinkageTests(unittest.TestCase):
             self.assertNotEqual(on[0], off[0])
             self.assertGreater(on[3]["sides"]["normal"]["seal"], 0)
         self.assertEqual(off[3]["sides"]["normal"]["seal"], 0)
+        # No force figures (a simple tube with no compliance): no seal verdict, so nothing is refused for it.
+        blind = replace(LEVER, tube_model="simple", compliance=0.0)
+        self.assertIsNone(compute_linkage(blind).sealed_after_flex)
+        found = optimize_linkage(blind, LEVER_SEARCH)
+        self.assertIsNotNone(found[0])
+        self.assertEqual(found[3]["sides"]["normal"]["seal"], 0)
 
     def test_both_pivot_sides_are_searched_and_the_better_kept(self):
         runs = {side: optimize_linkage(LEVER, replace(LEVER_SEARCH, pivot_side=side)) for side in ("normal", "inverted", "both")}
@@ -664,6 +685,29 @@ class LinkageTests(unittest.TestCase):
         self.assertFalse(main._linkage_params(req).pivot_inverted)
         self.assertEqual(req.pivot_side, "normal")
         self.assertEqual(main._linkage_params(req).assembly_clearance, 0.3)
+
+    def test_optimize_route_passes_every_search_field(self):
+        # The route builds LinkageSearch from the request's fields: one missing there is a 500.
+        import os
+        import sys
+        import tempfile
+        try:
+            from fastapi.testclient import TestClient
+        except Exception as exc:   # httpx missing
+            self.skipTest(f"TestClient unavailable: {exc}")
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        os.environ.setdefault("SIM_DB_PATH", os.path.join(tempfile.mkdtemp(), "test.db"))
+        import main
+        client = TestClient(main.app)
+        seen = []
+        with mock.patch.object(main, "optimize_linkage", side_effect=lambda p, s: seen.append(s) or (None, 0, 0, {})):
+            for body in ({"linkage_type": "lever"}, {"linkage_type": "lever", "pivot_side": "both", "require_seal": False}):
+                self.assertEqual(client.post("/api/linkage/optimize", json=body).status_code, 200)
+        self.assertEqual([(s.pivot_side, s.require_seal) for s in seen], [("normal", True), ("both", False)])
+        self.assertEqual(client.post("/api/linkage/optimize", json={"pivot_side": "sideways"}).status_code, 422)
+        got = client.post("/api/linkage/optimize", json={"linkage_type": "elbow", "max_stroke": 5.0}).json()
+        self.assertTrue(got["found"])
+        self.assertEqual(got["search_report"]["pivot_side"], "normal")
 
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))

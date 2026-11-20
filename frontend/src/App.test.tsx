@@ -89,6 +89,16 @@ test('a search the limits rejected says why and keeps the design', async () => {
   await findByText('No design passed the limits. The design on screen was kept.')
 })
 
+test('a rigid search whose designs all leak at rest says so, not that nothing was feasible', async () => {
+  const bodies = stubLinkage({ found: false, feasible: 40, tested: 300, search_report: { model: 'rigid', shortlist: 0, passed: 0, rejected: {}, sides: { normal: { feasible: 40, collision: 0, solved: 0, passed: 0, seal: 12, found: false, score: null } }, pivot_side: null } })
+  const { getByRole, findByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
+  await findByText('40 of 300 first draws were feasible, but the 12 best tried all leak at rest. Turn off Seal at rest under Limits to see them. The design on screen was kept.')
+  await findByText('Normal: 40 feasible, 0 refused for the clearance, 12 leaking at rest, nothing found.')
+  expect(bodies[0].require_seal).toBe(true)
+  expect(bodies[0].pivot_side).toBe('normal')
+})
+
 test('a rigid search does not print an empty shortlist count', async () => {
   stubLinkage({ found: true, feasible: 3, tested: 30, search_report: { model: 'rigid', shortlist: 0, passed: 0, rejected: { stress: 0, thrust: 0, eye: 0, rod: 0, no_flow: 0 } }, params: { bar2_length: 12, stroke: 1.5 }, result: minimalResult })
   const { getByRole, findByText, queryByText } = render(<App />)

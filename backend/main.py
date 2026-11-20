@@ -877,6 +877,7 @@ class LinkageOptimizeRequest(LinkageRequest):
     objective: str = "response"
     max_stroke: float = Field(3.0, gt=0, le=50)
     pivot_side: str = Field("normal", pattern="^(normal|inverted|both)$")
+    require_seal: bool = True
 
 
 def _linkage_params(req: LinkageRequest) -> LinkageParams:
