@@ -37,8 +37,10 @@ import numpy as np
 
 try:  # run from backend/ (uvicorn main:app) or as the backend package (tests)
     from simulation import P_ATM, R_AIR, T_AMB, _compute_orifice_mass_flow_rate
+    import tube_model as tube_law
 except ImportError:
     from .simulation import P_ATM, R_AIR, T_AMB, _compute_orifice_mass_flow_rate
+    from . import tube_model as tube_law
 
 TYPE_ELBOW = "elbow"
 TYPE_LEVER = "lever"
@@ -74,7 +76,9 @@ class LinkageParams:
     tube_id: float = 2.0
     tube_od: float = 3.0
     input_pressure_kpa: float = 100.0
-    compliance: float = 0.7          # mm/MPa
+    compliance: float = 0.7          # mm/MPa, simple tube model only
+    tube_model: str = tube_law.DEFAULT_TUBE_MODEL   # "fem": tube section solved by tube_fem; "simple": the compliance law
+    tube_shore_a: float = tube_law.DEFAULT_SHORE_A  # silicone hardness, FEM only (Young's modulus by Gent's relation)
     chamber_volume_ml: float = 10.0  # mL, 0 disables the chamber traces
     motor_speed: float = 100.0       # RPM
     lead_screw_pitch: float = 0.5    # mm/rev
@@ -172,7 +176,7 @@ class LinkageResult:
     flex_b: List[Optional[float]] = field(default_factory=list)
     flex_link_a: List[Optional[float]] = field(default_factory=list)  # share of flex_a from the link's stretch
     flex_bend_a: List[Optional[float]] = field(default_factory=list)  # share of flex_a from bending
-    tube_modulus_mpa: Optional[float] = None       # wall modulus implied by the compliance
+    tube_modulus_mpa: Optional[float] = None       # wall modulus: implied by the compliance (simple), Young's modulus (FEM)
     seal_force_min: Optional[float] = None         # N per tube, pin just closed against the pressure (no preload)
     seal_force: Optional[float] = None             # N per tube at Y = 0, preload included
     jam_y: Optional[float] = None                  # mm of travel where the pin reaches the wall through the closed tube
@@ -213,6 +217,9 @@ def _joint(l1, l2, xa, xb, h):
 def _closure(p: LinkageParams) -> Tuple[float, float, float]:
     """wall_x, closed gap, full-open gap (all mm)."""
     wall_x = p.tube_center_x + p.tube_od / 2.0
+    if tube_law.uses_fem(p):
+        fem = tube_law.law(p)
+        return wall_x, fem.closed_gap, fem.full_open_gap
     opening = p.compliance * p.input_pressure_kpa * 1e-3
     closed_gap = (p.tube_od - p.tube_id) - opening
     # Same area law as the cam model: (pi/2 * ID) * inner_gap, capped at the bore.
@@ -280,6 +287,8 @@ def _pivot_height_y0(l1, root, xb, cx, cy):
 
 
 def _area_mm2(p: LinkageParams, gap: np.ndarray, closed_gap: float) -> np.ndarray:
+    if tube_law.uses_fem(p):
+        return tube_law.law(p).area(gap)
     inner = np.clip(gap - closed_gap, 0.0, None)
     return np.minimum((np.pi / 2.0) * p.tube_id * inner, np.pi * (p.tube_id / 2.0) ** 2)
 
@@ -371,14 +380,21 @@ def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarr
     95 % squeeze, so a pin driven into the wall shows up as a force the motor cannot give
     rather than as a small linear one. Past roughly 25 % squeeze this is an order of
     magnitude, not a prediction.
+
+    With tube_model "fem" the per-slice law is the finite-element section (tube_law.FemLaw.slices),
+    and only the slicing along the tube axis and the OD / 2 drag-down allowance stay from above:
+    the 2D section cannot see the tube bending along its axis beside a narrow pin, so the same
+    allowance is kept, on the folding and pressure parts only (that length is folded, not squeezed).
     """
+    fem = tube_law.law(p) if tube_law.uses_fem(p) else None
     wall = p.tube_od - p.tube_id
-    k_wall = 1.0 / p.compliance                       # MPa per mm of squeeze
-    e_tube = wall / p.compliance
-    t, r_mid = wall / 2.0, (p.tube_id + p.tube_od) / 4.0
-    k_ring = e_tube * t ** 3 / (12.0 * 0.1488 * r_mid ** 3)   # N/mm of tube per mm, ring between two plates
-    pressure = p.input_pressure_kpa * 1e-3
-    w_flat = np.pi / 2.0 * p.tube_id + wall
+    if fem is None:
+        k_wall = 1.0 / p.compliance                       # MPa per mm of squeeze
+        e_tube = wall / p.compliance
+        t, r_mid = wall / 2.0, (p.tube_id + p.tube_od) / 4.0
+        k_ring = e_tube * t ** 3 / (12.0 * 0.1488 * r_mid ** 3)   # N/mm of tube per mm, ring between two plates
+        pressure = p.input_pressure_kpa * 1e-3
+        w_flat = np.pi / 2.0 * p.tube_id + wall
 
     r = p.pin_diameter / 2.0
     half = p.pad_length / 2.0 if p.linkage_type == TYPE_PENDULUM else 0.0
@@ -393,6 +409,8 @@ def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarr
     h = np.fmin(face, np.fmin(near, far))
 
     def slices(h):
+        if fem is not None:
+            return fem.slices(h)
         fold = np.clip(p.tube_od - h, 0.0, p.tube_id)
         squeeze = np.clip(wall - h, 0.0, 0.95 * wall)
         return (
@@ -435,7 +453,8 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     second linkage is the first at -Y with its pull on the carriage reversed.
     Friction in the pivots and on the tube is left out.
     """
-    if p.compliance <= 0:
+    fem = tube_law.law(p) if tube_law.uses_fem(p) else None
+    if fem is None and p.compliance <= 0:
         out.forces_message = "No forces: they are derived from the tube compliance, which is 0."
         return None
     if p.pin_diameter <= 0 and half == 0.0:
@@ -515,7 +534,7 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     out.thrust = _nan_to_none(np.abs(thrust))
     out.flex_a, out.flex_b = _nan_to_none(flex), _nan_to_none(flex[::-1])
     out.flex_link_a, out.flex_bend_a = _nan_to_none(flex * c_link / c_all), _nan_to_none(flex * c_bend / c_all)
-    out.tube_modulus_mpa = wall / p.compliance
+    out.tube_modulus_mpa = fem.e_mpa if fem is not None else wall / p.compliance
     if not ok[i0] or not np.isfinite(force[i0]):
         return loaded
     out.seal_force = float(force[i0])
@@ -544,8 +563,11 @@ def _forces(p: LinkageParams, out: LinkageResult, y, ok, l1, xa, xb, h0, sgn, jx
     out.buckling_factor = float(min(factors)) if factors else None
     out.pin_stiffness = float(1.0 / c_all[i0]) if c_all[i0] > 0 else None
     out.flex_y0 = float(flex[i0])
-    held = (wall - (gap[i0] + flex[i0])) / p.compliance          # MPa
-    out.seal_pressure_y0_kpa = float(max(held, 0.0) * 1000.0)
+    if fem is not None:
+        out.seal_pressure_y0_kpa = float(fem.held_kpa(gap[i0] + flex[i0]))
+    else:
+        held = (wall - (gap[i0] + flex[i0])) / p.compliance          # MPa
+        out.seal_pressure_y0_kpa = float(max(held, 0.0) * 1000.0)
     out.sealed_after_flex = bool(gap[i0] + flex[i0] <= closed_gap + 1e-12)
     return loaded
 
@@ -690,7 +712,8 @@ class _Flexure:
         travel = sgn * y
         # Screw thrust to bend the two parts with no tube in place: the same spring on both sides.
         out.spring_rate = float(2.0 * abs(self.r_mm[i_b, 1]))
-        if p.compliance <= 0 or (p.pin_diameter <= 0 and self.half == 0.0):
+        fem = tube_law.law(p) if tube_law.uses_fem(p) else None
+        if (fem is None and p.compliance <= 0) or (p.pin_diameter <= 0 and self.half == 0.0):
             out.forces_message = "No pin force: it needs a tube compliance above 0 and a pin diameter or a pad."
             force = np.zeros_like(y)
             pushed = np.zeros_like(y)
@@ -788,14 +811,17 @@ class _Flexure:
             return None
         out.force_a, out.force_b = _nan_to_none(force_out), _nan_to_none(force_out[::-1])
         out.flex_a, out.flex_b = _nan_to_none(flex_out), _nan_to_none(flex_out[::-1])
-        out.tube_modulus_mpa = wall / p.compliance
+        out.tube_modulus_mpa = fem.e_mpa if fem is not None else wall / p.compliance
         out.seal_force = float(force[i0])
         out.seal_force_min = float(sum(_pinch_force(p, np.array([closed_gap]), st[i0:i0 + 1], ct[i0:i0 + 1]))[0])
         out.seal_force_flatten, out.seal_force_squeeze, out.seal_force_pressure = (float(v[i0]) for v in parts)
         out.max_pinch_force = float(np.nanmax(force_out))
         out.max_wall_strain = float(np.clip(wall - np.nanmin(np.where(np.isfinite(force_out), loaded, np.nan)), 0.0, wall) / wall)
         out.flex_y0 = float(pushed[i0])
-        out.seal_pressure_y0_kpa = float(max((wall - loaded[i0]) / p.compliance, 0.0) * 1000.0)
+        if fem is not None:
+            out.seal_pressure_y0_kpa = float(fem.held_kpa(loaded[i0]))
+        else:
+            out.seal_pressure_y0_kpa = float(max((wall - loaded[i0]) / p.compliance, 0.0) * 1000.0)
         out.sealed_after_flex = bool(loaded[i0] <= closed_gap + 1e-12)
         return loaded
 
@@ -808,7 +834,10 @@ def compute_linkage(p: LinkageParams) -> LinkageResult:
     xa, xb = side * p.anchor_distance, p.pivot_offset
     reach, delta = _body(p, l2, p.lever_length)
     half, phi = _pad(p)
-    wall_x, closed_gap, full_open_gap = _closure(p)
+    try:
+        wall_x, closed_gap, full_open_gap = _closure(p)
+    except tube_law.TubeModelError as e:
+        return LinkageResult(False, str(e))
     r_pin = p.pin_diameter / 2.0
     x_closed = -(wall_x - (closed_gap - p.preload) - r_pin)
 

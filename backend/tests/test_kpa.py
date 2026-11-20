@@ -90,12 +90,13 @@ class SamePhysicsTests(unittest.TestCase):
 
     def _cam(self, kpa: float, rtol: float):
         ref = self.ref["cam"]
-        result = compute_simulation(SimulationParams(input_pressure_kpa=kpa, **ref["params"]))
+        # The reference was frozen on the simple tube law.
+        result = compute_simulation(SimulationParams(input_pressure_kpa=kpa, tube_model="simple", **ref["params"]))
         self._assert_same(_sample(result.__dict__), ref["result"], rtol)
 
     def _linkage(self, kpa: float, rtol: float):
         ref = self.ref["linkage"]
-        result = _sample(compute_linkage(LinkageParams(input_pressure_kpa=kpa, **ref["params"])).__dict__)
+        result = _sample(compute_linkage(LinkageParams(input_pressure_kpa=kpa, tube_model="simple", **ref["params"])).__dict__)
         want = dict(ref["result"])
         want["seal_pressure_y0_kpa"] = want.pop("seal_pressure_y0_psi") * 6.89476
         self._assert_same(result, want, rtol)

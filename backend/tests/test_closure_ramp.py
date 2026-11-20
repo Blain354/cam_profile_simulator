@@ -45,7 +45,8 @@ class ClosureRampTests(unittest.TestCase):
         np.testing.assert_allclose(distance, [1.0, 2.6], atol=1e-12)
 
     def test_compliance_and_pressure_govern_flow_cutoff(self):
-        params = SimulationParams(ramp_enabled=True, default_distance=1.1)
+        # The compliance law is the simple tube model's.
+        params = SimulationParams(ramp_enabled=True, default_distance=1.1, tube_model="simple")
         first_open = []
         for compliance in (0.2, 0.7, 2.0):
             p = replace(params, compliance=compliance)
@@ -67,7 +68,7 @@ class ClosureRampTests(unittest.TestCase):
 
     def test_geometric_zero_does_not_artificially_force_zero_flow(self):
         # With this deliberately soft tube, pressure expansion exceeds wall thickness.
-        result = compute_simulation(SimulationParams(ramp_enabled=True, compliance=5.0, input_pressure_kpa=206.8))
+        result = compute_simulation(SimulationParams(ramp_enabled=True, compliance=5.0, input_pressure_kpa=206.8, tube_model="simple"))
         self.assertGreater(result.flow_l_min[0], 0.0)
         self.assertEqual(result.cam_X[0], 1.5)
 

@@ -103,7 +103,8 @@ class LinkageTests(unittest.TestCase):
         self.assertAlmostEqual(compute_linkage(replace(PENDULUM, stroke=0.3, preload=0.0, contact_deformation=False)).seal_force, short.seal_force_min, places=6)
 
     def test_forces_absent_rather_than_infinite(self):
-        for change in ({"compliance": 0.0}, {"pin_diameter": 0.0}, {"member_width": 0.0}):
+        # A zero compliance only means something to the simple tube law.
+        for change in ({"compliance": 0.0, "tube_model": "simple"}, {"pin_diameter": 0.0}, {"member_width": 0.0}):
             r = compute_linkage(replace(LinkageParams(), **change))
             self.assertIsNone(r.seal_force)
             self.assertTrue(r.forces_message)
@@ -338,8 +339,9 @@ class LinkageTests(unittest.TestCase):
         self.assertEqual(r.stress_b, r.stress_a[::-1])
         self.assertIn(r.max_stress_where, ("arm", "foot", "link"))
         self.assertIn(r.max_stress_spot, ("shell", "joint", "carriage", "span"))
-        # A stroke long enough to jam the closed tube still gives a clean result.
-        long = compute_linkage(replace(p, stroke=4.0))
+        # A stroke long enough to jam the closed tube still gives a clean result. (The FEM tube
+        # resists a deep squeeze more than the simple law: this part gives way before it jams.)
+        long = compute_linkage(replace(p, stroke=4.0, tube_model="simple"))
         self.assertIsNotNone(long.jam_y)
         json.dumps(long.__dict__, allow_nan=False)
         # A thinner section bends more easily: less thrust and less stress for the same travel.
@@ -367,7 +369,7 @@ class LinkageTests(unittest.TestCase):
         self.assertIsNone(compute_linkage(replace(LEVER, compliant=True)).flexure)
         self.assertIsNone(compute_linkage(PENDULUM).flexure)
         # No tube stiffness to push with: the part's own figures are still there.
-        bare = compute_linkage(replace(p, compliance=0.0))
+        bare = compute_linkage(replace(p, compliance=0.0, tube_model="simple"))
         self.assertIsNone(bare.seal_force)
         self.assertGreater(bare.max_stress_mpa, 0.0)
         self.assertTrue(bare.forces_message)
@@ -434,7 +436,7 @@ class LinkageTests(unittest.TestCase):
         short_rod = replace(best, carriage_pin_length=0.05)
         self.assertEqual(linkage._one_piece_limit(short_rod, compute_linkage(short_rod), best.stroke), "eye")
         # no_flow comes first: a stroke that jams the closed tube has no travel to check limits on.
-        jam = replace(p, stroke=4.0, member_strength_mpa=1e-3)
+        jam = replace(p, stroke=4.0, member_strength_mpa=1e-3, tube_model="simple")
         self.assertIsNotNone(compute_linkage(jam).jam_y)
         self.assertEqual(linkage._one_piece_score(jam, replace(PENDULUM_SEARCH, objective="target"))[2], "no_flow")
 
