@@ -316,6 +316,8 @@ simulator reads them back. The only default is the pendulum tube centre (`tube_c
 tube-axis distance from the screw axis), from the variable `#pend_CALC_tube_center`
 (`DEFAULT_MEASURED` in `backend/onshape_variables.py`). The Part Studio is the element id in
 `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`, on the table's document and branch. It is not chosen by name.
+A measured input is never written to the table: the pendulum export has no `pend_tube_center`, so the
+CAD places the tube itself and the simulator follows its measure.
 
 | Env | Meaning |
 |-----|---------|
