@@ -73,15 +73,20 @@ class ClosureRampTests(unittest.TestCase):
         self.assertEqual(result.cam_X[0], 1.5)
 
     def test_default_opening_flow_remains_close(self):
-        params = SimulationParams(input_pressure_kpa=103.4)
-        plateau = compute_simulation(params)
-        ramp = compute_simulation(replace(params, ramp_enabled=True))
-        y = np.linspace(0.0, min(plateau.Y_end, ramp.Y_end), 500)
-        old_flow = np.interp(y, plateau.Y_positions, plateau.flow_l_min)
-        new_flow = np.interp(y, ramp.Y_positions, ramp.flow_l_min)
-        self.assertLess(np.max(np.abs(new_flow - old_flow)) / max(plateau.flow_l_min), 0.002)
-        self.assertLess(abs(ramp.total_volume_ml / plateau.total_volume_ml - 1.0), 0.002)
-        self.assertEqual(max(ramp.flow_l_min), max(plateau.flow_l_min))
+        # Total volume runs up to the end of the sampled stroke, trimmed where the flow plateaus.
+        # The FEM bore creeps toward full bore over the last millimetre, so the two samplings trim
+        # about 0.01 mm apart: 1 % on the volume there, while the flows agree within 0.1 %.
+        for model, volume_tol in (("simple", 0.002), ("fem", 0.01)):
+            with self.subTest(tube_model=model):
+                params = SimulationParams(input_pressure_kpa=103.4, tube_model=model)
+                plateau = compute_simulation(params)
+                ramp = compute_simulation(replace(params, ramp_enabled=True))
+                y = np.linspace(0.0, min(plateau.Y_end, ramp.Y_end), 500)
+                old_flow = np.interp(y, plateau.Y_positions, plateau.flow_l_min)
+                new_flow = np.interp(y, ramp.Y_positions, ramp.flow_l_min)
+                self.assertLess(np.max(np.abs(new_flow - old_flow)) / max(plateau.flow_l_min), 0.002)
+                self.assertLess(abs(ramp.total_volume_ml / plateau.total_volume_ml - 1.0), volume_tol)
+                self.assertEqual(max(ramp.flow_l_min), max(plateau.flow_l_min))
 
     def test_solver_propagates_ramp_to_every_candidate(self):
         for optimize in (False, True):

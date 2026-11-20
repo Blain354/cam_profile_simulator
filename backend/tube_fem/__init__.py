@@ -12,18 +12,23 @@ Model
     * Plane strain (the slice is held in length by the tube on either side), large
       deformation, total Lagrangian.
     * Material: compressible neo-Hookean, W = mu/2 (J^-2/3 I1 - 3) + kappa/4 (J^2 - 1 - 2 ln J),
-      mu = E / (2 (1 + nu)), kappa = E / (3 (1 - 2 nu)), nu = 0.49 by default (silicone is
-      nearly incompressible: kappa is about 50 mu).
+      mu = E / (2 (1 + nu)), kappa = E / (3 (1 - 2 nu)), nu = 0.4995 by default: kappa is about
+      1000 mu, as for silicone (bulk modulus near 1 GPa, shear modulus near 1 MPa). The solid
+      section then keeps its area within 0.3 % down to the deepest squeeze solved. Against
+      nu = 0.49 (kappa = 50 mu, which lost 5 % of the area), the force is 2 to 3 % higher
+      10 to 25 % past closure, 6 % higher at 50 %; the closing h does not move.
     * Elements: 9-node quadrilaterals, 3 x 3 Gauss points; the volume term uses J projected,
       element by element, onto a linear field (Q9/P3 mixed element, discontinuous linear pressure
       condensed out), so the section neither locks as nu -> 0.5 nor goes soft in bending
       (test_tube_fem checks the ring stiffness from nu = 0.3 to 0.4999 against Castigliano).
     * Mesh: by default 1 element through the wall and 12 around the quarter (48 around the
-      tube). Against 3 x 24 at the same plate distance: closing h 0.8 % lower, force 1.6 %
-      higher on the open tube, 0.5 % just past closure (zero pressure). A finer radial mesh resolves the crease that forms on the
-      inner surface of each fold (neo-Hookean creasing, near 35 % compression of that surface):
-      the static path then snaps, and the solver crosses it by dynamic relaxation (fem.relax),
-      slowly and not always; the default mesh does not resolve the crease.
+      tube). Against 2 x 32 for the 3 x 2 mm tube, at 0 and 100 kPa: closing h 0.5 to 0.7 %
+      lower, open bore within 0.5 % of the unloaded bore, force within 3.5 % while the tube
+      folds and within 1 % from 10 to 50 % past closure. A wall too thin for that mesh (ID/OD
+      above about 0.85) can stop converging before the bore closes: the sweep is then redone
+      once on twice the elements around. Where the static path ends in a snap (the inner
+      surface of a fold creasing shut, neo-Hookean creasing), the solver crosses it by dynamic
+      relaxation (fem.relax) and keeps only a true equilibrium.
     * Symmetry: with frictionless parallel plates the section is symmetric about the mid-plane
       between the plates and about the axis normal to them. A quarter is meshed (x >= 0, y >= 0).
       The bore closing on itself becomes contact of the inner wall with the mid-plane y = 0.
@@ -32,7 +37,7 @@ Model
       until the worst penetration is under 1e-3 of the wall thickness.
     * Air: the gauge pressure acts as a follower load on the part of the bore wall that is not
       resting on the mid-plane. A neo-Hookean tube balloons past about mu ln(OD/ID) of pressure
-      (0.136 E for ID/OD = 2/3, so 330 kPa at Shore 50): the free inflation then fails with a
+      (0.135 E for ID/OD = 2/3, so 330 kPa at Shore 50): the free inflation then fails with a
       TubeFemError that says so. The opening of the tube under pressure comes out of the
       elasticity; no empirical compliance.
     * Loading: free inflation first, then the plates close in steps of h, Newton at each step,
@@ -59,10 +64,22 @@ Not modelled
     stiffening at the pin's round ends: the caller decides what length of tube to charge),
     friction on the plates and in the bore, contact between two tubes, viscoelasticity and
     the Mullins softening of silicone, its stiffening at large stretch (neo-Hookean has none),
-    the tube's own pre-stress. With nu = 0.49 the section loses up to 5 % of its area at 50 %
-    squeeze past closure (the mean stress over kappa); nu = 0.4999 keeps it within 0.1 %.
+    the tube's own pre-stress. Not compared with a measured tube: E comes from the Shore
+    hardness through Gent's empirical relation, so expect the absolute forces to be off by
+    the scatter of that relation (tens of percent); closing h and open bore depend on E only
+    through p/E.
 
-Speed: about 0.8 s for a tube under pressure (two sweeps) in the production image. The
+Force deep past closure
+    Once the bore is shut, the force is that of a nearly incompressible strip squeezed between
+    frictionless plates: about mu (lambda^-2 - lambda^2) times the solid area over h, lambda the
+    squeeze ratio, which gives 25 to 28 N/mm at 50 % past closure for a 3 x 2 mm Shore 50
+    tube (the FEM: 27.5). That steep rise is confinement, not the contact penalty (ten times
+    stiffer or softer moves it under 0.3 %) nor locking (the Q9/P3 element). Friction on the
+    plates, left out, would only raise it. The sweep stops 40 % past closure; deeper, the
+    force is extrapolated (about 2 % under a solved value at 50 %).
+
+Speed: about 0.4 s per sweep in the production image (the zero-pressure sweep and one per
+pressure). The
 response depends only on ID/OD, p/E and nu, so it is solved dimensionless and cached on
 those (in memory, and on disk when a cache directory is given).
 """
@@ -84,15 +101,19 @@ from .fem import NotConverged, QuarterRing, State, relax, solve_step
 __all__ = ["TubeResponse", "TubeFemError", "solve_tube", "solve_tube_cached", "shore_a_to_e_mpa",
            "CLOSED_AREA_FRACTION", "SOLVER_VERSION"]
 
-SOLVER_VERSION = 1
-NU_DEFAULT = 0.49
+SOLVER_VERSION = 2
+NU_DEFAULT = 0.4995
 CLOSED_AREA_FRACTION = 1e-3      # bore closed below this share of the unloaded bore area
 PEN_TOL_WALL = 1e-3              # contact penetration tolerance, share of the wall thickness
-SQUEEZE_PAST_CLOSURE = 0.5       # the sweep tries to go to h = (1 - this) * closing h
+SQUEEZE_PAST_CLOSURE = 0.4       # the sweep tries to go to h = (1 - this) * closing h; extrapolated below
 
 
 class TubeFemError(RuntimeError):
     pass
+
+
+class _SqueezeFailed(TubeFemError):
+    """The squeeze stopped converging before the bore closed (not a balloon)."""
 
 
 def shore_a_to_e_mpa(shore_a: float) -> float:
@@ -297,7 +318,7 @@ def _sweep(id_over_od, p, nu, nr, nt, grade, h_list=None, depth=SQUEEZE_PAST_CLO
                 out.newton += used
             except NotConverged:
                 if h_close is None:
-                    raise TubeFemError("the squeeze stops converging at h = %.4f OD, before the bore closes: %s" % (h, e))
+                    raise _SqueezeFailed("the squeeze stops converging at h = %.4f OD, before the bore closes: %s" % (h, e))
                 break       # past closure: keep what was solved, extrapolate beyond
         st, yp = st2, yp - step / 2.0
         out.newton += outer_it + 1
@@ -331,7 +352,11 @@ def solve_tube(od: float, id: float, e_mpa: Optional[float] = None, nu: float = 
     if not (od > id > 0.0) or e_mpa <= 0.0 or not 0.0 < nu < 0.5 or pressure_kpa < 0.0:
         raise ValueError("need od > id > 0, E > 0, 0 < nu < 0.5 and a pressure >= 0")
     ratio, p = id / od, pressure_kpa * 1e-3 / e_mpa
-    wet, _ = _sweep(ratio, p, nu, nr, nt, grade)
+    try:
+        wet, _ = _sweep(ratio, p, nu, nr, nt, grade)
+    except _SqueezeFailed:
+        # A thin wall folds tighter than this mesh resolves: once more on twice the elements around.
+        wet, _ = _sweep(ratio, p, nu, nr, 2 * nt, grade)
     h_wet = np.array(wet.h)
     h_seal = _closing_h(h_wet, np.array(wet.area), ratio)
     if h_seal is None:
@@ -420,30 +445,34 @@ def _cached(key: str, cache_dir: Optional[str], solve) -> TubeResponse:
     cached reads do not wait."""
     d = _mem_get(key)
     if d is None:
-        with _key_lock(key):
-            d = _mem_get(key)
-            path = os.path.join(cache_dir, "tube_" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".json") if cache_dir else None
-            if d is None and path:
-                try:
-                    with open(path) as fh:
-                        d = json.load(fh)
-                    if d.get("key") != key:
-                        d = None
-                except (OSError, ValueError):
-                    d = None
-            if d is None:
-                d = {"key": key, "response": solve().to_dict()}
-                if path:
+        try:
+            with _key_lock(key):
+                d = _mem_get(key)
+                path = os.path.join(cache_dir, "tube_" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".json") if cache_dir else None
+                if d is None and path:
                     try:
-                        os.makedirs(cache_dir, exist_ok=True)
-                        fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
-                        with os.fdopen(fd, "w") as fh:
-                            json.dump(d, fh)
-                        os.replace(tmp, path)
-                        _prune_disk(cache_dir)
-                    except OSError:
-                        pass
-            _mem_put(key, d)
+                        with open(path) as fh:
+                            d = json.load(fh)
+                        if d.get("key") != key:
+                            d = None
+                    except (OSError, ValueError):
+                        d = None
+                if d is None:
+                    d = {"key": key, "response": solve().to_dict()}
+                    if path:
+                        try:
+                            os.makedirs(cache_dir, exist_ok=True)
+                            fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
+                            with os.fdopen(fd, "w") as fh:
+                                json.dump(d, fh)
+                            os.replace(tmp, path)
+                            _prune_disk(cache_dir)
+                        except OSError:
+                            pass
+                _mem_put(key, d)
+        finally:
+            with _MEM_LOCK:
+                _KEY_LOCKS.pop(key, None)       # later callers find the answer in memory
     return TubeResponse.from_dict(d["response"])
 
 

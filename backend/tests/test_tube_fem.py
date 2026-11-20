@@ -81,11 +81,15 @@ class TestDefaultTube(unittest.TestCase):
             self.assertLessEqual(float(r.penetration.max()), 1e-3 * self.wall)
 
     def test_force_grows_and_bore_shrinks_with_squeeze(self):
-        """Force rises with squeeze (a dip of at most 1 % is allowed where the fold's inner faces
-        land on each other), the open bore never grows, and the pressure only adds force."""
+        """Force rises with squeeze, the open bore never grows, and the pressure only adds force.
+        One dip is allowed while the tube folds (h about 1.25 mm, no pressure): the flattened wall
+        under the plate snaps toward the opposite one, a limit point that the 2 x 24 mesh shows
+        too (5 % there, 3 % on the default mesh). Past closure the force only rises."""
         for r in (self.dry, self.wet):
             f = r.force
-            self.assertTrue(np.all(np.diff(f) >= -0.01 * f[1:]), msg=np.diff(f))
+            self.assertTrue(np.all(np.diff(f) >= -0.06 * f[1:]), msg=np.diff(f))
+            shut = r.h[1:] < r.h_closed
+            self.assertTrue(np.all(np.diff(f)[shut] > 0.0))
             self.assertTrue(np.all(np.diff(r.area) <= 1e-4 * r.area[0]))
         open_ = self.wet.h > self.wet.h_sealed
         self.assertTrue(np.all(self.wet.pressure_share[open_] >= -1e-9))
@@ -100,27 +104,43 @@ class TestDefaultTube(unittest.TestCase):
         self.assertLess(float(self.wet.open_area(self.wet.h_sealed - 1e-6)), 1e-2)
 
     def test_section_area_kept_when_nearly_incompressible(self):
-        """Incompressibility: at nu = 0.4999 the solid section keeps its area within 0.2 % down to
-        the deepest squeeze solved; at the default nu = 0.49 the loss stays under 6 %, which is the
-        mean stress over the bulk modulus (kappa = 50 mu) at 50 % squeeze past closure."""
-        self.assertLess(self.dry.solid_area_change, 0.06)
-        stiff = solve_tube(3.0, 2.0, shore_a=50, nu=0.4999)
-        self.assertLess(stiff.solid_area_change, 0.002)
-        self.assertLess(stiff.h_min, stiff.h_closed * 0.6)
+        """Incompressibility: at the default nu = 0.4995 (kappa about 1000 mu, as for silicone) the
+        solid section keeps its area within 0.5 % down to the deepest squeeze solved, which is
+        about 40 % past closure. At nu = 0.49 (kappa = 50 mu) it lost 3 to 5 %: the mean stress
+        over the bulk modulus."""
+        self.assertLess(self.dry.solid_area_change, 0.005)
+        self.assertLess(self.wet.solid_area_change, 0.005)
+        self.assertLess(self.dry.h_min, self.dry.h_closed * 0.65)
+        soft = solve_tube(3.0, 2.0, shore_a=50, nu=0.49)
+        self.assertGreater(soft.solid_area_change, 0.02)
+
+    def test_force_past_closure_is_the_squeezed_strip(self):
+        """Once shut, the section is a nearly incompressible strip between frictionless plates:
+        F = mu (lambda^-2 - lambda^2) A / h per unit length, A the solid area, lambda = h / h0,
+        with h0 between the closing h and 2 x wall. The FEM falls between the two (observed 6.2
+        N/mm at 25 % past closure, 27.4 at 50 %): the rise is confinement, not the contact penalty."""
+        mu = self.dry.e_mpa / (2.0 * (1.0 + self.dry.nu))
+        solid = np.pi * (1.5 ** 2 - 1.0 ** 2)
+        strip = lambda h, h0: mu * ((h / h0) ** -2 - (h / h0) ** 2) * solid / h
+        for frac in (0.25, 0.5):
+            h = (1.0 - frac) * self.dry.h_closed
+            f = float(self.dry.force_per_mm(h))
+            self.assertGreater(f, strip(h, self.dry.h_closed))
+            self.assertLess(f, strip(h, 2 * self.wall))
 
     def test_mesh_convergence(self):
-        """Default mesh (1 x 12 elements on the quarter) and 1 x 24 against 3 x 24, at the same
-        plate distances: closing h within 1.5 % (observed 0.8 % and 1.0 %), force on the open tube
-        (h = 2 mm) within 3 % (1.6 %, 1.8 %), force at 10 % below the finest mesh's closing h
-        within 3 % (0.5 %, 0.1 %)."""
-        meshes = [self.dry, solve_tube(3.0, 2.0, shore_a=50, nt=24), solve_tube(3.0, 2.0, shore_a=50, nr=3, nt=24)]
-        hc = [r.h_closed for r in meshes]
-        f_open = [float(r.force_per_mm(2.0)) for r in meshes]
-        f_10 = [float(r.force_per_mm(0.9 * meshes[-1].h_closed)) for r in meshes]
-        for i in (0, 1):
-            self.assertAlmostEqual(hc[i] / hc[-1], 1.0, delta=0.015)
-            self.assertAlmostEqual(f_open[i] / f_open[-1], 1.0, delta=0.03)
-            self.assertAlmostEqual(f_10[i] / f_10[-1], 1.0, delta=0.03)
+        """Default mesh (1 x 12 elements on the quarter) against 2 x 24 (2 x 32 agrees with 2 x 24
+        within 0.5 %), at the same plate distances, no pressure: closing h within 1.5 % (observed
+        0.7 %), force on the open tube (h = 2 mm) within 4 % (2 %), force 10 % and 25 % below the
+        fine mesh's closing h within 2 % (0.9 %, 0.4 %), open bore at h = 1.2 mm within 1 % of
+        the unloaded bore (0.1 %)."""
+        fine = solve_tube(3.0, 2.0, shore_a=50, nr=2, nt=24)
+        self.assertAlmostEqual(self.dry.h_closed / fine.h_closed, 1.0, delta=0.015)
+        self.assertAlmostEqual(float(self.dry.force_per_mm(2.0) / fine.force_per_mm(2.0)), 1.0, delta=0.04)
+        for frac in (0.1, 0.25):
+            h = (1.0 - frac) * fine.h_closed
+            self.assertAlmostEqual(float(self.dry.force_per_mm(h) / fine.force_per_mm(h)), 1.0, delta=0.02)
+        self.assertLess(abs(float(self.dry.open_area(1.2) - fine.open_area(1.2))), 0.01 * np.pi)
 
     def test_extrapolation_below_the_sweep_keeps_rising(self):
         """Below the deepest step the force follows an incompressible strip law (~ h^-3)."""
@@ -138,6 +158,12 @@ class TestDefaultTube(unittest.TestCase):
 
 
 class TestFailureAndCache(unittest.TestCase):
+    def test_thin_wall_is_solved_on_a_finer_mesh(self):
+        """ID/OD = 0.9: the default mesh stops converging while the thin wall folds; the sweep is
+        redone on twice the elements around and the bore closes near 2 x wall (0.1 OD)."""
+        r = solve_tube(1.0, 0.9, e_mpa=1.0)
+        self.assertAlmostEqual(r.h_closed, 0.1, delta=0.01)
+
     def test_balloon_is_reported(self):
         """Past mu ln(OD/ID) (0.136 E here) a neo-Hookean tube inflates without limit: a clear error."""
         with self.assertRaises(TubeFemError) as ctx:

@@ -87,6 +87,16 @@ class FemLinkageTests(unittest.TestCase):
             compute_simulation(SimulationParams(tube_shore_a=15.0, input_pressure_kpa=400.0))
 
 
+    def test_a_soft_tube_with_no_pressure_still_solves(self):
+        """At 0 kPa the seal-pressure slope comes from a reference pressure kept under the pressure
+        at which the tube balloons (a Shore 15 tube balloons near 45 kPa, under the usual 100)."""
+        p = LinkageParams(tube_shore_a=15.0, input_pressure_kpa=0.0)
+        law = tube_law.law(p)
+        self.assertLess(law.reference.pressure_kpa, 40.0)
+        self.assertGreater(float(law.held_kpa(law.closed_gap - 0.1)), 0.0)
+        self.assertTrue(compute_linkage(p).feasible, compute_linkage(p).message)
+
+
 class FemCamTests(unittest.TestCase):
     def test_cam_flow_follows_the_fem_bore(self):
         p = SimulationParams(ramp_enabled=True, default_distance=1.1, chamber_volume_ml=5.0)

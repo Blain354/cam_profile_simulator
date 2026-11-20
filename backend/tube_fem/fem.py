@@ -205,7 +205,7 @@ class State:
         return State(self.x.copy(), self.lam.copy(), self.active.copy())
 
 
-def solve_step(m, st, yp, p, k_pen, pen_tol, max_newton=30, max_outer=30, damp=0.0):
+def solve_step(m, st, yp, p, k_pen, pen_tol, max_newton=15, max_outer=30, damp=0.0):
     """Equilibrium with the plate at y = yp and bore pressure p, starting from state st.
 
     Inner loop: Newton with the contact set and the pressure-loaded nodes frozen.
