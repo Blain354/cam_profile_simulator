@@ -1,3 +1,4 @@
+import { FlowParticles, FlowParticlesSwitch } from './FlowParticles';
 import { Button, Input, Modal } from '@blain-projects/ui';
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ReactElement, Ref } from 'react';
@@ -530,6 +531,9 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
       <g>
         <polygon points={ring(() => 0, (h) => h)} fill="var(--bui-text)" fillOpacity={0.16} stroke="var(--bui-text)" strokeWidth={0.05} strokeLinejoin="round" />
         <polygon points={ring(wallSide, pinSide)} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
+        {/* Air toward the chamber, taken below the drawing: down tube A, up tube B */}
+        <FlowParticles view="side" frac={frac} bore={profile.map(([h, v]) => [v, wallSide(h), pinSide(h)] as const)} direction={sign < 0 ? -1 : 1}
+          radius={Math.min(0.16, params.tube_id / 6)} color="var(--bui-text)" transform={`matrix(${-sign} 0 0 -1 ${sign * wall} 0)`} />
         <line x1={cx} y1={-top - 1} x2={cx} y2={1} stroke="var(--bui-text)" strokeOpacity={0.5} strokeWidth={0.04} strokeDasharray="0.5 0.12 0.1 0.12" />
         {label(cx, onTop ? -1.1 : top + 1.1, name, 'var(--bui-text)')}
       </g>
@@ -1778,6 +1782,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
               Center
             </Button>
+            <FlowParticlesSwitch />
             <span className="text-xs text-neutral-400 text-right">
               {loadedRpm.toFixed(0)} RPM under load ({params.motor_speed} × {Math.round(params.speed_factor * 100)} %), {speed.toFixed(2)} mm/s
             </span>

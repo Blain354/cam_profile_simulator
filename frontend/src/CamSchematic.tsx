@@ -1,5 +1,6 @@
 import { Button } from '@blain-projects/ui';
 import { useState } from 'react';
+import { FlowParticlesSwitch } from './FlowParticles';
 import { Cog, Pause, Play } from 'lucide-react';
 import type { ChartDomainSettings, SimulationParams, SimulationResult } from './components';
 import { ChartDomainSettingsModal, VerticalSystemSvgDiagram } from './components';
@@ -60,6 +61,7 @@ export function CamSchematicCard({ id, data, params, travel, details, setDetails
             className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
             Center
           </Button>
+          <FlowParticlesSwitch />
           <span className="text-xs text-neutral-400 text-right">{speedNote}, {travel.speed.toFixed(2)} mm/s</span>
         </div>
         <input id={`cam-y-${id}`} type="range" min={travel.min} max={travel.max} step={0.01} value={travel.y}
