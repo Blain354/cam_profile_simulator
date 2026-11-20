@@ -185,8 +185,10 @@ The Bar, Lever and Pendulum linkage tabs have a **Write to Onshape variables** b
 (`OnshapeVariablesModal` in `frontend/src/LinkageExplorer.tsx`, `backend/onshape_variables.py`).
 It does not export anything. It writes the dimensions into a Variable Studio that belongs to the
 simulator, in the configured document (`ONSHAPE_DOCUMENT_ID`) and in the branch given by `ONSHAPE_LINKAGE_WORKSPACE_ID`
-(the document's Main; without it, the STL export's `ONSHAPE_WORKSPACE_ID`),
-and nowhere else: no Part Studio and no other Variable Studio is read or written.
+(the document's Main; without it, the STL export's `ONSHAPE_WORKSPACE_ID`).
+The only write is that table. When `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` is set, the Part Studio
+with that element id is read first, on the same document and branch; that read is under
+**Inputs the CAD decides** below. With that id unset, no Part Studio is read.
 
 The table is found by name among the document's Variable Studios. The default name is
 `cam_sim_<kind>`: `cam_sim_pendulum`, `cam_sim_lever`, `cam_sim_elbow`. The window has a
@@ -201,8 +203,10 @@ with the same name is never the table, nor a duplicate of it.
 
 1. Opening the window, or **Look up** after changing the name, calls
    `POST /api/linkage/onshape/preview` with `table_name`. If the table does not exist the window
-   says so and lists every variable as new (1 API call). If it exists, it is read and each
-   variable shows what the table holds and what the simulator would write (2 API calls).
+   says so and lists every variable as new (1 API call, the Variable Studio listing). If it exists,
+   it is read and each variable shows what the table holds and what the simulator would write
+   (2 API calls: that listing, then the table read). When measured inputs are configured, the same
+   request also makes one read per measured variable, and `api_calls` includes them.
 2. The button writes the ticked rows (`POST /api/linkage/onshape/apply`, same `table_name` and
    `names`). It reads **Create the table and write N variables** when the table does not exist,
    **Overwrite N variables in <name>** when it does. The table is looked up again first.
@@ -214,6 +218,8 @@ with the same name is never the table, nor a duplicate of it.
      expression and description.
    If nothing ticked actually changes, nothing is created or written. A missing table costs
    the listing only (1 call); an existing table is listed and read (2 calls), then left as it is.
+   Those counts are the Variable Studio calls. A configured measured-input check runs first and
+   adds one call per measured variable; if the check fails, apply returns HTTP 409 before any of them.
    The reply says whether the table
    was created and gives its element id and `https://cad.onshape.com/documents/{did}/w/{wid}/e/{eid}`,
    shown as **Open the table in Onshape**.
@@ -260,8 +266,15 @@ Request and reply:
 { "rows": [{ "name": "pend_arm_L", "key": "bar2_length", "label": "...", "new_expression": "14.43 mm",
              "current_expression": "10 mm", "status": "update", "detail": "" }],
   "api_calls": 2, "table_name": "cam_sim_pendulum", "table_exists": true, "table_created": false,
-  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null }
+  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null,
+  "input_check": { "configured": false, "valid": true, "rows": [], "part_studio_url": null, "error": null } }
 ```
+
+`api_calls` of 2 is this existing table with no measured Part Studio. When one is set,
+`input_check.configured` is true, `rows` holds each measured input (`key`, `variable`, `label`,
+`unit`, `value`, `simulator`, `ok`), `part_studio_url` is that Part Studio, and `api_calls` includes
+one call per measured variable. Preview still returns this body when `valid` is false. Apply then
+answers HTTP 409 with the reason and does not return the body.
 
 Row status: preview gives `update`, `same` or `new`. Apply sets a row that was not ticked to
 `skipped`. A ticked row that already matches stays `same` and is not changed; one that differs
@@ -277,6 +290,7 @@ explorer, `https://cad.onshape.com/api/openapi`, explorer at https://cad.onshape
 | `POST /variables/d/{did}/w/{wid}/variablestudio`, body `{"name": "..."}` | `createVariableStudio` (Variables) |
 | `GET /variables/d/{did}/w/{wid}/e/{eid}/variables` | `getVariables` (Variables) |
 | `POST /variables/d/{did}/w/{wid}/e/{eid}/variables`, body `[{"name", "type", "expression", "description"}]` | `setVariables` (Variables), replaces the whole list |
+| `POST /partstudios/d/{did}/w/{wid}/e/{partStudioId}/featurescript` | body is `function(context is Context, queries) { return getVariable(context, "<name>"); }`. `partStudioId` is `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`. One call per measured variable, and only when that id is set and this linkage kind has a measured input. The call reads the Part Studio; it writes nothing. |
 
 Default names are in `DEFAULT_MAPPING` (`backend/onshape_variables.py`): `pend_*` for the pendulum,
 `lever_*` for the lever, `L1` / `L2` and `elbow_*` for the bar linkage, plus `pinch_tube_OD` and
@@ -292,24 +306,32 @@ measure it in the sketch to check that the CAD pinches the tube as the simulator
 
 These calls are made from the container and are not in `~/automation/state/onshape-appels.jsonl`.
 A bad table name comes back as HTTP 422 with the rule. Duplicate table names, missing keys, an
-unusable target, or a geometry that cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
+unusable target, a geometry that cannot be built, or a simulation that does not start from the
+measured inputs come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
 
 ### Inputs the CAD decides
 
-Some inputs are set by the CAD, not by the simulator: the Part Studio measures them with a measured
-variable, and the simulator reads them back. Today: the pendulum's tube centre, from `#pend_CALC_tube_center`
-(distance from the tube centre to the main axis) in `SMART_VALVE_MOTOR_V3_compliant links`.
+Some inputs are set by the CAD, not by the simulator. The Part Studio measures them, and the
+simulator reads them back. The only default is the pendulum tube centre (`tube_center_x`, the
+tube-axis distance from the screw axis), from the variable `#pend_CALC_tube_center`
+(`DEFAULT_MEASURED` in `backend/onshape_variables.py`). The Part Studio is the element id in
+`ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`, on the table's document and branch. It is not chosen by name.
 
 | Env | Meaning |
 |-----|---------|
 | `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` | Part Studio holding the measured variables, in the table's document and branch. Unset: nothing is read or checked. |
 | `ONSHAPE_LINKAGE_MEASURED` | Optional JSON `{kind: {simulator value key: variable name}}` replacing `DEFAULT_MEASURED` for a kind. |
 
-- **Sync from Onshape** (under Tube centre) calls `POST /api/linkage/onshape/measured`: one read-only
-  FeatureScript evaluation per variable (`getVariable`), and the value overwrites the simulator's.
-- **Export check.** Opening the write window also reads the measured values and says whether the export
-  is valid: every measured input must equal the simulator's within 0.001 mm. If not, the write button is
-  disabled, the window offers "Sync from Onshape and check again", and `/apply` itself refuses with HTTP 409
-  without writing anything. A measure that cannot be read (variable missing, after the rollback bar, wrong unit)
-  also makes the export invalid. Each check costs one API call per measured variable.
+- **Sync from Onshape** (under Tube centre, on the pendulum) calls `POST /api/linkage/onshape/measured`:
+  one read-only FeatureScript evaluation per variable (`getVariable`), and each value returned overwrites
+  that input on the design.
+- **Export check.** Opening the write window, and **Look up**, also reads the measured values and says
+  whether the export is valid: every measured input must equal the simulator's within 0.001 in that
+  value's unit (millimetres for the tube centre). If one differs, the write button is disabled and reads
+  **Export not valid**, the window offers **Sync from Onshape and check again**, and `/apply` itself
+  refuses with HTTP 409 before it lists or writes the table. A measure that cannot be read also makes
+  the export invalid and disables the write: Onshape gave no value (the variable has to be defined
+  before the rollback bar), or the value is in the wrong unit. Each successful check costs one API
+  call per measured variable. With the id unset, or for a linkage kind that has no measured input,
+  nothing is read and the write is not gated.
 
