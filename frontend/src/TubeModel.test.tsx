@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { TubeModelControls, TubeSectionCard, cleanTubeModel, shoreToMpa } from './TubeModel'
-import type { TubeSpec } from './TubeModel'
+import { TubeModelControls, TubeSectionCard } from './TubeModel'
+import { cleanTubeModel, shoreToMpa } from './lib/tubeModel'
+import type { TubeSpec } from './lib/tubeModel'
 
 const AUTO = { autoX: true, autoY: true, xMin: -1, xMax: 1, yMin: -1, yMax: 1 }
 const ring = (r: number, n = 9): [number, number][] => Array.from({ length: n }, (_, i) => [r * Math.cos((2 * Math.PI * i) / (n - 1)), 0.6 * r * Math.sin((2 * Math.PI * i) / (n - 1))])

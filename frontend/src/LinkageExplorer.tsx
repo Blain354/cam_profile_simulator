@@ -14,8 +14,9 @@ import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain, sameDomainSettings } from './lib/chartDomain';
 import { formatKpa, legacyPsiToKpa } from './lib/pressure';
-import { DEFAULT_SHORE_A, DEFAULT_TUBE_MODEL, TubeModelControls, TubeSectionCard, cleanTubeModel } from './TubeModel';
-import type { TubeModel } from './TubeModel';
+import { TubeModelControls, TubeSectionCard } from './TubeModel';
+import { DEFAULT_SHORE_A, DEFAULT_TUBE_MODEL, cleanTubeModel } from './lib/tubeModel';
+import type { TubeModel } from './lib/tubeModel';
 
 // ─── Types (mirror backend/linkage.py) ───────────────────────────
 

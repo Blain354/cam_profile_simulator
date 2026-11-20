@@ -1,28 +1,21 @@
-import { useEffect, useState } from 'react';
-import { ParameterSlider, apiFetch } from './components';
+import { ParameterSlider } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { SubTabs } from './SubTabs';
+import { shoreToMpa, useSection } from './lib/tubeModel';
+import type { Section, TubeModel, TubeSpec } from './lib/tubeModel';
 
 /**
  * The tube model switch (finite-element section or the simple compliance law), the hardness the
- * FEM needs, and the card that draws the FEM section. All FEM-specific UI lives in this file.
+ * FEM needs, and the card that draws the FEM section. All FEM-specific UI lives in this file and
+ * in lib/tubeModel.ts (values and hooks).
  */
 
-export type TubeModel = 'fem' | 'simple';
-export const DEFAULT_TUBE_MODEL: TubeModel = 'fem';
-export const DEFAULT_SHORE_A = 50;
 
 const MODEL_OPTIONS: { value: TubeModel; label: string }[] = [
   { value: 'fem', label: 'FEM' },
   { value: 'simple', label: 'Simple' },
 ];
-
-/** A stored value, or the default when it is missing or not one of the two models. */
-export const cleanTubeModel = (raw: unknown): TubeModel => (raw === 'simple' || raw === 'fem' ? raw : DEFAULT_TUBE_MODEL);
-
-/** Gent's relation, as in backend/tube_fem: E (MPa) from Shore A. */
-export const shoreToMpa = (s: number) => (0.0981 * (56 + 7.62336 * s)) / (0.137505 * (254 - 2.54 * s));
 
 export function TubeModelControls({ model, shore, onModel, onShore, modelModified, shoreModified }: {
   model: TubeModel;
@@ -42,67 +35,9 @@ export function TubeModelControls({ model, shore, onModel, onShore, modelModifie
       <ParameterSlider label="Tube hardness (Shore A)" value={shore} min={10} max={90} step={1} onChange={onShore}
         disabled={model !== 'fem'} isModified={shoreModified}
         secondaryValue={model === 'fem' ? `E ${shoreToMpa(shore).toFixed(2)} MPa` : 'FEM only'}
-        description="Silicone hardness. The FEM takes Young's modulus from it by Gent's relation and a Poisson ratio of 0.49." />
+        description="Silicone hardness. The FEM takes Young's modulus from it by Gent's relation, and treats it as nearly incompressible (Poisson ratio 0.4995)." />
     </>
   );
-}
-
-export interface TubeSpec {
-  tube_od: number;
-  tube_id: number;
-  tube_shore_a: number;
-  input_pressure_kpa: number;
-  tube_model: TubeModel;
-}
-
-interface Section {
-  h: number;
-  outer: [number, number][];
-  inner: [number, number][];
-  force_per_mm: number;
-  pressure_share_per_mm: number;
-  open_area_mm2: number;
-  bore_area_mm2: number;
-  h_contact: number;
-  h_closed: number;
-  h_sealed: number;
-  max_stretch: number;
-}
-
-/** The FEM section at plate distance h (mm), fetched a moment after h settles. */
-function useSection(tube: TubeSpec, h: number | null) {
-  const [section, setSection] = useState<Section | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const hKey = h == null || !Number.isFinite(h) ? null : Math.round(h * 1000) / 1000;
-  const { tube_od, tube_id, tube_shore_a, input_pressure_kpa, tube_model } = tube;
-  useEffect(() => {
-    if (tube_model !== 'fem' || hKey == null) return;
-    const ctl = new AbortController();
-    const timer = setTimeout(() => {
-      apiFetch('/api/tube/section', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tube_od, tube_id, tube_shore_a, input_pressure_kpa, h: Math.max(hKey, 0) }),
-        signal: ctl.signal,
-      })
-        .then(async (res) => {
-          const body = await res.json().catch(() => null);
-          if (!res.ok) throw new Error(body?.detail ? String(body.detail) : `HTTP ${res.status}`);
-          if (!body || !Array.isArray(body.outer) || !Array.isArray(body.inner)) throw new Error('No tube section in the answer');
-          setSection(body as Section);
-          setError(null);
-        })
-        .catch((e) => { if (!ctl.signal.aborted) setError(e instanceof Error ? e.message : String(e)); });
-    }, 120);
-    return () => { clearTimeout(timer); ctl.abort(); };
-  }, [tube_od, tube_id, tube_shore_a, input_pressure_kpa, tube_model, hKey]);
-  return { section, error };
-}
-
-/** The FEM's closed gap (the plate distance at which the bore shuts against the pressure), or null while unknown. */
-export function useFemClosedGap(tube: TubeSpec): number | null {
-  const { section } = useSection(tube, tube.tube_od);
-  return tube.tube_model === 'fem' && section ? section.h_sealed : null;
 }
 
 const path = (pts: [number, number][]) => pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(4)},${(-y).toFixed(4)}`).join(' ') + ' Z';

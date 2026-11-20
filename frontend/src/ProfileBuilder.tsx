@@ -21,8 +21,9 @@ import {
 } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
-import { TubeModelControls, useFemClosedGap } from './TubeModel';
-import type { TubeModel } from './TubeModel';
+import { TubeModelControls } from './TubeModel';
+import { useFemClosedGap } from './lib/tubeModel';
+import type { TubeModel } from './lib/tubeModel';
 import { chartDomain } from './lib/chartDomain';
 import {
   builderMotorSpeed,
