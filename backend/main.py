@@ -784,6 +784,25 @@ def tube_section(req: TubeSectionRequest):
         raise HTTPException(status_code=422, detail=str(e))
 
 
+class TubeSweepRequest(BaseModel):
+    tube_od: float = Field(3.0, gt=0, le=50)
+    tube_id: float = Field(2.0, gt=0, le=50)
+    tube_shore_a: float = Field(tube_law.DEFAULT_SHORE_A, ge=10, le=90)
+    input_pressure_kpa: float = Field(100.0, ge=0, le=2000)
+
+
+@app.post("/api/tube/sweep")
+def tube_sweep(req: TubeSweepRequest):
+    """The FEM tube over its whole sweep of plate distance (quarter outlines, force, open bore),
+    fetched once per tube by the browser, which interpolates the section at any h per frame."""
+    if req.tube_id >= req.tube_od:
+        raise HTTPException(status_code=422, detail="The tube needs OD > ID.")
+    try:
+        return tube_law.sweep(req)
+    except tube_law.TubeModelError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 # ─── Bar linkage pinch valves ────────────────────────────────────
 
 class LinkageRequest(KpaBody):

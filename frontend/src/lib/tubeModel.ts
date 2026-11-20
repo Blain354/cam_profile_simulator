@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
-import { apiFetch } from '../components';
+import { useTubeSweep } from './tubeSweep';
 
 /**
  * The tube model's values and hooks shared by the tabs: the model switch's two values, the
- * hardness default, Gent's relation, and the FEM section fetch. Components are in ../TubeModel.tsx.
+ * hardness default, Gent's relation, and the FEM closed gap (the sweep itself is in ./tubeSweep.ts). Components are in ../TubeModel.tsx.
  */
 
 export type TubeModel = 'fem' | 'simple';
@@ -24,56 +23,10 @@ export interface TubeSpec {
   tube_model: TubeModel;
 }
 
-export interface Section {
-  h: number;
-  outer: [number, number][];
-  inner: [number, number][];
-  force_per_mm: number;
-  pressure_share_per_mm: number;
-  open_area_mm2: number;
-  bore_area_mm2: number;
-  h_contact: number;
-  h_closed: number;
-  h_sealed: number;
-  max_stretch: number;
-}
-
-/** The FEM section at plate distance h (mm), fetched a moment after h settles. A section or an
- * error solved for another tube (OD, ID, hardness, pressure) is not shown: a new tube can take a
- * second or two to solve, and its old shape would pass for the new one meanwhile. */
-export function useSection(tube: TubeSpec, h: number | null) {
-  const [answer, setAnswer] = useState<{ key: string; section: Section | null; error: string | null } | null>(null);
-  const hKey = h == null || !Number.isFinite(h) ? null : Math.round(h * 1000) / 1000;
-  const { tube_od, tube_id, tube_shore_a, input_pressure_kpa, tube_model } = tube;
-  const tubeKey = `${tube_od}|${tube_id}|${tube_shore_a}|${input_pressure_kpa}`;
-  useEffect(() => {
-    if (tube_model !== 'fem' || hKey == null) return;
-    const ctl = new AbortController();
-    const timer = setTimeout(() => {
-      apiFetch('/api/tube/section', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tube_od, tube_id, tube_shore_a, input_pressure_kpa, h: Math.max(hKey, 0) }),
-        signal: ctl.signal,
-      })
-        .then(async (res) => {
-          const body = await res.json().catch(() => null);
-          if (!res.ok) throw new Error(body?.detail ? String(body.detail) : `HTTP ${res.status}`);
-          if (!body || !Array.isArray(body.outer) || !Array.isArray(body.inner)) throw new Error('No tube section in the answer');
-          setAnswer({ key: tubeKey, section: body as Section, error: null });
-        })
-        .catch((e) => { if (!ctl.signal.aborted) setAnswer({ key: tubeKey, section: null, error: e instanceof Error ? e.message : String(e) }); });
-    }, 120);
-    return () => { clearTimeout(timer); ctl.abort(); };
-  }, [tube_od, tube_id, tube_shore_a, input_pressure_kpa, tube_model, hKey, tubeKey]);
-  const current = answer && answer.key === tubeKey ? answer : null;
-  return { section: current?.section ?? null, error: current?.error ?? null };
-}
-
 /** The FEM's closed gap (the plate distance at which the bore shuts against the pressure): null while it
  * solves or when the FEM refuses the tube (error says why). */
 export function useFemClosedGap(tube: TubeSpec): { gap: number | null; error: string | null } {
-  const { section, error } = useSection(tube, tube.tube_od);
+  const { sweep, error } = useTubeSweep(tube);
   if (tube.tube_model !== 'fem') return { gap: null, error: null };
-  return { gap: section ? section.h_sealed : null, error };
+  return { gap: sweep ? sweep.h_sealed : null, error };
 }

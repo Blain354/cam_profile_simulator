@@ -4,6 +4,7 @@ import { Button, Input, Modal } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { interpAt } from './lib/camTravel';
+import { boreAcross, sectionAt, useTubeSweep } from './lib/tubeSweep';
 import { legacyPsiToKpa } from './lib/pressure';
 import {
   ChevronDown, ChevronRight,
@@ -664,10 +665,12 @@ export function VerticalSystemSvgDiagram({
 
 /**
  * The bushing, the tube and the gap at carriage position `y`, drawn from the simulation's arrays:
- * the gap is `min_gaps` and the bore is the model's slot of area `flow_area`. Only the direction of
- * the pinch comes from the drawn cam (its nearest point to the screw axis).
+ * the gap is `min_gaps`. With the FEM tube, the tube is the FEM section at that gap (from the sweep,
+ * interpolated per frame); with the simple model, the model's slot of area `flow_area`. Only the
+ * direction of the pinch comes from the drawn cam (its nearest point to the screw axis).
  */
 function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; params: SimulationParams; y: number; details: boolean }) {
+  const { sweep } = useTubeSweep(params);
   const r = params.bushing_diameter / 2;
   const gap = interpAt(y, data.Y_positions, data.min_gaps);
   const area = interpAt(y, data.Y_positions, data.flow_area);
@@ -701,19 +704,36 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
   const tx = px - nx * gap / 2, ty = py - ny * gap / 2;
   const angle = Math.atan2(ny, nx) * 180 / Math.PI;
   const frac = maxFlow > 0 ? Math.min(flow / maxFlow, 1) : 0;
+  const particles = flowFraction(flow, fullBoreFlow(data.flow_l_min, data.flow_area, id));
+  // FEM tube: its section at this gap, the plates' normal (the section's y) along the gap, true scale.
+  const fem = sweep ? sectionAt(sweep, gap) : null;
+  const femPath = (pts: [number, number][]) => pts.map(([fx, fy], i) => `${i ? 'L' : 'M'}${fy.toFixed(4)},${fx.toFixed(4)}`).join(' ') + ' Z';
+  const halfLength = fem ? Math.max(...fem.outer.map((p) => Math.abs(p[0]))) : lo / 2;
   // Label just past the tube's end, along the cam.
-  const lx = tx - ny * (lo / 2 + 0.3), ly = ty + nx * (lo / 2 + 0.3);
+  const lx = tx - ny * (halfLength + 0.3), ly = ty + nx * (halfLength + 0.3);
+  const boreFill = frac > 0 ? '#10b981' : '#ef4444';
 
   return (
     <g>
       <g transform={`translate(${tx} ${ty}) rotate(${angle})`}>
-        <rect x={-ho / 2} y={-lo / 2} width={ho} height={lo} rx={ho / 2} fill="#d4d4d4" fillOpacity={0.16} stroke="#d4d4d4" strokeWidth={0.03} />
-        <title>Tube section (schematic): the model's slot, bore area = simulated flow area</title>
-        {hi > 0.005
-          ? <rect x={-hi / 2} y={-li / 2} width={hi} height={li} rx={Math.min(hi / 2, 0.05)} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
-          : <line x1={0} y1={-li / 2} x2={0} y2={li / 2} stroke="#ef4444" strokeWidth={0.04} />}
-        {/* Air crossing the section, perpendicular to the screen; full density and speed at the full-bore flow */}
-        <FlowParticles view="section" frac={flowFraction(flow, fullBoreFlow(data.flow_l_min, data.flow_area, id))} width={hi} length={li} radius={0.06} color="#f5f5f5" />
+        {fem ? (
+          <>
+            <title>{`Tube section from the FEM at the ${gap.toFixed(3)} mm gap${fem.extrapolated ? ' (extrapolated: deeper than the FEM solved, its deepest shape flattened to the gap)' : ''}: squeezed between two flat plates, so it does not follow the curve of the bushing or the cam. Bore ${fem.open_area_mm2.toFixed(3)} mm².`}</title>
+            <path d={femPath(fem.outer)} fill="#d4d4d4" fillOpacity={0.16} stroke="#d4d4d4" strokeWidth={0.03} strokeLinejoin="round" />
+            <path d={femPath(fem.inner)} fill={boreFill} fillOpacity={0.25 + 0.45 * frac} stroke={fem.open_area_mm2 > 0 ? boreFill : '#ef4444'} strokeWidth={0.02} strokeLinejoin="round" />
+            <FlowParticles view="section" frac={particles} width={0} length={0} bore={boreAcross(fem.inner)} radius={0.06} color="#f5f5f5" />
+          </>
+        ) : (
+          <>
+            <rect x={-ho / 2} y={-lo / 2} width={ho} height={lo} rx={ho / 2} fill="#d4d4d4" fillOpacity={0.16} stroke="#d4d4d4" strokeWidth={0.03} />
+            <title>Tube section (schematic): the model's slot, bore area = simulated flow area</title>
+            {hi > 0.005
+              ? <rect x={-hi / 2} y={-li / 2} width={hi} height={li} rx={Math.min(hi / 2, 0.05)} fill={boreFill} fillOpacity={0.25 + 0.45 * frac} />
+              : <line x1={0} y1={-li / 2} x2={0} y2={li / 2} stroke="#ef4444" strokeWidth={0.04} />}
+            {/* Air crossing the section, perpendicular to the screen; full density and speed at the full-bore flow */}
+            <FlowParticles view="section" frac={particles} width={hi} length={li} radius={0.06} color="#f5f5f5" />
+          </>
+        )}
       </g>
       <circle cx={bx} cy={by} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
       <line x1={-0.12} y1={0} x2={0.12} y2={0} stroke="#a3a3a3" strokeWidth={0.03} />
@@ -731,7 +751,9 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
           stroke="#171717" strokeWidth={0.06} paintOrder="stroke">Gap {gap.toFixed(3)} mm</text>
         {details && (
           <text x={0} y={0.3} fill="#a3a3a3" fontSize="0.16" textAnchor="middle" dominantBaseline="middle"
-            stroke="#171717" strokeWidth={0.05} paintOrder="stroke">Tube section, schematic: bore {hi.toFixed(3)} mm, {area.toFixed(3)} mm²</text>
+            stroke="#171717" strokeWidth={0.05} paintOrder="stroke">{fem
+              ? `Tube section, FEM${fem.extrapolated ? ' (extrapolated)' : ''}: bore ${fem.open_area_mm2.toFixed(3)} mm²`
+              : `Tube section, schematic: bore ${hi.toFixed(3)} mm, ${area.toFixed(3)} mm²`}</text>
         )}
       </g>
     </g>

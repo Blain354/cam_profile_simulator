@@ -21,7 +21,7 @@ import {
 } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
-import { TubeModelControls } from './TubeModel';
+import { TubeModelControls, TubeSectionCard } from './TubeModel';
 import { useFemClosedGap } from './lib/tubeModel';
 import type { TubeModel } from './lib/tubeModel';
 import { chartDomain } from './lib/chartDomain';
@@ -558,7 +558,7 @@ interface BuilderExperiencePayload {
   last_solve_request?: unknown;
 }
 
-type BuilderChartSettingsKey = 'flowY' | 'pressure' | 'vertical';
+type BuilderChartSettingsKey = 'flowY' | 'pressure' | 'vertical' | 'section';
 const CANDIDATE_CACHE_TTL_MS = 60_000;
 
 /** Matches backend `MAX_RETURNED_CANDIDATES` — max rows in aggressivity list when more feasible triples exist. */
@@ -735,6 +735,7 @@ export default function ProfileBuilder({
     flowY: { autoX: true, autoY: true, xMin: -1.5, xMax: 4, yMin: 0, yMax: 25 },
     pressure: { autoX: true, autoY: true, xMin: 0, xMax: 100, yMin: 0, yMax: 300 },
     vertical: { autoX: true, autoY: true, xMin: -2, xMax: 6, yMin: -8, yMax: 8 },
+    section: { autoX: true, autoY: true, xMin: -2.5, xMax: 2.5, yMin: -2, yMax: 2 },
   });
   const [savedExperienceSignature, setSavedExperienceSignature] = useState<string | null>(null);
   /** Inputs used for the last successful solve (or restored from a loaded experience). */
@@ -1216,6 +1217,7 @@ export default function ProfileBuilder({
         flowY: { ...prev.flowY, ...(s.flowY ?? {}) },
         pressure: { ...prev.pressure, ...(s.pressure ?? {}) },
         vertical: { ...prev.vertical, ...(s.vertical ?? {}) },
+        section: { ...prev.section, ...(s.section ?? {}) },
       }));
     }
   };
@@ -2422,6 +2424,10 @@ export default function ProfileBuilder({
                         );
                       }}
                     </ChartCard>
+                    </div>
+                    <div className="flex min-h-[210px] flex-1 flex-col">
+                      <TubeSectionCard tube={builderViewParams} h={chartSim.Y_positions.length > 0 ? interpAt(travel.y, chartSim.Y_positions, chartSim.min_gaps) : null}
+                        where={`cam gap at Y = ${travel.y.toFixed(2)} mm`} {...builderCard('section')} className="flex-1" />
                     </div>
                   </div>
                 </div>
