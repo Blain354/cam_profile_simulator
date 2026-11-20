@@ -37,6 +37,25 @@ test('the live drawing shows the tube and the simulated gap at the carriage posi
   expect(container.querySelector(`g[transform="translate(0 ${-y})"] polyline`)).toBeTruthy()
 })
 
+test('with the FEM tube the live drawing is the FEM section at the gap, its bore filled, and no slot', async () => {
+  const { syntheticSweep } = await import('./lib/tubeSweep.fixture')
+  const { clearTubeSweeps, sectionAt } = await import('./lib/tubeSweep')
+  clearTubeSweeps()
+  const sweep = syntheticSweep()
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/api/tube/sweep') ? sweep : []), { status: 200 })))
+  const y = 0.8
+  const { container, findByText } = render(<VerticalSystemSvgDiagram data={simulateDefault} params={params} details y={y} />)
+  await findByText(/Tube section, FEM/)
+  const gap = interpAt(y, simulateDefault.Y_positions, simulateDefault.min_gaps)
+  const paths = [...container.querySelectorAll('g[transform^="translate"][transform*="rotate"] > path')]
+  expect(paths.length).toBe(2)
+  expect(container.querySelectorAll('rect[rx]').length).toBe(0)
+  // The plates' normal (the section's y) runs along the gap: the outline spans the gap in local x.
+  const xs = [...paths[0].getAttribute('d')!.matchAll(/[ML](-?[\d.]+),/g)].map((m) => parseFloat(m[1]))
+  expect(Math.max(...xs)).toBeCloseTo(Math.min(gap, sweep.h[0]) / 2, 3)
+  expect(container.textContent).toContain(`bore ${sectionAt(sweep, gap).open_area_mm2.toFixed(3)} mm²`)
+})
+
 test('the carriage values come from the simulated arrays, clamped at both ends of the range', () => {
   const ys = simulateDefault.Y_positions, gaps = simulateDefault.min_gaps
   expect(interpAt(ys[0] - 1, ys, gaps)).toBe(gaps[0])

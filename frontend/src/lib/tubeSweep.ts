@@ -126,14 +126,15 @@ export function sectionAt(s: TubeSweep, h: number): SectionAt {
     inner: mirror(quarterAt(s.inner, s.h, at), sy),
     force_per_mm: h >= s.h[0] ? 0 : lerp(ft.f, fb.i, fb.t),
     pressure_share_per_mm: h >= s.h[0] ? 0 : lerp(ft.p, fb.i, fb.t),
-    open_area_mm2: extrapolated ? 0 : lerp(s.open_area_mm2, i, t),
+    // Shut at and below the closing h, as the backend says, not a sliver blended from the step above.
+    open_area_mm2: extrapolated || h <= s.h_sealed ? 0 : lerp(s.open_area_mm2, i, t),
     extrapolated,
   };
 }
 
-/** Height of the open bore (mm, normal to the plates) at plate distance h: 0 once shut, the free bore above first contact. */
+/** Height of the open bore (mm, normal to the plates) at plate distance h: 0 at and below the closing h, the free bore above first contact. */
 export function boreHeightAt(s: TubeSweep, h: number): number {
-  if (h < s.h[s.h.length - 1]) return 0;
+  if (h <= s.h_sealed || h < s.h[s.h.length - 1]) return 0;
   const { i, t } = bracket(s.h, h);
   return lerp(prep(s).boreH, i, t);
 }

@@ -46,9 +46,9 @@ const path = (pts: [number, number][]) => pts.map(([x, y], i) => `${i ? 'L' : 'M
 
 function SectionDrawing({ s, frame, settings, big }: { s: SectionAt; frame: { halfW: number; halfH: number }; settings: ChartDomainSettings; big: boolean }) {
   // View: one frame per tube (its widest squeeze and its free height), so the tube deforms in a still
-  // frame as h moves, unless the cog sets the bounds.
+  // frame as h moves, unless the cog sets the bounds. Past first contact the frame opens to keep the plates in.
   const halfW = frame.halfW * 1.08;
-  const halfH = frame.halfH * 1.25 + 0.1;
+  const halfH = Math.max(frame.halfH * 1.25, s.h / 2 * 1.1) + 0.1;
   const x0 = settings.autoX ? -halfW : settings.xMin, x1 = settings.autoX ? halfW : settings.xMax;
   const y0 = settings.autoY ? -halfH : settings.yMin, y1 = settings.autoY ? halfH : settings.yMax;
   const plate = Math.max((y1 - y0) * 0.06, 0.05);
