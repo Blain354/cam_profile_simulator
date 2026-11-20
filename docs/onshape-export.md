@@ -311,10 +311,14 @@ simulator's bar 2, so `L1` receives bar 2 and `L2` receives bar 1. To use other 
 `ONSHAPE_LINKAGE_MAPPING` to a JSON object. A kind whose value is an object replaces the default
 names for that kind: `{"pendulum": {"my_onshape_name": "bar2_length", …}}`.
 The value keys are listed in `VALUES` in the same file. Derived values can be sent too:
-`link_length`, `total_height`, `pivot_height_y0`, `link_arc_radius`, `pin_gap_y0`
+`link_length`, `total_height`, `pivot_height_y0`, `link_arc_radius`, `link_arc_side`, `pin_gap_y0`
 (pin or pad to the wall the tube rests on at Y = 0, written as `pend_pin_gap`, `lever_pin_gap`, `elbow_pin_gap`:
 measure it in the sketch to check that the CAD pinches the tube as the simulator does). A straight link has no
-`link_arc_radius`, so that name is left out of the list.
+`link_arc_radius`, so that name is left out of the list. When the result does report an arc, the radius sent is
+that arc at Y = 0, after a custom radius shorter than half the chord has been raised to a semicircle.
+`link_arc_side` has no unit and no default name. It is 0 for a straight link, +1 when a custom-radius arc bulges
+inward (screw side) and -1 when it bulges outward (tube side). A tangent arc sends +1 or -1, whichever way that
+arc bulges about the chord. Zero is a value, so a name mapped to `link_arc_side` is sent for a straight link too.
 `pivot_side` (1 far side of the screw, -1 its tube's side) is in no default mapping: the sketches draw the
 carriage pivot on the far side, and `pivot_offset` stays a positive distance. A design with the inverted pivot
 is therefore refused (HTTP 409, nothing sent) until a sketch variable is mapped to `pivot_side`.
