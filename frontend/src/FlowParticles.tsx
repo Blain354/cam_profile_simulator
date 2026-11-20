@@ -2,7 +2,7 @@ import { Button } from '@blain-projects/ui';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Bore, ParticleView } from './lib/flowParticles';
 import {
-  MAX_PARTICLES, countOpacity, onFrame, particleSpeed, placeSection, placeSide, seed,
+  MAX_PARTICLES, countOpacity, onFrame, particleSpeed, placeSection, placeSectionBore, placeSide, seed,
   setFlowParticlesOn, useFlowParticlesOn, usePrefersReducedMotion,
 } from './lib/flowParticles';
 
@@ -17,8 +17,8 @@ export type FlowParticlesProps = {
 } & (
   /** Along the tube: local y is the tube axis, local x across it; the air runs toward +y (direction 1) or -y (-1). */
   | { view: 'side'; bore: Bore; direction: 1 | -1 }
-  /** Tube cross-section, air perpendicular to the screen: the open bore is |x| <= width/2, |y| <= length/2. */
-  | { view: 'section'; width: number; length: number }
+  /** Tube cross-section, air perpendicular to the screen: the open bore is |x| <= width/2, |y| <= length/2, or, given `bore`, its samples [y, x lo, x hi]. */
+  | { view: 'section'; width: number; length: number; bore?: Bore }
 );
 
 const SEEDS = Array.from({ length: MAX_PARTICLES }, (_, i) => seed(i));
@@ -49,7 +49,9 @@ function ParticleLayer(props: FlowParticlesProps) {
       const along = ((SEEDS[i].along + s.phase) % 1 + 1) % 1;
       const at = a <= 0 ? null : p.view === 'side'
         ? placeSide(p.bore, along, SEEDS[i].across, p.radius)
-        : placeSection(p.width, p.length, along, SEEDS[i].across, SEEDS[i].spread, p.radius);
+        : p.bore
+          ? placeSectionBore(p.bore, along, SEEDS[i].across, SEEDS[i].spread, p.radius)
+          : placeSection(p.width, p.length, along, SEEDS[i].across, SEEDS[i].spread, p.radius);
       if (!at || at.fade <= 0) { c.setAttribute('opacity', '0'); continue; }
       c.setAttribute('cx', at.x.toFixed(4));
       c.setAttribute('cy', at.y.toFixed(4));

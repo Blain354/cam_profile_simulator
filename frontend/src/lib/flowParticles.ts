@@ -120,6 +120,25 @@ export function placeSection(width: number, length: number, along: number, acros
   return { x: -width / 2 + r + (width - 2 * r) * across, y: -length / 2 + my + (length - 2 * my) * spread, r, fade: Math.sin(Math.PI * along) };
 }
 
+/**
+ * Section view through a real bore: `bore` samples the opening across the section, [s, lo, hi] with s
+ * along the plates and lo..hi the open bore normal to them (from the FEM outline). The particle sits
+ * at `spread` along s and `across` the opening still free over its own size, so it stays in the
+ * open lobes of a closing bore; it fades in, then out, and shrinks with depth as placeSection.
+ */
+export function placeSectionBore(bore: Bore, along: number, across: number, spread: number, radius: number): Placed | null {
+  const n = bore.length;
+  if (n === 0) return null;
+  const s0 = bore[0][0], s1 = bore[n - 1][0];
+  if (!(s1 > s0)) return null;
+  const s = s0 + (s1 - s0) * spread;
+  const [lo, hi] = boreOver(bore, s - radius, s + radius);
+  const open = hi - lo;
+  if (!(open > 1e-3)) return null;
+  const r = Math.min(radius, open / 2) * (1 - 0.4 * along);
+  return { x: lo + r + (open - 2 * r) * across, y: s, r, fade: Math.sin(Math.PI * along) };
+}
+
 // ─── One shared animation loop ───────────────────────────────────
 
 type Tick = (dt: number) => void;

@@ -175,3 +175,62 @@ def section(params, h: float) -> dict:
         "e_mpa": float(r.e_mpa),
         "max_stretch": float(np.interp(h, r.h[::-1], r.stretch_max[::-1])),
     }
+
+
+def _quarter(outline: np.ndarray, n: int) -> np.ndarray:
+    """The first quarter of a whole outline (from the x axis to the y axis), as n points.
+
+    Kept by node (material points, so a blend between two plate distances stays physical);
+    resampled by arc length only when the mesh has another node count (a thin wall solved on a
+    finer mesh)."""
+    q = outline[: (len(outline) + 3) // 4]
+    if len(q) == n:
+        return q
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(q, axis=0).T))])
+    t = np.linspace(0.0, s[-1], n)
+    return np.column_stack([np.interp(t, s, q[:, 0]), np.interp(t, s, q[:, 1])])
+
+
+SWEEP_DEEP_STEPS = 12     # force-only samples below the deepest solved step, down to the law's floor
+
+
+def sweep(params) -> dict:
+    """Everything the tube drawings need for one tube, sent once and interpolated in the browser.
+
+    h: the solved plate distances (decreasing), from first contact to the deepest step solved.
+    outer, inner: at each h, the quarter outline (x >= 0, y >= 0, from the x axis to the y axis)
+    flattened to [x0, y0, x1, y1, ...], n points; the whole section is that quarter mirrored on
+    both axes. force_per_mm, pressure_share_per_mm, open_area_mm2 at each h, as section() gives
+    them. deep: force samples below h_min_solved (extrapolated, no shape)."""
+    fl = law(params)
+    r = fl.response
+    n = (len(r.outer[0]) + 3) // 4
+    hs = r.h[r.h >= min(q.h_min for _, q in fl.parts) - 1e-12]
+    outer, inner = [], []
+    for h in hs:
+        mix = lambda k: sum(w * _quarter(np.array(q.shape(h)[k]), n) for w, q in fl.parts)
+        outer.append(mix("outer"))
+        inner.append(mix("inner"))
+    sl = fl.slices(hs)
+    floor = 0.05 * (r.od - r.id)
+    deep = np.geomspace(hs[-1], floor, SWEEP_DEEP_STEPS + 1)[1:] if hs[-1] > floor else np.array([])
+    dl = fl.slices(deep)
+    g = lambda a: [float("%.5g" % v) for v in np.asarray(a, dtype=float)]
+    flat = lambda qs: [[round(float(v), 4) for v in q.ravel()] for q in qs]
+    return {
+        "od": float(r.od), "id": float(r.id), "e_mpa": float(r.e_mpa), "pressure_kpa": fl.kpa,
+        "bore_area_mm2": fl.bore,
+        "h_contact": float(sum(w * q.h_contact for w, q in fl.parts)),
+        "h_closed": float(r.h_closed),
+        "h_sealed": fl.closed_gap,
+        "full_open_gap": fl.full_open_gap,
+        "h_min_solved": float(hs[-1]),
+        "n": n,
+        "h": g(hs),
+        "force_per_mm": g(sum(sl)),
+        "pressure_share_per_mm": g(sl[2]),
+        "open_area_mm2": g(fl.area(hs)),
+        "outer": flat(outer),
+        "inner": flat(inner),
+        "deep": {"h": g(deep), "force_per_mm": g(sum(dl)) if len(deep) else [], "pressure_share_per_mm": g(dl[2]) if len(deep) else []},
+    }

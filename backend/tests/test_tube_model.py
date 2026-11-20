@@ -145,6 +145,46 @@ class FemSectionAndRequestTests(unittest.TestCase):
         self.assertLess(s["open_area_mm2"], s["bore_area_mm2"])
         self.assertLess(s["h_sealed"], s["h_closed"])
 
+    def test_sweep_for_the_drawings(self):
+        """The payload the browser interpolates: one entry per solved h, quarter outlines of a fixed
+        point count, and at each tabulated h the same values as section() gives for that h."""
+        params = LinkageParams()
+        sw = tube_law.sweep(params)
+        json.dumps(sw, allow_nan=False)
+        hs, n = sw["h"], sw["n"]
+        self.assertGreater(len(hs), 10)
+        self.assertTrue(all(a > b for a, b in zip(hs, hs[1:])))
+        for k in ("force_per_mm", "pressure_share_per_mm", "open_area_mm2", "outer", "inner"):
+            self.assertEqual(len(sw[k]), len(hs), k)
+        for q in sw["outer"] + sw["inner"]:
+            self.assertEqual(len(q), 2 * n)
+        self.assertAlmostEqual(sw["h_min_solved"], hs[-1], places=4)
+        # Deeper than solved: force only, extrapolated, decreasing h, increasing force.
+        deep = sw["deep"]
+        self.assertTrue(deep["h"] and deep["h"][0] < hs[-1])
+        self.assertTrue(all(a < b for a, b in zip(deep["force_per_mm"], deep["force_per_mm"][1:])))
+        for i in (0, len(hs) // 3, 2 * len(hs) // 3, len(hs) - 1):
+            with self.subTest(h=hs[i]):
+                ref = tube_law.section(params, hs[i])
+                self.assertAlmostEqual(sw["force_per_mm"][i], ref["force_per_mm"], delta=1e-4 * max(1.0, ref["force_per_mm"]))
+                self.assertAlmostEqual(sw["pressure_share_per_mm"][i], ref["pressure_share_per_mm"], delta=1e-4 * max(1.0, ref["pressure_share_per_mm"]))
+                self.assertAlmostEqual(sw["open_area_mm2"][i], ref["open_area_mm2"], delta=1e-4)
+                np.testing.assert_allclose(np.reshape(sw["outer"][i], (n, 2)), np.array(ref["outer"][:n]), atol=2e-4)
+                np.testing.assert_allclose(np.reshape(sw["inner"][i], (n, 2)), np.array(ref["inner"][:n]), atol=2e-4)
+        for k in ("h_sealed", "h_closed", "bore_area_mm2", "full_open_gap"):
+            self.assertAlmostEqual(sw[k], tube_law.section(params, 1.5)[k], places=9)
+        # A few tens of kB: the browser fetches it once per tube.
+        self.assertLess(len(json.dumps(sw, separators=(",", ":"))), 80_000)
+
+    def test_sweep_quarter_keeps_nodes_and_resamples_another_mesh(self):
+        whole = tube_law.tube_fem._whole(np.column_stack([np.cos(np.linspace(0, np.pi / 2, 7)), 0.5 * np.sin(np.linspace(0, np.pi / 2, 7))]))
+        q = tube_law._quarter(whole, 7)
+        np.testing.assert_allclose(q, whole[:7])
+        r = tube_law._quarter(whole, 4)
+        self.assertEqual(r.shape, (4, 2))
+        np.testing.assert_allclose(r[0], [1.0, 0.0], atol=1e-12)
+        np.testing.assert_allclose(r[-1], [0.0, 0.5], atol=1e-12)
+
     def test_old_bodies_get_the_defaults(self):
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -157,6 +197,11 @@ class FemSectionAndRequestTests(unittest.TestCase):
             self.assertEqual((body.tube_model, body.tube_shore_a), ("fem", 50.0))
         self.assertEqual(main._linkage_params(main.LinkageRequest(tube_model="simple")).tube_model, "simple")
         self.assertEqual(dataclasses.asdict(main._linkage_params(main.LinkageRequest()))["tube_shore_a"], 50.0)
+        # The sweep route: the drawings' one request per tube.
+        sw = main.tube_sweep(main.TubeSweepRequest())
+        self.assertEqual(sw["h"], tube_law.sweep(main.TubeSweepRequest())["h"])
+        with self.assertRaises(main.HTTPException):
+            main.tube_sweep(main.TubeSweepRequest(tube_od=2.0, tube_id=2.0))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
 import { FlowParticles, FlowParticlesSwitch } from './FlowParticles';
+import { sideBore, tubeProfile } from './lib/tubeSide';
+import type { Pt } from './lib/tubeSide';
+import { useTubeSweep } from './lib/tubeSweep';
 import { Button, Input, Modal } from '@blain-projects/ui';
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ReactElement, Ref } from 'react';
@@ -388,7 +391,6 @@ const CYAN = '#22d3ee';
 const BLUE = '#3b82f6';
 const SCREW_R = 1.5;
 
-type Pt = [number, number];
 interface Pose { anchor: Pt; pivotX: number; joint: Pt | null; tip: Pt | null; lines?: Pt[][] }
 
 /** The contact pad's two ends: a segment centred on the pinch point, square to the foot. A round pin is both ends at the tip. */
@@ -403,51 +405,6 @@ function padEnds(pose: Pose, padLength: number): [Pt, Pt] | null {
     }
   }
   return [pose.tip, pose.tip];
-}
-
-/**
- * Tube thickness (wall to pin side, mm) along its axis once the pin has pressed into it.
- * Under the pin the tube takes the pin's shape; on each side the silicone climbs back to its
- * full diameter along a smooth shoulder, about three quarters of a diameter long for a tube pressed flat.
- * `ends` are in (distance from the wall, height) coordinates.
- */
-function tubeProfile(ends: [Pt, Pt] | null, r: number, od: number, y0: number, y1: number): Pt[] {
-  if (!ends) return [[od, y0], [od, y1]];
-  const [[u1, v1], [u2, v2]] = ends;
-  const len = Math.hypot(u2 - u1, v2 - v1);
-  // Unit normal of the pad that faces the wall.
-  let nu = len > 1e-9 ? -(v2 - v1) / len : -1, nv = len > 1e-9 ? (u2 - u1) / len : 0;
-  if (nu > 0) { nu = -nu; nv = -nv; }
-  const indenter = (v: number) => {
-    let u = Infinity;
-    for (const [cu, cv] of ends) {
-      const d = v - cv;
-      if (Math.abs(d) < r) u = Math.min(u, cu - Math.sqrt(r * r - d * d));
-    }
-    if (Math.abs(v2 - v1) > 1e-9) {
-      const t = (v - v1 - r * nv) / (v2 - v1);
-      if (t >= 0 && t <= 1) u = Math.min(u, u1 + t * (u2 - u1) + r * nu);
-    }
-    return u;
-  };
-  const lo = Math.max(y0, Math.min(v1, v2) - r - od), hi = Math.min(y1, Math.max(v1, v2) + r + od);
-  if (hi <= lo) return [[od, y0], [od, y1]];
-  const n = 140;
-  const vs = Array.from({ length: n + 1 }, (_, i) => lo + (hi - lo) * i / n);
-  const pressed = vs.map((v) => Math.max(indenter(v), 0.04));
-  const pts: Pt[] = [[od, y0]];
-  vs.forEach((v, i) => {
-    let h = od;
-    for (let j = 0; j <= n; j++) {
-      const depth = od - pressed[j];
-      if (depth <= 0) continue;
-      const t = Math.min(Math.abs(v - vs[j]) / Math.max(0.25 * od, 0.75 * Math.sqrt(depth * od)), 1);
-      h = Math.min(h, pressed[j] + depth * t * t * (3 - 2 * t));
-    }
-    pts.push([i === 0 || i === n ? od : h, v]);
-  });
-  pts.push([od, y1]);
-  return pts;
 }
 
 /** Points of the curved link from the joint to the carriage pivot (an arc that meets the joint along the foot). */
@@ -470,6 +427,9 @@ function linkPath(joint: Pt, pivot: Pt, halfAngleDeg: number, side: number): str
 }
 
 function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; data: LinkageResult; y: number; details: boolean }) {
+  // FEM tube: the bore along each tube comes from its section; simple model: the schematic walls.
+  // While a new tube solves, the last FEM tube stays drawn rather than the simple walls.
+  const { drawn: sweep, stale } = useTubeSweep(params);
   const lever = params.linkage_type === 'lever';
   const pendulum = params.linkage_type === 'pendulum';
   const onTop = data.anchor_on_top;
@@ -487,8 +447,26 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   };
   // Tube B's linkage is tube A's turned half a turn about the carriage pivot at Y = 0: it sits at -Y.
   const flip = (pt: [number, number] | null): [number, number] | null => (pt ? [-pt[0], top - pt[1]] : null);
-  const poseA: Pose = { anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) };
-  const poseB: Pose = { anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) };
+  const gapA = interpAt(y, data.Y_positions, data.gap_loaded_a);
+  const gapB = interpAt(y, data.Y_positions, data.gap_loaded_b);
+  // The pin (or pad) is drawn at the gap the labels and the section card read. tip_x is the rigid-bar
+  // pose for the hinged linkages (the tube pushes the pin back from it) and already the loaded pose for
+  // the one-piece part, so the pin is moved square to the wall by whatever the drawn gap still lacks
+  // (a few passes: a pad turns with the pin), the drawn radius floor included.
+  const padLength = pendulum ? params.pad_length : 0;
+  const atGap = (pose: Pose, sign: 1 | -1, gap: number | null): Pose => {
+    let p = pose;
+    for (let k = 0; k < 4 && p.tip && gap != null; k++) {
+      const ends = padEnds(p, padLength);
+      if (!ends) break;
+      const d = gap - (Math.min(...ends.map(([px]) => wall - sign * px)) - rPin);
+      if (Math.abs(d) < 1e-6) break;
+      p = { ...p, tip: [p.tip[0] - sign * d, p.tip[1]] };
+    }
+    return p;
+  };
+  const poseA = atGap({ anchor: [data.anchor_x, onTop ? top : 0], pivotX: params.pivot_offset, joint: at(y, data.joint_x, data.joint_y), tip: at(y, data.tip_x, data.tip_y) }, -1, gapA);
+  const poseB = atGap({ anchor: [-data.anchor_x, onTop ? 0 : top], pivotX: -params.pivot_offset, joint: flip(at(-y, data.joint_x, data.joint_y)), tip: flip(at(-y, data.tip_x, data.tip_y)) }, 1, gapB);
 
   // One-piece part: its bent centre lines, from the rest shape and the two bending shapes.
   const flexLines = (yy: number, place: (pt: Pt) => Pt): Pt[][] | undefined => {
@@ -504,8 +482,6 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   poseA.lines = flexLines(y, upright);
   poseB.lines = flexLines(-y, (pt) => { const q = upright(pt); return [-q[0], top - q[1]]; });
 
-  const gapA = interpAt(y, data.Y_positions, data.gap_loaded_a);
-  const gapB = interpAt(y, data.Y_positions, data.gap_loaded_b);
   // Bars drawn at their real width, kept readable on very thin or very wide sections.
   const barW = Math.min(Math.max(params.member_width, 0.3), 3);
   // A top-anchored frame is drawn mirrored, which turns the arc's bulge to the other side.
@@ -525,22 +501,23 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
   const tube = (sign: 1 | -1, flow: number, name: string, pose: Pose) => {
     const cx = sign * params.tube_center_x;
     const frac = data.max_flow_l_min > 0 ? Math.min(flow / data.max_flow_l_min, 1) : 0;
-    const od = params.tube_od, skin = (params.tube_od - params.tube_id) / 2;
+    const od = params.tube_od;
     // Work in (distance from the wall, height): the wall is at 0, the tube's free side at OD.
     const ends = padEnds(pose, pendulum ? params.pad_length : 0);
     const toWall = ends ? ends.map(([px, py]) => [wall - sign * px, py]) as [Pt, Pt] : null;
-    const profile = tubeProfile(toWall, rPin, od, -1, top + 1);
+    // FEM: the shoulders on each side of the pin run one OD; simple model: the drawing it always had.
+    const profile = tubeProfile(toWall, rPin, od, -1, top + 1, sweep ? od : undefined);
+    const bore = sideBore(profile, od, params.tube_id, sweep);
     const xy = (u: number, v: number) => `${(sign * (wall - u)).toFixed(3)},${(-v).toFixed(3)}`;
-    const ring = (inner: (h: number) => number, outer: (h: number) => number) =>
-      [...profile.map(([h, v]) => xy(outer(h), v)), ...[...profile].reverse().map(([h, v]) => xy(inner(h), v))].join(' ');
-    // Where the tube is pressed thinner than its two walls the bore is shut and the walls share what is left.
-    const wallSide = (h: number) => Math.min(skin, h / 2), pinSide = (h: number) => Math.max(h - skin, h / 2);
+    const ring = (inner: number[], outer: number[]) =>
+      [...profile.map(([, v], i) => xy(outer[i], v)), ...profile.map(([, v], i) => xy(inner[i], v)).reverse()].join(' ');
     return (
       <g>
-        <polygon points={ring(() => 0, (h) => h)} fill="var(--bui-text)" fillOpacity={0.16} stroke="var(--bui-text)" strokeWidth={0.05} strokeLinejoin="round" />
-        <polygon points={ring(wallSide, pinSide)} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
+        {sweep && <title>{`Tube ${name.trim()[0]}, side view: the wall follows the pin, and the open bore at each station is the FEM section's at the local pin-to-wall distance, so it shuts before the wall stops moving. The shoulders on each side of the pin (about one OD) are schematic: the 2D section has no bending along the tube.${stale ? ' The previous tube, shown while the new one solves.' : ''}`}</title>}
+        <polygon points={ring(profile.map(() => 0), profile.map(([h]) => h))} fill="var(--bui-text)" fillOpacity={0.16} stroke="var(--bui-text)" strokeWidth={0.05} strokeLinejoin="round" />
+        <polygon points={ring(bore.map((b) => b[1]), bore.map((b) => b[2]))} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
         {/* Air toward the chamber, taken below the drawing: down tube A, up tube B */}
-        <FlowParticles view="side" frac={frac} bore={profile.map(([h, v]) => [v, wallSide(h), pinSide(h)] as const)} direction={sign < 0 ? -1 : 1}
+        <FlowParticles view="side" frac={frac} bore={bore} direction={sign < 0 ? -1 : 1}
           radius={Math.min(0.16, params.tube_id / 6)} color="var(--bui-text)" transform={`matrix(${-sign} 0 0 -1 ${sign * wall} 0)`} />
         <line x1={cx} y1={-top - 1} x2={cx} y2={1} stroke="var(--bui-text)" strokeOpacity={0.5} strokeWidth={0.04} strokeDasharray="0.5 0.12 0.1 0.12" />
         {label(cx, onTop ? -1.1 : top + 1.1, name, 'var(--bui-text)')}
@@ -654,6 +631,11 @@ function LinkageDiagram({ params, data, y, details }: { params: LinkageParams; d
           {label(-wall + 0.25, h0 + 0.55, `h₀ ${h0.toFixed(2)}`, BLUE, 'start')}
           {gapA != null && label(-wall + 0.2, a.tip[1] + (onTop ? -1.1 : 1.1), `gap ${gapA.toFixed(3)}${newtons(forceA)}`, 'var(--bui-text)', 'start')}
           {gapB != null && poseB.tip && label(wall - 0.2, poseB.tip[1] + (onTop ? 1.1 : -1.1), `gap ${gapB.toFixed(3)}${newtons(forceB)}`, 'var(--bui-text)', 'end')}
+          {sweep && (
+            // Away from the anchor's dimension line, along the floor (or the ceiling when anchored on top).
+            <text x={(a.anchor[0] > 0 ? -1 : 1) * (wall - 0.2)} y={onTop ? -top - 1.45 : 1.45} fill="var(--bui-text)" fillOpacity={0.7} fontSize={0.36}
+              textAnchor={a.anchor[0] > 0 ? 'start' : 'end'} dominantBaseline="middle">Tubes: FEM bore, schematic shoulders</text>
+          )}
         </g>
       )}
     </svg>
