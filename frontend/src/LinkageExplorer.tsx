@@ -1817,7 +1817,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         </Button>
         {optimizing && (
           <p className="text-xs text-neutral-400" role="status">
-            {onePiece ? 'Checking the one-piece part can take about ten seconds.' : 'Searching…'}
+            {onePiece
+              ? `Checking the one-piece part can take about half a minute${search.pivot_side === 'both' ? ', twice that for both pivot sides' : ''}.`
+              : 'Searching…'}
           </p>
         )}
         {optMessage && (
