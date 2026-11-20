@@ -2,7 +2,7 @@ import { Button } from '@blain-projects/ui';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Bore, ParticleView } from './lib/flowParticles';
 import {
-  EASE_S, MAX_PARTICLES, countOpacity, onFrame, particleSpeed, placeSection, placeSide, seed,
+  MAX_PARTICLES, countOpacity, onFrame, particleSpeed, placeSection, placeSide, seed,
   setFlowParticlesOn, useFlowParticlesOn, usePrefersReducedMotion,
 } from './lib/flowParticles';
 
@@ -33,14 +33,14 @@ function ParticleLayer(props: FlowParticlesProps) {
   const reduced = usePrefersReducedMotion();
   const group = useRef<SVGGElement>(null);
   const latest = useRef(props);
-  // Shown flow (eased toward the computed one), how far the pool has moved, and what lets the loop run.
-  const st = useRef({ shown: props.frac, phase: 0, inView: true, docVisible: true, reduced, stop: null as null | (() => void) });
+  // How far the pool has moved, and what lets the loop run.
+  const st = useRef({ phase: 0, inView: true, docVisible: true, reduced, stop: null as null | (() => void) });
 
   const draw = () => {
     const g = group.current;
     if (!g) return;
     const p = latest.current, s = st.current;
-    const f = s.reduced ? p.frac : s.shown;
+    const f = p.frac;
     const dots = g.children;
     for (let i = 0; i < MAX_PARTICLES; i++) {
       const c = dots[i];
@@ -60,11 +60,9 @@ function ParticleLayer(props: FlowParticlesProps) {
 
   const tick = (dt: number) => {
     const p = latest.current, s = st.current;
-    s.shown += (p.frac - s.shown) * (1 - Math.exp(-dt / EASE_S));
-    if (Math.abs(p.frac - s.shown) < 1e-4) s.shown = p.frac;
     const view: ParticleView = p.view;
     const dir = p.view === 'side' ? p.direction : 1;
-    s.phase = (s.phase + dir * particleSpeed(s.shown, view) * dt) % 1;
+    s.phase = (s.phase + dir * particleSpeed(p.frac, view) * dt) % 1;
     draw();
     sync();
   };
@@ -72,7 +70,7 @@ function ParticleLayer(props: FlowParticlesProps) {
   // The loop runs only while something moves and the drawing can be seen.
   const sync = () => {
     const s = st.current;
-    const run = !s.reduced && s.inView && s.docVisible && (latest.current.frac > 0 || s.shown > 0);
+    const run = !s.reduced && s.inView && s.docVisible && latest.current.frac > 0;
     if (run && !s.stop) s.stop = onFrame(tick);
     else if (!run && s.stop) { s.stop(); s.stop = null; }
   };
@@ -80,7 +78,6 @@ function ParticleLayer(props: FlowParticlesProps) {
   useLayoutEffect(() => {
     latest.current = props;
     st.current.reduced = reduced;
-    if (reduced) st.current.shown = props.frac;
     draw();
     sync();
   });
@@ -112,12 +109,12 @@ function ParticleLayer(props: FlowParticlesProps) {
   );
 }
 
-/** On/off switch for the flow particles of every schematic. */
-export function FlowParticlesSwitch() {
+/** On/off switch for the flow particles of every schematic; `note` adds what the schematic's particles mean to its tooltip. */
+export function FlowParticlesSwitch({ note }: { note?: string }) {
   const on = useFlowParticlesOn();
   return (
     <Button variant="ghost" type="button" role="switch" aria-checked={on} onClick={() => setFlowParticlesOn(!on)}
-      title="Particles in each tube, their density and speed proportional to the computed flow"
+      title={`Particles in each tube, their density and speed proportional to the computed flow.${note ? ` ${note}` : ''}`}
       className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-neutral-700 px-2 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40">
       <span aria-hidden="true" className={`flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors ${on ? 'bg-emerald-600' : 'bg-neutral-600'}`}>
         <span className={`h-3 w-3 rounded-full bg-white transition-transform ${on ? 'translate-x-3' : ''}`} />

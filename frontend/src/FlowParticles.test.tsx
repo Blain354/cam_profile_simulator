@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { FlowParticles, FlowParticlesSwitch } from './FlowParticles'
 import type { Bore } from './lib/flowParticles'
 import {
-  FULL_SPEED, MAX_PARTICLES, countOpacity, flowFraction, particleSpeed, placeSection, placeSide, runningTicks, seed, visibleCount,
+  FULL_SPEED, MAX_PARTICLES, countOpacity, flowFraction, fullBoreFlow, particleSpeed, placeSection, placeSide, runningTicks, seed, visibleCount,
 } from './lib/flowParticles'
 
 let frames: Map<number, FrameRequestCallback>
@@ -107,20 +107,48 @@ test('zero flow draws nothing and runs no loop', () => {
   expect(frames.size).toBe(0)
 })
 
-test('a flow change keeps the particles where they are and eases in the new density', () => {
+test('a flow change keeps the particles where they are and shows the new density at once; back to zero, nothing shows or moves', () => {
   const tube = (frac: number) => <svg><FlowParticles view="side" frac={frac} bore={pinched} direction={-1} radius={0.1} color="red" /></svg>
   const { container, rerender } = render(tube(0.25))
   step(0)
   step(50)
   const c = container.querySelector('[data-flow-particles] circle')!
   const y = c.getAttribute('cy')
-  const before = shown(container).length
+  expect(shown(container).length).toBeLessThanOrEqual(MAX_PARTICLES / 4)
   rerender(tube(1))
   expect(c.getAttribute('cy')).toBe(y)
-  expect(shown(container).length).toBeLessThan(MAX_PARTICLES / 2)
+  expect(shown(container).length).toBeGreaterThan(MAX_PARTICLES - 5)
   for (let t = 100; t <= 2000; t += 50) step(t)
-  expect(shown(container).length).toBeGreaterThan(before)
   expect(Number(c.getAttribute('cy'))).toBeLessThan(Number(y))
+  rerender(tube(0))
+  expect(shown(container)).toHaveLength(0)
+  expect(frames.size).toBe(0)
+})
+
+test('the cam reference is the full-bore flow, from the linear flow-vs-area model', () => {
+  const area = [0, 0.5, 1.2, 1.2]
+  const flow = area.map((a) => 3 * a)
+  expect(fullBoreFlow(flow, area, 2)).toBeCloseTo(3 * Math.PI)
+  expect(fullBoreFlow([0, 0], [0, 0], 2)).toBe(0)
+})
+
+test('side view: on a sloping wall the whole circle stays inside the bore', () => {
+  // Bore narrowing steeply from 2 mm to 0.2 mm over 1 mm of tube.
+  const slope: Bore = [[0, 0, 2], [4, 0, 2], [5, 0.9, 1.1], [6, 0, 2], [10, 0, 2]]
+  const halfOpen = (s: number) => {
+    const t = Math.min(Math.abs(s - 5), 1)
+    return 0.1 + 0.9 * t
+  }
+  for (let i = 0; i < MAX_PARTICLES; i++) {
+    for (let k = 0; k <= 100; k++) {
+      const at = placeSide(slope, k / 100, seed(i).across, 0.3)
+      if (!at) continue
+      for (let a = 0; a < 16; a++) {
+        const px = at.x + at.r * Math.cos(a * Math.PI / 8), py = at.y + at.r * Math.sin(a * Math.PI / 8)
+        expect(Math.abs(px - 1)).toBeLessThanOrEqual(halfOpen(py) + 1e-9)
+      }
+    }
+  }
 })
 
 test('reduced motion: the same density, drawn still, with no animation frame', () => {

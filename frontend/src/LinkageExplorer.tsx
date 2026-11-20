@@ -1782,7 +1782,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
               Center
             </Button>
-            <FlowParticlesSwitch />
+            <FlowParticlesSwitch note="Full density and speed at the flow through the full bore. The chamber is not drawn: it is taken as below the drawing, so the air runs down tube A (supply) and up tube B (exhaust)." />
             <span className="text-xs text-neutral-400 text-right">
               {loadedRpm.toFixed(0)} RPM under load ({params.motor_speed} × {Math.round(params.speed_factor * 100)} %), {speed.toFixed(2)} mm/s
             </span>

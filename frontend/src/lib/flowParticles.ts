@@ -10,8 +10,6 @@ import { useSyncExternalStore } from 'react';
 export const MAX_PARTICLES = 80;
 /** Tube lengths travelled per second at the reference flow: side view along the tube, section view through the slice. */
 export const FULL_SPEED = { side: 0.6, section: 1.2 } as const;
-/** Time constant (s) of the shown flow following the computed one, so a change never makes a jump. */
-export const EASE_S = 0.15;
 
 export type ParticleView = keyof typeof FULL_SPEED;
 
@@ -22,6 +20,18 @@ const fract = (v: number) => v - Math.floor(v);
 export function flowFraction(flow: number | null | undefined, reference: number | null | undefined): number {
   if (flow == null || reference == null || !Number.isFinite(flow) || !Number.isFinite(reference) || reference <= 0) return 0;
   return clamp01(flow / reference);
+}
+
+/**
+ * Static flow through the full bore, pi (ID/2)^2, from a simulated flow-vs-area series: the static
+ * model is linear in area, so any sample with an open area gives it. 0 when no sample is open.
+ */
+export function fullBoreFlow(flow: readonly number[], area: readonly number[], tubeId: number): number {
+  let best = -1;
+  for (let i = 0; i < Math.min(flow.length, area.length); i++) {
+    if (area[i] > 0 && Number.isFinite(flow[i]) && (best < 0 || area[i] > area[best])) best = i;
+  }
+  return best < 0 ? 0 : flow[best] / area[best] * Math.PI * (tubeId / 2) ** 2;
 }
 
 /** How many of the pool are shown at flow fraction `f`: the density along the tube is this over the tube length. */
@@ -67,17 +77,31 @@ export function boreAt(bore: Bore, s: number): [number, number] {
 
 export interface Placed { x: number; y: number; r: number; fade: number }
 
+/** Narrowest open bore over s0..s1: the largest lo and the smallest hi, at the ends and every sample between. */
+function boreOver(bore: Bore, s0: number, s1: number): [number, number] {
+  let [lo, hi] = boreAt(bore, s0);
+  const [lo1, hi1] = boreAt(bore, s1);
+  lo = Math.max(lo, lo1); hi = Math.min(hi, hi1);
+  for (const [s, l, h] of bore) {
+    if (s > s0 && s < s1) { lo = Math.max(lo, l); hi = Math.min(hi, h); }
+  }
+  return [lo, hi];
+}
+
 /**
  * Side view: the tube runs along y over the bore's s range; particle at `along` (0..1) sits across
- * the bore still open there, its radius cut to half that opening, so it squeezes through a pinch.
+ * the bore still open over its whole height (s +- radius), its radius cut to half that opening, so
+ * it squeezes through a pinch and never cuts into a sloping wall or past the tube's ends.
  * Fades in and out over the last few percent at each end of the drawn tube.
  */
 export function placeSide(bore: Bore, along: number, across: number, radius: number): Placed | null {
   const n = bore.length;
   if (n === 0) return null;
-  const s0 = bore[0][0], s1 = bore[n - 1][0];
+  // Centres kept one radius from the cut ends, so no particle sticks out of the drawn tube.
+  const s0 = bore[0][0] + radius, s1 = bore[n - 1][0] - radius;
+  if (!(s1 > s0)) return null;
   const s = s0 + (s1 - s0) * along;
-  const [lo, hi] = boreAt(bore, s);
+  const [lo, hi] = boreOver(bore, s - radius, s + radius);
   const open = hi - lo;
   if (!(open > 1e-3)) return null;
   const r = Math.min(radius, open / 2);

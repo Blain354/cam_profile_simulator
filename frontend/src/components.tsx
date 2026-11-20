@@ -1,4 +1,5 @@
 import { FlowParticles } from './FlowParticles';
+import { flowFraction, fullBoreFlow } from './lib/flowParticles';
 import { Button, Input, Modal } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
@@ -704,8 +705,8 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
         {hi > 0.005
           ? <rect x={-hi / 2} y={-li / 2} width={hi} height={li} rx={Math.min(hi / 2, 0.05)} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
           : <line x1={0} y1={-li / 2} x2={0} y2={li / 2} stroke="#ef4444" strokeWidth={0.04} />}
-        {/* Air crossing the section, perpendicular to the screen */}
-        <FlowParticles view="section" frac={frac} width={hi} length={li} radius={0.06} color="#f5f5f5" />
+        {/* Air crossing the section, perpendicular to the screen; full density and speed at the full-bore flow */}
+        <FlowParticles view="section" frac={flowFraction(flow, fullBoreFlow(data.flow_l_min, data.flow_area, id))} width={hi} length={li} radius={0.06} color="#f5f5f5" />
       </g>
       <circle cx={bx} cy={by} r={r} fill="#8b5cf6" fillOpacity={details ? 0.3 : 0.1} stroke="#8b5cf6" strokeWidth="0.08" opacity={0.8} />
       <line x1={-0.12} y1={0} x2={0.12} y2={0} stroke="#a3a3a3" strokeWidth={0.03} />
