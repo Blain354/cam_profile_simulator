@@ -92,7 +92,8 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
         "pend_arm_L": "bar2_length", "pend_link_r": "link_length",
         "pend_foot": "foot_length", "pend_foot_angle": "foot_angle_deg", "pend_pad": "pad_length",
         "pend_anchor": "anchor_distance", "pend_pivot_offset": "pivot_offset",
-        "pend_tube_center": "tube_center_x", "pend_pin_dia": "pin_diameter",
+        # No pend_tube_center: the tube centre is an input the CAD measures (DEFAULT_MEASURED), never written back.
+        "pend_pin_dia": "pin_diameter",
         "pend_height": "total_height", "pend_stroke": "stroke",
         "pend_link_radius": "link_arc_radius", "pend_pin_gap": "pin_gap_y0",
         "pend_bar_width": "member_width", "pend_bar_thickness": "member_thickness", **_TUBE,

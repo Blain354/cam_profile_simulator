@@ -117,6 +117,8 @@ class OnshapeVariablesTests(unittest.TestCase):
         self.assertEqual(rows["pend_arm_L"]["new_expression"], "14.43 mm")
         self.assertEqual(rows["pend_foot_angle"]["new_expression"], "100 deg")
         self.assertIn("pend_link_radius", rows)
+        # The tube centre is measured in the CAD and only read back: it is never written.
+        self.assertNotIn("pend_tube_center", rows)
         # The pin-to-wall gap of the made shape: closed gap less the preload.
         from backend.linkage import compute_linkage
         self.assertEqual(rows["pend_pin_gap"]["new_expression"], ov._expression(compute_linkage(PENDULUM).closed_gap - PENDULUM.preload, "mm"))
