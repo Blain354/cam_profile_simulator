@@ -528,6 +528,17 @@ class LinkageTests(unittest.TestCase):
         self.assertGreater(max(v or 0.0 for v in r.flow_a) / r.max_flow_l_min, 0.5)
         self.assertLessEqual(r.max_stress_mpa, p.member_strength_mpa)
 
+    def test_the_rigid_pick_returns_a_design_that_assembles_once_rounded(self):
+        # The best inverted pendulum of these ranges sits by a singular closed pose: rounded to
+        # 1 um, it lands on a pivot below the anchor line. The pick passes it over.
+        p = replace(PENDULUM, foot_length=1.5, pad_length=1.0, tube_center_x=8.0, pivot_inverted=True)
+        s = LinkageSearch(bar1_min=6, bar1_max=16, bar2_min=8, bar2_max=18, anchor_min=-5, anchor_max=8, pivot_side="inverted")
+        best = optimize_linkage(p, s)[0]
+        r = compute_linkage(best)
+        self.assertIsNotNone(r.gap_a[len(r.Y_positions) // 2], r.message)
+        self.assertGreater(max(v or 0.0 for v in r.flow_a), 0.0)
+        self.assertTrue(r.sealed_after_flex)
+
     def test_stroke_used_stops_where_the_closed_side_locks(self):
         # Full bore at 2.46 mm, but this lever's hinged bar reaches dead centre at Y = -2.275: a
         # full-bore stroke (2.5) would not run. The travel used stops before, and runs.

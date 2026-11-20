@@ -1652,6 +1652,7 @@ def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[Linka
     best designs of the last round are tried in turn. With it, the last round's best and then the
     best design of each cell of the searched ranges over every round (_shortlist), best first, for
     spread: the last round's designs are near copies, which leak or seal together.
+    A design is also passed over when its dimensions rounded to 1 um no longer score (see below).
     side["seal"] counts the designs refused as leaking."""
     p, names = ctx["p"], ctx["names"]
     x, score = ctx["pool"][-1]
@@ -1668,6 +1669,11 @@ def _rigid_pick(s: LinkageSearch, ctx: dict, side: dict) -> Tuple[Optional[Linka
         if key in tried or not np.isfinite(sc):
             continue
         tried.add(key)
+        # Score the design as returned, rounded to 1 um: near a singular closed pose the rounding
+        # can land on another pose, or on none (a pivot below the anchor line), that the search never saw.
+        sc = float(ctx["evaluate"](np.array([key], dtype=float))[0])
+        if not np.isfinite(sc):
+            continue
         if s.objective == OBJECTIVE_RESPONSE:
             # Show and run exactly the travel the design uses: full bore, or as far as the closed
             # tube and the clearance between the two linkages allow, rounded to 0.05 mm.
