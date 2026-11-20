@@ -38,6 +38,7 @@ class FakeOnshape:
         self.references = {}         # eid -> blocks of referenced Variable Studios in its read
         self.listing_delay = 0.0
         self.measured = {}           # variable name -> FeatureScript result, for the Part Studio PSM
+        self.cad = None              # name -> FeatureScript value the Part Studio uses; None = follows the table
 
     def __call__(self, method, path, *, query=None, body=None, follow_redirects=True):
         assert follow_redirects is False, "the linkage write must never follow a redirect"
@@ -53,7 +54,17 @@ class FakeOnshape:
             self.tables[eid] = []
             return {"id": eid, "name": body["name"], "elementType": "VARIABLESTUDIO"}
         if (method, path) == ("POST", "/partstudios/d/doc/w/ws/e/PSM/featurescript"):
-            var = body["script"].split('getVariable(context, "')[1].split('"')[0]
+            script = body["script"]
+            if "for (var n in" in script:
+                import json as _json
+                names = _json.loads(script.split("for (var n in ")[1].split(")")[0])
+                cad = self.cad if self.cad is not None else {
+                    v["name"]: metres(float(v["expression"].split()[0])) if v["expression"].endswith("mm")
+                    else {"btType": "BTFSValueWithUnits", "unitToPower": {"RADIAN": 1}, "value": float(v["expression"].split()[0]) * 3.141592653589793 / 180}
+                    for v in (self.table("cam_sim_pendulum") or [])}
+                entries = [{"key": {"btType": "BTFSValueString", "value": n}, "value": cad[n]} for n in names if n in cad]
+                return {"result": {"btType": "com.belmonttech.serialize.fsvalue.BTFSValueMap", "value": entries}, "notices": []}
+            var = script.split('getVariable(context, "')[1].split('"')[0]
             return {"result": copy.deepcopy(self.measured.get(var)), "notices": []}
         prefix, _, eid_part = path.partition("/variables/d/doc/w/ws/e/")
         eid = eid_part[: -len("/variables")] if eid_part.endswith("/variables") else None
@@ -396,7 +407,7 @@ class MeasuredInputsTests(unittest.TestCase):
         fake.measured["pend_CALC_tube_center"] = metres(PENDULUM.tube_center_x + 0.0004)
         out = ov.preview(PENDULUM, target=TARGET)
         self.assertTrue(out["input_check"]["valid"])
-        self.assertEqual(out["api_calls"], 2)          # the listing and the measure
+        self.assertEqual(out["api_calls"], 3)          # the listing, the measure and the Part Studio read-back
         written = ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
         self.assertTrue(written["input_check"]["valid"])
         self.assertEqual(fake.expression("cam_sim_pendulum", "pend_arm_L"), "14.43 mm")
@@ -427,6 +438,24 @@ class MeasuredInputsTests(unittest.TestCase):
             ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
         fake.measured["pend_CALC_tube_center"] = {"btType": "BTFSValueWithUnits", "unitToPower": {"RADIAN": 1}, "value": 1.0}
         self.assertIn("not a mm", ov.preview(PENDULUM, target=TARGET)["input_check"]["error"])
+
+    def test_the_part_studio_is_checked_against_what_was_written(self):
+        fake = self.use(FakeOnshape())
+        fake.measured["pend_CALC_tube_center"] = metres(PENDULUM.tube_center_x)
+        before = ov.preview(PENDULUM, target=TARGET)["cad_check"]
+        self.assertTrue(before["configured"])
+        self.assertFalse(before["coherent"])                       # nothing written yet: the Part Studio has none of them
+        self.assertTrue(all(r["onshape"] is None for r in before["rows"]))
+        out = ov.apply(PENDULUM, [r.name for r in ov.wanted_rows(PENDULUM)], target=TARGET)
+        self.assertTrue(out["cad_check"]["coherent"], out["cad_check"])   # the Part Studio follows the table
+        # A Part Studio that keeps its own value for one of them is reported, value and all.
+        fake.cad = {r.name: metres(1.0) if r.name == "pend_arm_L" else None for r in ov.wanted_rows(PENDULUM)}
+        fake.cad = {k: v for k, v in fake.cad.items() if v is not None}
+        after = ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)["cad_check"]
+        bad = [r for r in after["rows"] if not r["ok"]]
+        self.assertFalse(after["coherent"])
+        self.assertEqual(bad[0]["name"], "pend_arm_L")
+        self.assertAlmostEqual(bad[0]["onshape"], 1.0)
 
     def test_odd_measured_mapping_is_refused(self):
         self.use(FakeOnshape())

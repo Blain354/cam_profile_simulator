@@ -199,6 +199,21 @@ class LinkageTests(unittest.TestCase):
         # Over-squeeze below the preload leaves nothing feasible.
         self.assertIsNone(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, max_oversqueeze=0.05))[0])
 
+    def test_pinch_height_limit_from_the_top_plane(self):
+        def height(q):
+            r = compute_linkage(replace(q, compliant=False))
+            return r.tip_y[len(r.Y_positions) // 2]
+        free = optimize_linkage(PENDULUM, PENDULUM_SEARCH)[0]
+        cap = height(free) - 1.0
+        capped = optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, pinch_height_max=cap))[0]
+        self.assertIsNotNone(capped)
+        self.assertLessEqual(height(capped), cap + 1e-6)
+        floor = height(free) + 1.0
+        raised = optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, pinch_height_min=floor))[0]
+        if raised is not None:
+            self.assertGreaterEqual(height(raised), floor - 1e-6)
+        self.assertIsNone(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, pinch_height_max=0.1))[0])
+
     def test_anchor_no_go_zone_is_avoided(self):
         free = optimize_linkage(PENDULUM, PENDULUM_SEARCH)[0]
         a = free.anchor_distance

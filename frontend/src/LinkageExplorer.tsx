@@ -86,6 +86,9 @@ interface LinkageSearch {
   /** No-go zone for the anchor (assembly): strictly between the two ends is never proposed; equal ends = no zone. */
   anchor_avoid_min: number;
   anchor_avoid_max: number;
+  /** Pin centre height from the anchor (top) plane at Y = 0; 0 and 0 = no limit, max 0 = no cap. */
+  pinch_height_min: number;
+  pinch_height_max: number;
   foot_min: number;
   foot_max: number;
   foot_angle_min: number;
@@ -252,7 +255,7 @@ const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, compliant: true },
 };
 
-const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, anchor_avoid_min: 0, anchor_avoid_max: 0, fixed: [] as SearchVar[] };
+const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, anchor_avoid_min: 0, anchor_avoid_max: 0, pinch_height_min: 0, pinch_height_max: 0, fixed: [] as SearchVar[] };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6, max_stroke: 5 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
@@ -703,6 +706,9 @@ interface InputCheck {
 interface OnshapeTable {
   rows: OnshapeRow[]; api_calls: number; table_name: string; table_exists: boolean; table_created: boolean;
   element_id: string | null; table_url: string | null; write_error?: string | null; input_check?: InputCheck;
+  /** What the Part Studio actually uses for each written variable (backend `cad_check`). */
+  cad_check?: { configured: boolean; coherent: boolean; error: string | null;
+    rows: { name: string; label: string; unit: string; simulator: number; onshape: number | null; ok: boolean }[] };
 }
 
 /** Inputs of each kind that the CAD measures (same keys as DEFAULT_MEASURED in backend/onshape_variables.py). */
@@ -792,6 +798,8 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
   }, [params]);
 
   const check = table?.input_check;
+  const cad = table?.cad_check;
+  const cadByName = new Map((cad?.rows ?? []).map((c) => [c.name, c]));
   const blocked = check != null && check.configured && !check.valid;
   const syncAndCheck = () => {
     if (!check || check.rows.length === 0) return;
@@ -866,6 +874,19 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
                   : `There is no table called ${table.table_name} in the document yet. Writing creates it with the ticked variables.`}
             </p>
             {!current && !done && <p className="text-xs text-amber-300">The name changed: press Look up before writing.</p>}
+            {done && cad?.configured && (
+              <div className={`rounded-lg border p-2 text-xs ${cad.coherent ? 'border-emerald-600/60 bg-emerald-900/20 text-emerald-200' : 'border-amber-500/60 bg-amber-900/20 text-amber-100'}`} role="status">
+                <p className="font-bold">
+                  {cad.coherent
+                    ? 'Coherent: the Part Studio now uses every value written.'
+                    : 'Not coherent: the Part Studio does not use some of the values written. Onshape is the reference: check that it references this table and has no local variable of the same name.'}
+                </p>
+                {cad.error && <p className="mt-1">{cad.error}</p>}
+                {cad.rows.filter((c) => !c.ok).map((c) => (
+                  <p key={c.name} className="mt-1 font-mono">{`#${c.name}: written ${c.simulator.toFixed(4)} ${c.unit}, Part Studio ${c.onshape == null ? 'does not use it' : `${c.onshape.toFixed(4)} ${c.unit}`}`}</p>
+                ))}
+              </div>
+            )}
             {check?.configured && (
               <div className={`rounded-lg border p-2 text-xs ${check.valid ? 'border-emerald-600/60 bg-emerald-900/20 text-emerald-200' : 'border-red-500/50 bg-red-900/30 text-red-200'}`} role="status">
                 <p className="font-bold">
@@ -888,7 +909,7 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
             <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-neutral-700">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-neutral-900 text-left text-neutral-400">
-                  <tr><th className="p-2" /><th className="p-2">Onshape variable</th><th className="p-2">In the table now</th><th className="p-2">From the simulator</th><th className="p-2">Status</th></tr>
+                  <tr><th className="p-2" /><th className="p-2">Onshape variable</th><th className="p-2">In the table now</th><th className="p-2">From the simulator</th>{cad?.configured && <th className="p-2">Part Studio uses</th>}<th className="p-2">Status</th></tr>
                 </thead>
                 <tbody>
                   {table.rows.map((r) => (
@@ -900,6 +921,12 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
                       <td className="p-2"><span className="font-mono text-neutral-100">#{r.name}</span><span className="block text-[10px] text-neutral-500">{r.label}</span></td>
                       <td className="p-2 font-mono text-neutral-300">{r.current_expression ?? '—'}</td>
                       <td className="p-2 font-mono text-neutral-100">{r.new_expression}</td>
+                      {cad?.configured && (() => {
+                        const c = cadByName.get(r.name);
+                        return <td className={`p-2 font-mono ${c == null ? 'text-neutral-500' : c.ok ? 'text-emerald-400' : 'text-amber-300'}`}>
+                          {c == null ? '—' : c.onshape == null ? 'not used' : `${c.onshape.toFixed(4)} ${c.unit} ${c.ok ? '✓' : '✗'}`}
+                        </td>;
+                      })()}
                       <td className={`p-2 ${statusText[r.status][1]}`} title={r.detail || undefined}>
                         {statusText[r.status][0]}{r.status === 'error' && r.detail ? `: ${r.detail}` : ''}
                       </td>
@@ -995,6 +1022,8 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
   const setS = (key: Exclude<keyof LinkageSearch, 'objective' | 'fixed'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
   /** Same rule as `_anchor_allowed` in backend/linkage.py: strictly inside, ends allowed, equal ends = no zone. */
   const anchorZone = [Math.min(search.anchor_avoid_min, search.anchor_avoid_max), Math.max(search.anchor_avoid_min, search.anchor_avoid_max)];
+  // Pinch point height from the anchor (top) plane at Y = 0; the search limits the same quantity (rigid pose).
+  const pinchHeight = data && data.tip_y.length ? (data.tip_y[Math.floor(data.tip_y.length / 2)] ?? null) : null;
   const anchorInZone = anchorZone[1] > anchorZone[0] && params.anchor_distance > anchorZone[0] && params.anchor_distance < anchorZone[1];
 
   useEffect(() => {
@@ -1560,6 +1589,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               <StatRow label="Closed-tube over-squeeze" value={`${data.max_oversqueeze.toFixed(3)} mm`} />
               <StatRow label="Deviation from target" value={data.rms_error != null ? `${(data.rms_error * 100).toFixed(1)} % RMS` : 'N/A'} />
               <StatRow label="Pivot height at Y=0" value={`${data.pivot_height_y0.toFixed(3)} mm`} highlight />
+              {pinchHeight != null && <StatRow label="Pinch point from top plane" value={`${pinchHeight.toFixed(3)} mm`} />}
               <StatRow label="Anchor to anchor height" value={`${(2 * data.pivot_height_y0).toFixed(2)} mm`} />
               <StatRow label="Gain at Y=0" value={`${data.sensitivity_y0.toFixed(3)} mm/mm`} />
               <StatRow label="Pinch slide on tube" value={`${data.pinch_slide.toFixed(2)} mm`} />
@@ -1666,6 +1696,13 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
           <ParameterSlider label="Max over-squeeze" value={search.max_oversqueeze} min={0.05} max={2} step={0.05} onChange={(v) => setS('max_oversqueeze', v)}
             description="How far past closure the closed tube may be crushed while the other one opens over the stroke." />
           {!heightFixed && <RangeRow label="Pivot height" min={search.min_pivot_height} max={search.max_pivot_height} onMin={(v) => setS('min_pivot_height', v)} onMax={(v) => setS('max_pivot_height', v)} />}
+          <div className="space-y-1">
+            <RangeRow label="Pinch height" min={search.pinch_height_min} max={search.pinch_height_max}
+              onMin={(v) => setS('pinch_height_min', v)} onMax={(v) => setS('pinch_height_max', v)} />
+            <p className="text-[10px] leading-snug text-neutral-400">
+              {`Height of the pinch point (pin centre) from the top plane the anchor sits on, at Y = 0. A max of 0 means no cap.${pinchHeight != null ? ` Now ${pinchHeight.toFixed(2)} mm.` : ''}`}
+            </p>
+          </div>
           {onePiece && (
             <div className="space-y-2 rounded-lg border border-neutral-700 p-2">
               <StatRow label="Part stress under" value={`${params.member_strength_mpa} MPa`} />

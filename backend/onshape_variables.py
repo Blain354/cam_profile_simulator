@@ -306,6 +306,53 @@ def _checked_inputs(params: LinkageParams, t: Target) -> tuple[dict, int]:
     return input_check(params, measured), measured["api_calls"]
 
 
+def _fs_plain(v: Any) -> Any:
+    """A FeatureScript reply value as plain Python: maps and arrays unwrapped, numbers with units kept as dicts."""
+    if isinstance(v, dict):
+        kind = v.get("btType", "")
+        if kind.endswith("BTFSValueMap"):
+            return {_fs_plain(e.get("key")): _fs_plain(e.get("value")) for e in v.get("value", [])}
+        if kind.endswith("BTFSValueArray"):
+            return [_fs_plain(e) for e in v.get("value", [])]
+        if kind.endswith("BTFSValueWithUnits"):
+            return v
+        if "value" in v:
+            return v["value"]
+    return v
+
+
+def cad_check(rows: list[Row], t: Target) -> tuple[dict, int]:
+    """What the Part Studio actually uses for each variable the simulator writes. One read-only call.
+
+    Onshape is the reference: a value the Part Studio does not use as written means the CAD does not
+    follow the table (not referenced there, or replaced by a local variable of the same name).
+    """
+    eid = _measure_source()
+    if not eid or not rows:
+        return {"configured": False, "coherent": True, "rows": [], "error": None}, 0
+    names = [r.name for r in rows]
+    script = ("function(context is Context, queries) { var out = {}; for (var n in " + json.dumps(names) + ") { "
+              "const v = try silent(getVariable(context, n)); if (v != undefined) { out[n] = v; } } return out; }")
+    try:
+        reply = _call("POST", f"/partstudios/d/{t.document_id}/w/{t.workspace_id}/e/{eid}/featurescript", body={"script": script})
+        found = _fs_plain(reply.get("result") if isinstance(reply, dict) else None)
+        if not isinstance(found, dict):
+            raise LinkageOnshapeError("the Part Studio's variables came back in an unexpected shape")
+        out = []
+        for r in rows:
+            unit = VALUES[r.key][1]
+            want = float(_NUMBER.match(r.new_expression).group(1))
+            if r.name not in found:
+                out.append({"name": r.name, "label": r.label, "unit": unit, "simulator": want, "onshape": None, "ok": False})
+                continue
+            got = _fs_value(found[r.name], r.name, unit)
+            out.append({"name": r.name, "label": r.label, "unit": unit, "simulator": want, "onshape": got,
+                        "ok": abs(got - want) <= MEASURE_TOLERANCE_MM})
+    except (LinkageOnshapeError, oe.OnshapeAPIError, oe.OnshapeConfigError) as exc:
+        return {"configured": True, "coherent": False, "rows": [], "error": f"The Part Studio's variables could not be read: {exc}"}, 1
+    return {"configured": True, "coherent": all(r["ok"] for r in out), "rows": out, "error": None}, 1
+
+
 def _refusal(check: dict) -> str:
     if check["error"]:
         return f"Export refused, the inputs could not be checked. {check['error']}"
@@ -422,7 +469,8 @@ def preview(params: LinkageParams, table_name: Optional[str] = None, target: Opt
     eid = find_table(t, name)
     studio, referenced = _read_table(t, eid) if eid else ([], set())
     _locate(rows, studio, frozenset(referenced))
-    return {**_summary(t, name, eid, rows, (2 if eid else 1) + check_calls), "input_check": check}
+    cad, cad_calls = cad_check(rows, t)
+    return {**_summary(t, name, eid, rows, (2 if eid else 1) + check_calls + cad_calls), "input_check": check, "cad_check": cad}
 
 
 # ── Writing ──────────────────────────────────────────────────────────────────
@@ -461,7 +509,11 @@ def apply(
     with _lock_for(t, name):
         out = _apply_locked(t, name, keep, rows)
     out["api_calls"] += check_calls
-    return {**out, "input_check": check}
+    # Read back what the Part Studio now uses: the export is coherent only if the CAD follows every value written.
+    written = [r for r in rows if r.status in ("written", "created", "same")]
+    cad, cad_calls = cad_check(written, t) if not out.get("write_error") else ({"configured": False, "coherent": False, "rows": [], "error": None}, 0)
+    out["api_calls"] += cad_calls
+    return {**out, "input_check": check, "cad_check": cad}
 
 
 def _apply_locked(t: Target, name: str, keep: set, rows: list[Row]) -> dict:

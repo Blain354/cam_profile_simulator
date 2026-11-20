@@ -972,6 +972,10 @@ class LinkageSearch:
     # Equal ends mean no zone.
     anchor_avoid_min: float = 0.0
     anchor_avoid_max: float = 0.0
+    # Pinch point (pin centre) height from the anchor plane (the top plane) at Y = 0, rigid pose.
+    # min 0 and max 0 mean no limit; a max above 0 caps the height.
+    pinch_height_min: float = 0.0
+    pinch_height_max: float = 0.0
     foot_min: float = 1.0             # mm, pendulum foot; min = max keeps it as it is
     foot_max: float = 6.0
     foot_angle_min: float = 45.0      # deg
@@ -1035,7 +1039,9 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
         # Tube A opening over the travel; the same linkage at -Y is what the closed tube sees.
         jx, jy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] + sgn * y)
         cx, cy = _joint(l1[..., None], l2[..., None], xa_, xb, h0[..., None] - sgn * y)
-        gap = wall_x + _tip(xa_, jx, jy, ratio, delta_)[0] - _pad_reach(xa_, jx, jy, half, phi_) - r_pin
+        tip_x, tip_y = _tip(xa_, jx, jy, ratio, delta_)
+        gap = wall_x + tip_x - _pad_reach(xa_, jx, jy, half, phi_) - r_pin
+        pinch_height = tip_y[..., 0]   # Y = 0 is the first sample of the sweep
         squeeze = closed_gap - (wall_x + _tip(xa_, cx, cy, ratio, delta_)[0] - _pad_reach(xa_, cx, cy, half, phi_) - r_pin)
         pose_ok = np.isfinite(jx) & (jy >= 0.0) & np.isfinite(cx) & (cy >= 0.0)
         if fast:
@@ -1070,6 +1076,9 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
             if p.fixed_height <= 0:
                 ok &= h0 + p.stroke <= s.max_pivot_height
         ok &= np.isfinite(score) & ((reach >= l2) | (p.linkage_type != TYPE_LEVER)) & _anchor_allowed(s, a)
+        ok &= pinch_height >= s.pinch_height_min
+        if s.pinch_height_max > 0:
+            ok &= pinch_height <= s.pinch_height_max
         if p.fixed_height > 0:
             ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
         else:
