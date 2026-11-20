@@ -186,9 +186,10 @@ The Bar, Lever and Pendulum linkage tabs have a **Write to Onshape variables** b
 It does not export anything. It writes the dimensions into a Variable Studio that belongs to the
 simulator, in the configured document (`ONSHAPE_DOCUMENT_ID`) and in the branch given by `ONSHAPE_LINKAGE_WORKSPACE_ID`
 (the document's Main; without it, the STL export's `ONSHAPE_WORKSPACE_ID`).
-The only write is that table. When `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` is set, the Part Studio
-with that element id is read first, on the same document and branch; that read is under
-**Inputs the CAD decides** below. With that id unset, no Part Studio is read.
+The only write is that table. When `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` is set, that Part Studio
+is read on the same document and branch: the inputs the CAD decides, for a kind that has them
+(**Inputs the CAD decides** below), and what it resolves for the variables the simulator writes
+(**What the Part Studio uses**). With that id unset, no Part Studio is read.
 
 The table is found by name among the document's Variable Studios. The default name is
 `cam_sim_<kind>`: `cam_sim_pendulum`, `cam_sim_lever`, `cam_sim_elbow`. The window has a
@@ -206,7 +207,9 @@ with the same name is never the table, nor a duplicate of it.
    says so and lists every variable as new (1 API call, the Variable Studio listing). If it exists,
    it is read and each variable shows what the table holds and what the simulator would write
    (2 API calls: that listing, then the table read). When measured inputs are configured, the same
-   request also makes one read per measured variable, and `api_calls` includes them.
+   request also makes one read per measured variable. When the Part Studio id is set and there is
+   at least one variable to send, one further read asks what that Part Studio resolves for each
+   of those names. `api_calls` is the sum.
 2. The button writes the ticked rows (`POST /api/linkage/onshape/apply`, same `table_name` and
    `names`). It reads **Create the table and write N variables** when the table does not exist,
    **Overwrite N variables in <name>** when it does. The table is looked up again first.
@@ -220,6 +223,8 @@ with the same name is never the table, nor a duplicate of it.
    the listing only (1 call); an existing table is listed and read (2 calls), then left as it is.
    Those counts are the Variable Studio calls. A configured measured-input check runs first and
    adds one call per measured variable; if the check fails, apply returns HTTP 409 before any of them.
+   After a write that did not set `write_error`, one more call reads the Part Studio when at least
+   one ticked row came back `written`, `created` or `same`. A `write_error`, or no such row, skips that read.
    The reply says whether the table
    was created and gives its element id and `https://cad.onshape.com/documents/{did}/w/{wid}/e/{eid}`,
    shown as **Open the table in Onshape**.
@@ -252,8 +257,9 @@ What can go wrong:
 
 The table is a tab of the Onshape document. A Part Studio uses its values only once it
 references the table (**Insert > Variable Studio reference**), which the owner does once by hand.
-Until then writing changes no part. A Variable Studio has no configuration to write into: what
-is written is what every Part Studio referencing it sees.
+Until then writing changes no part. A Variable Studio has no configuration to write into.
+Referencing the table is not enough when the Part Studio also defines that name itself:
+the local variable is what the part uses. **What the Part Studio uses** is how the window says so.
 
 Request and reply:
 
@@ -267,14 +273,19 @@ Request and reply:
              "current_expression": "10 mm", "status": "update", "detail": "" }],
   "api_calls": 2, "table_name": "cam_sim_pendulum", "table_exists": true, "table_created": false,
   "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null,
-  "input_check": { "configured": false, "valid": true, "rows": [], "part_studio_url": null, "error": null } }
+  "input_check": { "configured": false, "valid": true, "rows": [], "part_studio_url": null, "error": null },
+  "cad_check": { "configured": false, "coherent": true, "rows": [], "error": null } }
 ```
 
-`api_calls` of 2 is this existing table with no measured Part Studio. When one is set,
-`input_check.configured` is true, `rows` holds each measured input (`key`, `variable`, `label`,
-`unit`, `value`, `simulator`, `ok`), `part_studio_url` is that Part Studio, and `api_calls` includes
-one call per measured variable. Preview still returns this body when `valid` is false. Apply then
-answers HTTP 409 with the reason and does not return the body.
+`api_calls` of 2 is this existing table with the Part Studio id unset: `cad_check.configured` is
+then false and `coherent` is true. With the id set, `cad_check` is the read-back in **What the
+Part Studio uses**, and that one call is included. For a kind that has a measured input (the
+pendulum, by default), `input_check.configured` is true, its `rows` hold each measured input
+(`key`, `variable`, `label`, `unit`, `value`, `simulator`, `ok`), `part_studio_url` is that Part
+Studio, and `api_calls` also includes one call per measured variable. An elbow or a lever has no
+measured input by default, so `input_check.configured` stays false even when the id is set.
+Preview still returns this body when `valid` is false. Apply then answers HTTP 409 with the
+reason and does not return the body.
 
 Row status: preview gives `update`, `same` or `new`. Apply sets a row that was not ticked to
 `skipped`. A ticked row that already matches stays `same` and is not changed; one that differs
@@ -290,7 +301,8 @@ explorer, `https://cad.onshape.com/api/openapi`, explorer at https://cad.onshape
 | `POST /variables/d/{did}/w/{wid}/variablestudio`, body `{"name": "..."}` | `createVariableStudio` (Variables) |
 | `GET /variables/d/{did}/w/{wid}/e/{eid}/variables` | `getVariables` (Variables) |
 | `POST /variables/d/{did}/w/{wid}/e/{eid}/variables`, body `[{"name", "type", "expression", "description"}]` | `setVariables` (Variables), replaces the whole list |
-| `POST /partstudios/d/{did}/w/{wid}/e/{partStudioId}/featurescript` | body is `function(context is Context, queries) { return getVariable(context, "<name>"); }`. `partStudioId` is `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`. One call per measured variable, and only when that id is set and this linkage kind has a measured input. The call reads the Part Studio; it writes nothing. |
+| `POST /partstudios/d/{did}/w/{wid}/e/{partStudioId}/featurescript` | Measured inputs. Body is `function(context is Context, queries) { return getVariable(context, "<name>"); }`. `partStudioId` is `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`. One call per measured variable, and only when that id is set and this linkage kind has a measured input. The call reads the Part Studio; it writes nothing. |
+| `POST /partstudios/d/{did}/w/{wid}/e/{partStudioId}/featurescript` | What the Part Studio resolves (`cad_check`). Same `partStudioId`. One call when that id is set and the check has names. The script returns a map: for each name, `try silent(getVariable(context, n))`, and a name that comes back undefined is left out. Preview passes every name the simulator would send; an apply that did not set `write_error` passes the ticked rows that are `written`, `created` or `same`. The call reads the Part Studio; it writes nothing. A failure stays in `cad_check.error` on the reply; it is not HTTP 502. |
 
 Default names are in `DEFAULT_MAPPING` (`backend/onshape_variables.py`): `pend_*` for the pendulum,
 `lever_*` for the lever, `L1` / `L2` and `elbow_*` for the bar linkage, plus `pinch_tube_OD` and
@@ -307,7 +319,40 @@ measure it in the sketch to check that the CAD pinches the tube as the simulator
 These calls are made from the container and are not in `~/automation/state/onshape-appels.jsonl`.
 A bad table name comes back as HTTP 422 with the rule. Duplicate table names, missing keys, an
 unusable target, a geometry that cannot be built, or a simulation that does not start from the
-measured inputs come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
+measured inputs come back as HTTP 409 with the reason. A refusal from Onshape on the Variable
+Studio calls is HTTP 502. A failure of the Part Studio read-back is not: it stays in `cad_check`.
+
+### What the Part Studio uses
+
+The table write and this read answer different questions. The write changes the Variable Studio.
+The read asks the Part Studio in `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` which value it
+resolves for each name being checked. That is one read-only FeatureScript call, returned as
+`cad_check` on both preview and apply. Onshape is the reference: a name it does not resolve as
+written means the part does not follow the table, because the table is not referenced there or
+a local variable of the same name replaces it.
+
+Lengths come back in metres and angles in radians, and are converted into the simulator's unit
+the same way as a measured input. A plain number has to come back without a unit. `ok` is a
+difference of at most 0.001 in that unit, the same tolerance as the export check below. A name
+the Part Studio does not define has `onshape` null and `ok` false. One value in the wrong unit
+fails the whole read: `coherent` is false, `rows` is empty, and `error` says why. It does not
+come back as a single mismatched row.
+
+`configured` is false, `coherent` is true and `rows` is empty when the id is unset or the check
+has no names, and nothing is called. Otherwise `configured` is true, and `coherent` is true only
+when every checked name matches.
+
+Preview checks every variable the simulator would send. Before anything has been written, the
+column can read **not used**. Apply checks only ticked rows that came back `written`, `created`
+or `same`. A row left unticked is not in that read. A `write_error` skips the read
+(`configured` false, `coherent` false, no extra call). The check does not refuse the write and
+does not answer HTTP 409. The measured-input check is what does that.
+
+The window adds a **Part Studio uses** column whenever `configured` is true: the resolved value
+with a mark, or **not used**. After a write that went through, it also says **Coherent: the Part
+Studio now uses every value written**, or **Not coherent** and lists each mismatch as written
+versus what the Part Studio resolves. The read does not depend on the linkage kind having a
+measured input. With the id set, an elbow or a lever is checked the same way.
 
 ### Inputs the CAD decides
 
@@ -321,7 +366,7 @@ CAD places the tube itself and the simulator follows its measure.
 
 | Env | Meaning |
 |-----|---------|
-| `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` | Part Studio holding the measured variables, in the table's document and branch. Unset: nothing is read or checked. |
+| `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` | Part Studio on the table's document and branch. It holds the measured variables, and it is the one whose resolved variables are compared with the simulator. Unset: nothing is read or checked. |
 | `ONSHAPE_LINKAGE_MEASURED` | Optional JSON `{kind: {simulator value key: variable name}}` replacing `DEFAULT_MEASURED` for a kind. |
 
 - **Sync from Onshape** (under Tube centre, on the pendulum) calls `POST /api/linkage/onshape/measured`:
@@ -335,5 +380,6 @@ CAD places the tube itself and the simulator follows its measure.
   the export invalid and disables the write: Onshape gave no value (the variable has to be defined
   before the rollback bar), or the value is in the wrong unit. Each successful check costs one API
   call per measured variable. With the id unset, or for a linkage kind that has no measured input,
-  nothing is read and the write is not gated.
+  this check reads nothing and the write is not gated. The read-back in **What the Part Studio uses**
+  is separate: it still runs when the id is set, including for an elbow or a lever.
 
