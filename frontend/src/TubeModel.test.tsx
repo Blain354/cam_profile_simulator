@@ -50,3 +50,14 @@ test('the controls switch the model, and the hardness only matters to the FEM', 
   rerender(<TubeModelControls model="simple" shore={50} onModel={onModel} onShore={() => {}} />)
   expect(getByText(/FEM only/)).toBeTruthy()
 })
+
+test('a section solved for another tube is not shown while the new tube solves, and the card expands', async () => {
+  const props = { h: 1.5, where: 'tube A at Y = 0.50 mm', settings: AUTO, onSettingsChange: () => {} }
+  const { findByRole, getByText, getByRole, rerender } = render(<TubeSectionCard tube={tube} {...props} />)
+  await findByRole('img', { name: 'Tube section squeezed to 1.500 mm' })
+  rerender(<TubeSectionCard tube={{ ...tube, tube_shore_a: 60 }} {...props} />)
+  expect(getByText('Solving the tube…')).toBeTruthy()
+  await findByRole('img', { name: 'Tube section squeezed to 1.500 mm' })
+  fireEvent.click(getByRole('button', { name: 'Expand tube section' }))
+  expect(getByText('Tube section, tube A at Y = 0.50 mm')).toBeTruthy()
+})
