@@ -216,11 +216,14 @@ export function clearTubeSweeps() {
 }
 
 /**
- * The FEM sweep of `tube`, or null while it is fetched or when the model is simple. A sweep or an
- * error of another tube (OD, ID, hardness, pressure) is never returned: its shape would pass for
- * the new tube's while that one solves. A new tube is asked for once its values have settled.
+ * The FEM sweep of `tube`, or null while it is fetched or when the model is simple. `sweep` and
+ * `error` are never another tube's (OD, ID, hardness, pressure): its numbers would pass for the new
+ * tube's while that one solves. `drawn` is for the schematics only: the current sweep or, while a new
+ * tube solves, the last one this caller had (`stale` true), so the drawing keeps the FEM tube instead of
+ * falling back to the simple one for a moment; null when the model is simple or the new tube failed.
+ * A new tube is asked for once its values have settled.
  */
-export function useTubeSweep(tube: TubeSpec): { sweep: TubeSweep | null; error: string | null } {
+export function useTubeSweep(tube: TubeSpec): { sweep: TubeSweep | null; error: string | null; drawn: TubeSweep | null; stale: boolean } {
   const key = tubeKey(tube);
   const fem = tube.tube_model === 'fem';
   const [answer, setAnswer] = useState<{ key: string; sweep: TubeSweep | null; error: string | null } | null>(null);
@@ -236,5 +239,6 @@ export function useTubeSweep(tube: TubeSpec): { sweep: TubeSweep | null; error: 
     return () => { live = false; if (timer) clearTimeout(timer); };
   }, [fem, key, tube_od, tube_id, tube_shore_a, input_pressure_kpa, tube_model]);
   const current = fem && answer && answer.key === key ? answer : null;
-  return { sweep: current?.sweep ?? null, error: current?.error ?? null };
+  const drawn = fem ? answer?.sweep ?? null : null;
+  return { sweep: current?.sweep ?? null, error: current?.error ?? null, drawn, stale: drawn != null && !current };
 }

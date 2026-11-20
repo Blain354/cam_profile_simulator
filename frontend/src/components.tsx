@@ -670,7 +670,8 @@ export function VerticalSystemSvgDiagram({
  * direction of the pinch comes from the drawn cam (its nearest point to the screw axis).
  */
 function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; params: SimulationParams; y: number; details: boolean }) {
-  const { sweep } = useTubeSweep(params);
+  // While a new tube solves, the last FEM tube stays drawn (marked in the tooltip) rather than the simple slot.
+  const { drawn: sweep, stale } = useTubeSweep(params);
   const r = params.bushing_diameter / 2;
   const gap = interpAt(y, data.Y_positions, data.min_gaps);
   const area = interpAt(y, data.Y_positions, data.flow_area);
@@ -718,7 +719,7 @@ function LiveTubeAndGap({ data, params, y, details }: { data: SimulationResult; 
       <g transform={`translate(${tx} ${ty}) rotate(${angle})`}>
         {fem ? (
           <>
-            <title>{`Tube section from the FEM at the ${gap.toFixed(3)} mm gap${fem.extrapolated ? ' (extrapolated: deeper than the FEM solved, its deepest shape flattened to the gap)' : ''}: squeezed between two flat plates, so it does not follow the curve of the bushing or the cam. Bore ${fem.open_area_mm2.toFixed(3)} mm².`}</title>
+            <title>{`Tube section from the FEM at the ${gap.toFixed(3)} mm gap${fem.extrapolated ? ' (extrapolated: deeper than the FEM solved, its deepest shape flattened to the gap)' : ''}: squeezed between two flat plates, so it does not follow the curve of the bushing or the cam. Bore ${fem.open_area_mm2.toFixed(3)} mm².${stale ? ' The previous tube, shown while the new one solves.' : ''}`}</title>
             <path d={femPath(fem.outer)} fill="#d4d4d4" fillOpacity={0.16} stroke="#d4d4d4" strokeWidth={0.03} strokeLinejoin="round" />
             <path d={femPath(fem.inner)} fill={boreFill} fillOpacity={0.25 + 0.45 * frac} stroke={fem.open_area_mm2 > 0 ? boreFill : '#ef4444'} strokeWidth={0.02} strokeLinejoin="round" />
             <FlowParticles view="section" frac={particles} width={0} length={0} bore={boreAcross(fem.inner)} radius={0.06} color="#f5f5f5" />

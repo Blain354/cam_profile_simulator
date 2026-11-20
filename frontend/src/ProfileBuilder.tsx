@@ -831,6 +831,24 @@ export default function ProfileBuilder({
 
   const chartSim = sim ?? displayedSim;
 
+  /**
+   * The inputs the shown solve ran with (the live sliders before any solve). The candidates'
+   * simulations, the schematic and the tube section all use them, so the Finder shows each candidate's
+   * own state (pressure, tube, gap) even after a slider moved; the stale-solve notice covers the rest.
+   */
+  const solvedInputs = useMemo(() => ({
+    motor_speed: lastSolveRequestBody?.motor_speed ?? motorSpeed,
+    thickness: lastSolveRequestBody?.thickness ?? thickness,
+    ramp_enabled: lastSolveRequestBody?.ramp_enabled ?? false,
+    tube_id: lastSolveRequestBody?.tube_id ?? tubeId,
+    tube_od: lastSolveRequestBody?.tube_od ?? tubeOd,
+    input_pressure_kpa: lastSolveRequestBody?.input_pressure_kpa ?? pressureKpa,
+    compliance: lastSolveRequestBody?.compliance ?? compliance,
+    tube_model: lastSolveRequestBody?.tube_model ?? tubeModel,
+    tube_shore_a: lastSolveRequestBody?.tube_shore_a ?? tubeShoreA,
+    chamber_volume_ml: lastSolveRequestBody?.chamber_volume_ml ?? chamberVolume,
+  }), [lastSolveRequestBody, motorSpeed, thickness, tubeId, tubeOd, pressureKpa, compliance, tubeModel, tubeShoreA, chamberVolume]);
+
   useEffect(() => {
     if (sim) setDisplayedSim(sim);
   }, [sim]);
@@ -849,20 +867,11 @@ export default function ProfileBuilder({
     const loadViaSimulate = async () => {
       const req = {
         ...defaultParams,
-        motor_speed: motorSpeed,
+        ...solvedInputs,
         height: activeCandidate.height,
-        thickness,
-        ramp_enabled: lastSolveRequestBody?.ramp_enabled ?? false,
         K: activeCandidate.K,
         deadband: activeCandidate.deadband,
         default_distance: activeCandidate.default_distance,
-        tube_id: tubeId,
-        tube_od: tubeOd,
-        input_pressure_kpa: pressureKpa,
-        compliance,
-        tube_model: tubeModel,
-        tube_shore_a: tubeShoreA,
-        chamber_volume_ml: chamberVolume,
         note: '',
       };
       const res = await apiFetch('/api/simulate', {
@@ -908,16 +917,7 @@ export default function ProfileBuilder({
     activeCandidate,
     activeIdx,
     candidateSimByIndex,
-    lastSolveRequestBody,
-    motorSpeed,
-    thickness,
-    tubeId,
-    tubeOd,
-    pressureKpa,
-    compliance,
-    tubeModel,
-    tubeShoreA,
-    chamberVolume,
+    solvedInputs,
   ]);
 
   useEffect(() => {
@@ -946,20 +946,11 @@ export default function ProfileBuilder({
           }
           const req = {
             ...defaultParams,
-            motor_speed: motorSpeed,
+            ...solvedInputs,
             height: cand.height,
-            thickness,
-            ramp_enabled: lastSolveRequestBody?.ramp_enabled ?? false,
             K: cand.K,
             deadband: cand.deadband,
             default_distance: cand.default_distance,
-            tube_id: tubeId,
-            tube_od: tubeOd,
-            input_pressure_kpa: pressureKpa,
-            compliance,
-            tube_model: tubeModel,
-            tube_shore_a: tubeShoreA,
-            chamber_volume_ml: chamberVolume,
             note: '',
           };
           const res = await apiFetch('/api/simulate', {
@@ -987,16 +978,7 @@ export default function ProfileBuilder({
     result?.candidates,
     activeIdx,
     candidateSimByIndex,
-    lastSolveRequestBody,
-    motorSpeed,
-    thickness,
-    tubeId,
-    tubeOd,
-    pressureKpa,
-    compliance,
-    tubeModel,
-    tubeShoreA,
-    chamberVolume,
+    solvedInputs,
   ]);
 
   /** Gap where inner_gap = 0 at Y=0 (no design margin) */
@@ -1698,23 +1680,15 @@ export default function ProfileBuilder({
     if (!result?.success || !chartSim) return null;
     return {
       ...defaultParams,
-      motor_speed: motorSpeed,
+      // The solve's own inputs, so the schematic and the tube section show the simulated state.
+      ...solvedInputs,
       height: activeCandidate?.height ?? result.height,
-      thickness,
       ramp_enabled: chartSim.ramp_enabled ?? false,
       K: activeCandidate?.K ?? result.K,
       deadband: activeCandidate?.deadband ?? result.deadband,
       default_distance: activeCandidate?.default_distance ?? result.default_distance,
-      // The tube the solve ran with, so the schematic's walls match the simulated gaps.
-      tube_id: lastSolveRequestBody?.tube_id ?? tubeId,
-      tube_od: lastSolveRequestBody?.tube_od ?? tubeOd,
-      input_pressure_kpa: pressureKpa,
-      compliance,
-      tube_model: tubeModel,
-      tube_shore_a: tubeShoreA,
-      chamber_volume_ml: chamberVolume,
     };
-  }, [result, activeCandidate, chartSim, motorSpeed, thickness, tubeId, tubeOd, pressureKpa, compliance, tubeModel, tubeShoreA, chamberVolume, lastSolveRequestBody]);
+  }, [result, activeCandidate, chartSim, solvedInputs]);
 
   const builderCard = (key: BuilderChartSettingsKey) => ({
     settings: builderChartSettings[key],
