@@ -107,6 +107,52 @@ test('a rigid search does not print an empty shortlist count', async () => {
   expect(queryByText(/shortlisted designs passed/)).toBeNull()
 })
 
+test('selecting a goal and min flow sends them, and clicking Top candidates + Revert switches params', async () => {
+  const candidates = [
+    {
+      score: 10, pivot_side: 'normal', limiting_factor: 'stress', tags: ['Best overall', 'Highest flow'],
+      params: { bar2_length: 14.9, bar1_length: 9.3, anchor_distance: -2.6, foot_length: 5.8, foot_angle_deg: 72, stroke: 0.65 },
+      metrics: { stroke: 0.65, y_open: 0.13, deadband: 0.26, y_full_open: null, response_time_ms: null, chamber_t50_ms: 460, chamber_t90_ms: 590, max_flow_l_min: 23.2, max_flow_reached_l_min: 14.5, max_flow_reached_pct: 62.5, flow_slope_mean: 28.8, flow_slope_max: 41.0, flow_accel_mean: -24.9, max_stress_mpa: 39.8, stress_margin: 1.01, thrust_needed: 19.2, motor_margin: 1.9, seal_pressure_y0_kpa: 195, sealed_after_flex: true, max_oversqueeze: 0.4, min_clearance: null, max_rotation_deg: 8.5, rms_error: null },
+    },
+    {
+      score: 14, pivot_side: 'normal', limiting_factor: 'stress', tags: ['Min deadband', 'Fastest chamber'],
+      params: { bar2_length: 15.0, bar1_length: 9.4, anchor_distance: -2.4, foot_length: 6.0, foot_angle_deg: 60, stroke: 0.4 },
+      metrics: { stroke: 0.4, y_open: 0.12, deadband: 0.24, y_full_open: null, response_time_ms: null, chamber_t50_ms: 430, chamber_t90_ms: 544, max_flow_l_min: 23.2, max_flow_reached_l_min: 9.65, max_flow_reached_pct: 41.6, flow_slope_mean: 36.9, flow_slope_max: 44.4, flow_accel_mean: -39.5, max_stress_mpa: 37.9, stress_margin: 1.06, thrust_needed: 22.1, motor_margin: 1.7, seal_pressure_y0_kpa: 190, sealed_after_flex: true, max_oversqueeze: 0.35, min_clearance: null, max_rotation_deg: 5.3, rms_error: null },
+    },
+  ]
+  const bodies = stubLinkage({
+    found: true, feasible: 20, tested: 300,
+    params: candidates[0].params,
+    result: { ...minimalResult, max_flow_reached_l_min: 14.5, max_flow_reached_pct: 62.5, flow_slope_mean: 28.8, flow_slope_max: 41.0, flow_accel_mean: -24.9, chamber_t50_ms: 460, chamber_t90_ms: 590 },
+    search_report: { model: 'one-piece', shortlist: 12, passed: 8, rejected: { stress: 3, no_flow: 1 }, limiting_factor: 'stress', candidates },
+    candidates,
+  })
+  const { getByRole, getByText, findByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Min deadband' }))
+  const minFlowInput = getByText('Min flow reached (%)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
+  fireEvent.change(minFlowInput, { target: { value: '40' } })
+  fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
+  await findByText('Found dimensions')
+  expect(bodies[0].objective).toBe('deadband')
+  expect(bodies[0].min_flow_pct).toBe(40)
+  // Rejection breakdown and limiting factor remain visible even when a solution is found.
+  await findByText('Rejected for: part stress 3, no flow 1.')
+  await findByText('0.65 mm (part stress)')
+  await findByText('Top candidates (2)')
+  // Selecting candidate #2 applies its parameters; clicking Revert restores the pre-search arm length (14.43).
+  fireEvent.click(getByRole('button', { name: /#2/ }))
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(stored.params.foot_angle_deg).toBe(60)
+    expect(stored.params.stroke).toBe(0.4)
+  })
+  fireEvent.click(getByRole('button', { name: 'Revert' }))
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem('cam-sim.linkage.pendulum.v2')!)
+    expect(stored.params.bar2_length).toBe(14.43)
+  })
+})
+
 test('a linkage state saved in psi comes back in kPa, shown with one decimal', async () => {
   localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: {} }))
   localStorage.setItem('cam-sim.linkage.pendulum.v2', JSON.stringify({ params: { input_pressure_psi: 15 }, search: {} }))

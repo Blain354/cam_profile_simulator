@@ -874,8 +874,9 @@ class LinkageOptimizeRequest(LinkageRequest):
     min_pivot_height: float = 3.0
     max_pivot_height: float = 16.0
     max_oversqueeze: float = 0.5
-    objective: str = "response"
+    objective: str = Field("response", pattern="^(response|deadband|chamber|progressive|target)$")
     max_stroke: float = Field(3.0, gt=0, le=50)
+    min_flow_pct: float = Field(0.0, ge=0, le=95)
     pivot_side: str = Field("normal", pattern="^(normal|inverted|both)$")
     require_seal: bool = True
 
@@ -899,12 +900,13 @@ def linkage_optimize(req: LinkageOptimizeRequest):
     except tube_law.TubeModelError as e:
         raise HTTPException(status_code=422, detail=str(e))
     if best is None:
-        return {"found": False, "feasible": feasible, "tested": tested, "search_report": report}
+        return {"found": False, "feasible": feasible, "tested": tested, "search_report": report, "candidates": []}
     return {
         "found": True,
         "feasible": feasible,
         "tested": tested,
         "search_report": report,
+        "candidates": report.get("candidates", []),
         "params": dataclasses.asdict(best),
         "result": dataclasses.asdict(compute_linkage(best)),
     }

@@ -724,13 +724,85 @@ class LinkageTests(unittest.TestCase):
         client = TestClient(main.app)
         seen = []
         with mock.patch.object(main, "optimize_linkage", side_effect=lambda p, s: seen.append(s) or (None, 0, 0, {})):
-            for body in ({"linkage_type": "lever"}, {"linkage_type": "lever", "pivot_side": "both", "require_seal": False}):
+            for body in (
+                {"linkage_type": "lever"},
+                {"linkage_type": "lever", "pivot_side": "both", "require_seal": False, "objective": "chamber", "min_flow_pct": 40.0},
+            ):
                 self.assertEqual(client.post("/api/linkage/optimize", json=body).status_code, 200)
-        self.assertEqual([(s.pivot_side, s.require_seal) for s in seen], [("normal", True), ("both", False)])
+        self.assertEqual(
+            [(s.pivot_side, s.require_seal, s.objective, s.min_flow_pct) for s in seen],
+            [("normal", True, "response", 0.0), ("both", False, "chamber", 40.0)],
+        )
         self.assertEqual(client.post("/api/linkage/optimize", json={"pivot_side": "sideways"}).status_code, 422)
+        self.assertEqual(client.post("/api/linkage/optimize", json={"objective": "bogus"}).status_code, 422)
         got = client.post("/api/linkage/optimize", json={"linkage_type": "elbow", "max_stroke": 5.0}).json()
         self.assertTrue(got["found"])
         self.assertEqual(got["search_report"]["pivot_side"], "normal")
+        self.assertIsInstance(got["candidates"], list)
+        self.assertGreater(len(got["candidates"]), 0)
+
+    def test_derived_flow_slope_accel_and_chamber_rise_times(self):
+        r = compute_linkage(PENDULUM)
+        self.assertTrue(r.feasible, r.message)
+        self.assertGreater(r.max_flow_reached_l_min, 0.0)
+        self.assertGreater(r.max_flow_reached_pct, 0.0)
+        self.assertLessEqual(r.max_flow_reached_pct, 100.1)
+        self.assertIsNotNone(r.flow_slope_mean)
+        self.assertGreater(r.flow_slope_mean, 0.0)
+        self.assertIsNotNone(r.flow_slope_max)
+        self.assertGreaterEqual(r.flow_slope_max, r.flow_slope_mean - 1e-9)
+        self.assertIsNotNone(r.flow_accel_mean)
+        self.assertIsNotNone(r.flow_accel_max)
+        self.assertIsNotNone(r.chamber_t50_ms)
+        self.assertIsNotNone(r.chamber_t90_ms)
+        self.assertLessEqual(r.chamber_t50_ms, r.chamber_t90_ms + 1e-9)
+        no_chamber = compute_linkage(replace(PENDULUM, chamber_volume_ml=0.0))
+        self.assertIsNone(no_chamber.chamber_t50_ms)
+        self.assertIsNone(no_chamber.chamber_t90_ms)
+
+    def test_one_piece_caps_stroke_at_structural_limit_instead_of_discarding(self):
+        # A high-gain one-piece pendulum that hits member_strength_mpa well before max_stroke=1.5:
+        # the beam evaluator must cap usable travel cleanly below stress_limit_y instead of rejecting it.
+        q = LinkageParams(
+            linkage_type="pendulum", bar2_length=14.9, bar1_length=9.3, anchor_distance=-2.6,
+            pivot_offset=4.0, foot_length=5.8, foot_angle_deg=72.0, tube_center_x=8.225,
+            preload=0.2, fixed_height=16.0, compliant=True, link_curved=True,
+            member_width=1.2, member_thickness=4.0, member_strength_mpa=40.0,
+            tube_shore_a=30.0, stroke=1.5,
+        )
+        s = replace(PENDULUM_SEARCH, max_stroke=1.5, max_oversqueeze=1.6, anchor_min=-6.0, anchor_max=8.0)
+        full = compute_linkage(q)
+        self.assertIsNotNone(full.stress_limit_y)
+        self.assertLess(full.stress_limit_y, s.max_stroke)
+        score, travel, reason, meta = linkage._one_piece_eval(q, s, fast=False)
+        self.assertIsNone(reason)
+        self.assertTrue(math.isfinite(score))
+        self.assertLess(travel, s.max_stroke)
+        self.assertLessEqual(travel, full.stress_limit_y + 1e-9)
+        self.assertEqual(meta["limiting_factor"], "stress")
+        capped = compute_linkage(replace(q, stroke=travel))
+        self.assertLessEqual(capped.max_stress_mpa, q.member_strength_mpa + 1e-6)
+        self.assertGreater(capped.max_flow_reached_pct, 25.0)
+
+    def test_new_objectives_min_flow_and_pareto_candidates(self):
+        with self.assertRaises(ValueError):
+            optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, objective="unknown"))
+        for goal in ("deadband", "chamber", "progressive"):
+            with self.subTest(goal=goal):
+                best, feasible, _, report = optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, objective=goal))
+                self.assertIsNotNone(best)
+                self.assertGreater(feasible, 0)
+                cands = report["candidates"]
+                self.assertGreater(len(cands), 0)
+                self.assertIn("Best overall", cands[0]["tags"])
+                self.assertAlmostEqual(cands[0]["params"]["bar2_length"], best.bar2_length, places=6)
+                self.assertAlmostEqual(cands[0]["params"]["stroke"], best.stroke, places=6)
+                self.assertIsNotNone(cands[0]["metrics"]["deadband"])
+                self.assertIsNotNone(cands[0]["metrics"]["max_flow_reached_pct"])
+        # min_flow_pct floor rejects designs that cannot reach the requested bore percentage within tight stroke.
+        tight = replace(PENDULUM_SEARCH, max_stroke=0.25, min_flow_pct=90.0)
+        none_found, _, _, _ = optimize_linkage(PENDULUM, tight)
+        self.assertIsNone(none_found)
 
     def test_unreachable_geometry_is_reported(self):
         r = compute_linkage(replace(LinkageParams(), bar2_length=1.0))
