@@ -1182,6 +1182,11 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       const res = await apiFetch('/api/linkage/optimize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...params, ...ranges, ...pinned }),
       });
+      if (res.status === 422) {
+        // The tube model refused these inputs (the FEM tube balloons at this pressure, for example).
+        const body = await res.json().catch(() => null);
+        if (typeof body?.detail === 'string') { setOptMessage({ ok: false, text: body.detail }); return; }
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const out = await res.json();
       const report: SearchReport | undefined = out.search_report && typeof out.search_report === 'object' ? out.search_report : undefined;

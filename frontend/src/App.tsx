@@ -257,6 +257,11 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentParams),
         signal: ac.signal,
       });
+      if (response.status === 422) {
+        // The model refused these inputs (for example the FEM tube balloons at this pressure): say why.
+        const body = await response.json().catch(() => null);
+        if (typeof body?.detail === 'string') { setError(body.detail); return; }
+      }
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       setData(result);

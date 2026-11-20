@@ -111,6 +111,21 @@ class FemCamTests(unittest.TestCase):
         self.assertAlmostEqual(result.theoretical_gap_mm, tube_law.law(SolverParams()).closed_gap)
 
 
+class FemPressureGridTests(unittest.TestCase):
+    def test_pressures_between_grid_points_blend_the_two_neighbours(self):
+        """The FEM is solved every PRESSURE_STEP of p/E and blended linearly in between."""
+        at = lambda kpa: tube_law.law(LinkageParams(tube_shore_a=50.0, input_pressure_kpa=kpa))
+        step_kpa = tube_law.PRESSURE_STEP * tube_law.tube_fem.shore_a_to_e_mpa(50.0) * 1e3
+        lo, hi, mid = at(4 * step_kpa), at(5 * step_kpa), at(4.5 * step_kpa)
+        self.assertEqual(len(lo.parts), 1)
+        self.assertEqual(len(mid.parts), 2)
+        self.assertAlmostEqual(mid.closed_gap, 0.5 * (lo.closed_gap + hi.closed_gap), places=9)
+        self.assertTrue(hi.closed_gap < mid.closed_gap < lo.closed_gap)
+        h = np.array([1.2, 1.6, 2.0])
+        np.testing.assert_allclose(mid.open_area(h), 0.5 * (lo.open_area(h) + hi.open_area(h)))
+        self.assertEqual(len(tube_law.section(LinkageParams(input_pressure_kpa=4.5 * step_kpa), 1.4)["outer"]), len(lo.response.outer[0]))
+
+
 class FemSectionAndRequestTests(unittest.TestCase):
     def test_section_for_the_card(self):
         s = tube_law.section(LinkageParams(), 1.5)

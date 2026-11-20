@@ -31,7 +31,8 @@ class TestSmallStrainReferences(unittest.TestCase):
     def test_free_inflation_matches_lame(self):
         """Thick-walled cylinder, plane strain (Lame): u(r) = (1 + nu)/E ((1 - 2 nu) A r + B / r),
         A = p a^2 / (b^2 - a^2), B = p a^2 b^2 / (b^2 - a^2). At p = 1e-3 E the FEM radii of the
-        free inflated tube agree within 1 %, at nu = 0.49 and at nu = 0.4999 (no locking)."""
+        free inflated tube agree within 1 % (observed +0.4 % inner, +0.5 % outer), at nu = 0.49 and
+        at nu = 0.4999 (no locking)."""
         a, b, e = 1.0, 1.5, 2.0
         p = 1e-3 * e
         for nu in (0.49, 0.4999):
@@ -46,8 +47,8 @@ class TestSmallStrainReferences(unittest.TestCase):
     def test_ring_between_plates_and_no_locking(self):
         """Thin ring between two plates (Castigliano, Roark): change in diameter
         d = 0.1488 P R^3 / (E' I), E' = E / (1 - nu^2) in plane strain, I = t^3 / 12.
-        Ring t/R = 0.105: the FEM is within 4 % of it (it is 2 % softer: shear and the
-        ring's curvature, effects of order t/R that the thin-ring result leaves out).
+        Ring t/R = 0.105: the FEM is within 4 % of it (observed 2.1 to 2.6 % softer: shear and
+        the ring's curvature, effects of order t/R that the thin-ring result leaves out).
         Locking check: the ratio does not move (< 0.5 %) from nu = 0.49 to nu = 0.4999,
         where a locking element would stiffen many times over."""
         ri, ro = 0.45 * 3, 0.5 * 3
@@ -108,9 +109,10 @@ class TestDefaultTube(unittest.TestCase):
         self.assertLess(stiff.h_min, stiff.h_closed * 0.6)
 
     def test_mesh_convergence(self):
-        """Default mesh (1 x 12 elements on the quarter) against 1 x 24 and 3 x 24: closing h
-        within 1.5 %, force on the open tube (h = 2 mm) within 3 %, force 10 % past closure
-        within 8 % (observed 2 % and 5.5 %: the default mesh is a little stiff at the fold)."""
+        """Default mesh (1 x 12 elements on the quarter) and 1 x 24 against 3 x 24, at the same
+        plate distances: closing h within 1.5 % (observed 0.8 % and 1.0 %), force on the open tube
+        (h = 2 mm) within 3 % (1.6 %, 1.8 %), force at 10 % below the finest mesh's closing h
+        within 3 % (0.5 %, 0.1 %)."""
         meshes = [self.dry, solve_tube(3.0, 2.0, shore_a=50, nt=24), solve_tube(3.0, 2.0, shore_a=50, nr=3, nt=24)]
         hc = [r.h_closed for r in meshes]
         f_open = [float(r.force_per_mm(2.0)) for r in meshes]
@@ -118,7 +120,7 @@ class TestDefaultTube(unittest.TestCase):
         for i in (0, 1):
             self.assertAlmostEqual(hc[i] / hc[-1], 1.0, delta=0.015)
             self.assertAlmostEqual(f_open[i] / f_open[-1], 1.0, delta=0.03)
-            self.assertAlmostEqual(f_10[i] / f_10[-1], 1.0, delta=0.08)
+            self.assertAlmostEqual(f_10[i] / f_10[-1], 1.0, delta=0.03)
 
     def test_extrapolation_below_the_sweep_keeps_rising(self):
         """Below the deepest step the force follows an incompressible strip law (~ h^-3)."""

@@ -19,8 +19,8 @@ Model
       condensed out), so the section neither locks as nu -> 0.5 nor goes soft in bending
       (test_tube_fem checks the ring stiffness from nu = 0.3 to 0.4999 against Castigliano).
     * Mesh: by default 1 element through the wall and 12 around the quarter (48 around the
-      tube). Against 1 x 24 and 3 x 24: closing h within 1.5 %, force within 3 % on the open
-      tube and 6 % just past closure. A finer radial mesh resolves the crease that forms on the
+      tube). Against 3 x 24 at the same plate distance: closing h 0.8 % lower, force 1.6 %
+      higher on the open tube, 0.5 % just past closure (zero pressure). A finer radial mesh resolves the crease that forms on the
       inner surface of each fold (neo-Hookean creasing, near 35 % compression of that surface):
       the static path then snaps, and the solver crosses it by dynamic relaxation (fem.relax),
       slowly and not always; the default mesh does not resolve the crease.
@@ -73,6 +73,7 @@ import os
 import tempfile
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -172,7 +173,10 @@ class TubeResponse:
         return {"outer": mix(self.outer).tolist(), "inner": mix(self.inner).tolist()}
 
     def to_dict(self) -> dict:
+        """Plain lists; the outlines rounded to 1e-6 of the OD (drawing only), to keep files small."""
         d = {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in self.__dict__.items()}
+        for k in ("outer", "inner"):
+            d[k] = (np.round(getattr(self, k) / self.od, 6) * self.od).tolist()
         return d
 
     @classmethod
@@ -372,35 +376,74 @@ def _closing_h(h, area, ratio):
 
 
 # -- cache -------------------------------------------------------------------------------
-_MEM: Dict[str, dict] = {}
-_LOCK = threading.Lock()
+MEMORY_ENTRIES = 48       # responses kept in memory (least recently used dropped)
+DISK_ENTRIES = 200        # response files kept on disk (oldest dropped), about 150 kB each
+_MEM: "OrderedDict[str, dict]" = OrderedDict()
+_MEM_LOCK = threading.Lock()
+_KEY_LOCKS: Dict[str, threading.Lock] = {}
+
+
+def _mem_get(key: str) -> Optional[dict]:
+    with _MEM_LOCK:
+        d = _MEM.get(key)
+        if d is not None:
+            _MEM.move_to_end(key)
+        return d
+
+
+def _mem_put(key: str, d: dict) -> None:
+    with _MEM_LOCK:
+        _MEM[key] = d
+        _MEM.move_to_end(key)
+        while len(_MEM) > MEMORY_ENTRIES:
+            _MEM.popitem(last=False)
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _MEM_LOCK:
+        return _KEY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _prune_disk(cache_dir: str) -> None:
+    try:
+        files = [os.path.join(cache_dir, n) for n in os.listdir(cache_dir) if n.startswith("tube_") and n.endswith(".json")]
+        files.sort(key=os.path.getmtime)
+        for f in files[:max(len(files) - DISK_ENTRIES, 0)]:
+            os.remove(f)
+    except OSError:
+        pass
 
 
 def _cached(key: str, cache_dir: Optional[str], solve) -> TubeResponse:
-    """Memory, then disk (cache_dir), then solve() -> TubeResponse; called under _LOCK."""
-    d = _MEM.get(key)
-    path = None
-    if d is None and cache_dir:
-        path = os.path.join(cache_dir, "tube_" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".json")
-        try:
-            with open(path) as fh:
-                d = json.load(fh)
-            if d.get("key") != key:
-                d = None
-        except (OSError, ValueError):
-            d = None
+    """Memory, then disk (cache_dir), then solve() -> TubeResponse. One solve per key at a time:
+    a slider drag that sends the same request twice waits for the first answer; other keys and
+    cached reads do not wait."""
+    d = _mem_get(key)
     if d is None:
-        d = {"key": key, "response": solve().to_dict()}
-        if path:
-            try:
-                os.makedirs(cache_dir, exist_ok=True)
-                fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
-                with os.fdopen(fd, "w") as fh:
-                    json.dump(d, fh)
-                os.replace(tmp, path)
-            except OSError:
-                pass
-    _MEM[key] = d
+        with _key_lock(key):
+            d = _mem_get(key)
+            path = os.path.join(cache_dir, "tube_" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".json") if cache_dir else None
+            if d is None and path:
+                try:
+                    with open(path) as fh:
+                        d = json.load(fh)
+                    if d.get("key") != key:
+                        d = None
+                except (OSError, ValueError):
+                    d = None
+            if d is None:
+                d = {"key": key, "response": solve().to_dict()}
+                if path:
+                    try:
+                        os.makedirs(cache_dir, exist_ok=True)
+                        fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
+                        with os.fdopen(fd, "w") as fh:
+                            json.dump(d, fh)
+                        os.replace(tmp, path)
+                        _prune_disk(cache_dir)
+                    except OSError:
+                        pass
+            _mem_put(key, d)
     return TubeResponse.from_dict(d["response"])
 
 
@@ -411,9 +454,9 @@ def solve_tube_cached(od: float, id: float, e_mpa: Optional[float] = None, nu: f
 
     The response depends only on ID/OD, p/E and nu: it is solved once with OD = 1 and E = 1 and
     scaled. The zero-pressure sweep is cached on its own, so a new pressure costs one sweep.
-    One solve at a time (a lock: slider drags send the same request several times), kept in
-    memory, and on disk as JSON in cache_dir when given (written atomically; an unwritable
-    directory is skipped silently). Errors are not cached.
+    Kept in memory (MEMORY_ENTRIES, least recently used dropped) and on disk as JSON in
+    cache_dir when given (written atomically, the oldest beyond DISK_ENTRIES removed; an
+    unwritable directory is skipped silently). Errors are not cached.
     """
     if e_mpa is None:
         if shore_a is None:
@@ -425,11 +468,10 @@ def solve_tube_cached(od: float, id: float, e_mpa: Optional[float] = None, nu: f
     p_e = max(round(pressure_kpa * 1e-3 / e_mpa, 5), 0.0)
     tag = "v%d_r%.4f_nu%.4f_m%dx%dg%.2f" % (SOLVER_VERSION, ratio, nu, nr, nt, grade)
     mesh = dict(nr=nr, nt=nt, grade=grade)
-    with _LOCK:
-        dry = _cached(tag + "_p0", cache_dir, lambda: solve_tube(1.0, ratio, e_mpa=1.0, nu=nu, pressure_kpa=0.0, **mesh))
-        r = dry if p_e == 0.0 else _cached(
-            tag + "_p%.5f" % p_e, cache_dir,
-            lambda: solve_tube(1.0, ratio, e_mpa=1.0, nu=nu, pressure_kpa=p_e * 1e3, dry=dry, **mesh))
+    dry = _cached(tag + "_p0", cache_dir, lambda: solve_tube(1.0, ratio, e_mpa=1.0, nu=nu, pressure_kpa=0.0, **mesh))
+    r = dry if p_e == 0.0 else _cached(
+        tag + "_p%.5f" % p_e, cache_dir,
+        lambda: solve_tube(1.0, ratio, e_mpa=1.0, nu=nu, pressure_kpa=p_e * 1e3, dry=dry, **mesh))
     return _scaled(r, od, e_mpa, pressure_kpa)
 
 

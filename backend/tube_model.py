@@ -15,6 +15,9 @@ What the FEM gives the rest of the code (all at the line pressure):
                   zero-pressure force past closure, pressure = what the air adds
   held_kpa(h)     pressure a section squeezed to h still seals: linear between the closing h
                   with no pressure (seals 0) and the closing h at the line pressure
+
+The FEM is solved at grid pressures PRESSURE_STEP of p/E apart and blended linearly in between,
+so dragging the pressure or hardness slider solves a new tube only every few kPa.
 """
 
 from dataclasses import dataclass
@@ -36,6 +39,7 @@ DEFAULT_TUBE_MODEL = MODEL_FEM
 DEFAULT_SHORE_A = 50.0
 FULL_OPEN_FRACTION = 0.95
 REFERENCE_KPA = 100.0     # pressure used for held_kpa's slope when the line pressure is 0
+PRESSURE_STEP = 0.005     # p/E between two solved pressures (12 kPa at Shore 50); linear in between
 
 
 class TubeModelError(ValueError):
@@ -52,20 +56,35 @@ def cache_dir() -> str:
 
 @dataclass(frozen=True)
 class FemLaw:
-    response: "tube_fem.TubeResponse"
+    """The FEM tube at one line pressure: a blend of the solved responses at the two grid
+    pressures around it (PRESSURE_STEP of p/E apart), so a pressure or hardness slider drag
+    solves a new tube only every few kPa and reads the cache in between."""
+    parts: Tuple[Tuple[float, "tube_fem.TubeResponse"], ...]   # (weight, response), weights sum to 1
+    kpa: float
     reference: "tube_fem.TubeResponse"    # the same tube at REFERENCE_KPA, for held_kpa when p = 0
     closed_gap: float
     full_open_gap: float
     bore: float
 
     @property
+    def response(self) -> "tube_fem.TubeResponse":
+        """The nearest solved response (its zero-pressure data are the same for all parts)."""
+        return max(self.parts, key=lambda wr: wr[0])[1]
+
+    @property
     def e_mpa(self) -> float:
         return self.response.e_mpa
+
+    def _mix(self, f) -> np.ndarray:
+        return sum(w * np.asarray(f(r), dtype=float) for w, r in self.parts)
+
+    def open_area(self, h) -> np.ndarray:
+        return np.minimum(self._mix(lambda r: r.open_area(h)), self.bore)
 
     def area(self, h) -> np.ndarray:
         """Open bore (mm^2): 0 at and below the closed gap, at most the unloaded bore."""
         h = np.asarray(h, dtype=float)
-        return np.where(h > self.closed_gap, np.minimum(self.response.open_area(h), self.bore), 0.0)
+        return np.where(h > self.closed_gap, self.open_area(h), 0.0)
 
     def slices(self, h) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         r = self.response
@@ -75,12 +94,16 @@ class FemLaw:
         dry = r.force_dry_per_mm(h)
         folded = r.force_dry_per_mm(np.maximum(h, r.h_closed))
         # The air only pushes the walls apart: a negative share is interpolation noise past closure.
-        return folded, dry - folded, np.maximum(r.force_per_mm(h) - dry, 0.0)
+        return folded, dry - folded, np.maximum(self._mix(lambda q: q.force_per_mm(h)) - dry, 0.0)
 
     def held_kpa(self, h) -> np.ndarray:
-        ref = self.response if self.response.pressure_kpa > 0 else self.reference
-        span = max(ref.h_closed - ref.h_sealed, 1e-9)
-        return np.clip((ref.h_closed - np.asarray(h, dtype=float)) / span, 0.0, None) * ref.pressure_kpa
+        h_closed = self.response.h_closed
+        if self.kpa > 0:
+            sealed, kpa = self.closed_gap, self.kpa
+        else:
+            sealed, kpa = self.reference.h_sealed, self.reference.pressure_kpa
+        span = max(h_closed - sealed, 1e-9)
+        return np.clip((h_closed - np.asarray(h, dtype=float)) / span, 0.0, None) * kpa
 
 
 def _shore(params) -> float:
@@ -92,46 +115,56 @@ def law(params) -> FemLaw:
     return _law(float(params.tube_od), float(params.tube_id), _shore(params), max(float(params.input_pressure_kpa), 0.0))
 
 
-def _solve(od, id_, shore, kpa):
+def _solve(od, id_, e, kpa, shore):
     try:
-        return tube_fem.solve_tube_cached(od, id_, shore_a=shore, pressure_kpa=kpa, cache_dir=cache_dir())
-    except (tube_fem.TubeFemError, ValueError) as e:
-        raise TubeModelError("Tube FEM (%.2f x %.2f mm, Shore %.0f, %.0f kPa): %s" % (od, id_, shore, kpa, e)) from e
+        return tube_fem.solve_tube_cached(od, id_, e_mpa=e, pressure_kpa=kpa, cache_dir=cache_dir())
+    except (tube_fem.TubeFemError, ValueError) as err:
+        raise TubeModelError("Tube FEM (%.2f x %.2f mm, Shore %.0f, %.0f kPa): %s" % (od, id_, shore, kpa, err)) from err
 
 
 @lru_cache(maxsize=64)
 def _law(od: float, id_: float, shore: float, kpa: float) -> FemLaw:
-    r = _solve(od, id_, shore, kpa)
-    ref = r if kpa > 0 else _solve(od, id_, shore, REFERENCE_KPA)
+    try:
+        e = tube_fem.shore_a_to_e_mpa(shore)
+    except ValueError as err:
+        raise TubeModelError(str(err)) from err
+    pe = kpa * 1e-3 / e
+    lo = np.floor(pe / PRESSURE_STEP + 1e-9) * PRESSURE_STEP
+    w = (pe - lo) / PRESSURE_STEP
+    grid = [(1.0 - w, lo)] + ([(w, lo + PRESSURE_STEP)] if w > 1e-6 else [])
+    parts = tuple((float(wt), _solve(od, id_, e, p * e * 1e3, shore)) for wt, p in grid)
+    ref = parts[0][1] if kpa > 0 else _solve(od, id_, e, REFERENCE_KPA, shore)
     bore = float(np.pi * (id_ / 2.0) ** 2)
-    hs, a = r.h[::-1], np.minimum(r.area[::-1], bore)
-    above = np.nonzero(a >= FULL_OPEN_FRACTION * bore)[0]
-    if above.size:
-        i = int(above[0])
-        full = float(np.interp(FULL_OPEN_FRACTION * bore, a[max(i - 1, 0):i + 1], hs[max(i - 1, 0):i + 1])) if i > 0 else float(hs[0])
-    else:
-        full = float(r.h_contact)
-    return FemLaw(response=r, reference=ref, closed_gap=float(r.h_sealed), full_open_gap=full, bore=bore)
+    closed = float(sum(wt * r.h_sealed for wt, r in parts))
+    draft = FemLaw(parts=parts, kpa=kpa, reference=ref, closed_gap=closed, full_open_gap=od, bore=bore)
+    # Full bore: the first plate distance (opening up) where the blended bore is back to FULL_OPEN_FRACTION.
+    top = max(r.h_contact for _, r in parts)
+    hs = np.linspace(closed, top, 801)
+    above = np.nonzero(draft.open_area(hs) >= FULL_OPEN_FRACTION * bore)[0]
+    full = float(hs[above[0]]) if above.size else float(top)
+    return FemLaw(parts=parts, kpa=kpa, reference=ref, closed_gap=closed, full_open_gap=full, bore=bore)
 
 
 def section(params, h: float) -> dict:
     """Deformed section at plate distance h, for the "Tube section" card."""
     fl = law(params)
     r = fl.response
-    shape = r.shape(h)
+    shapes = [(w, q.shape(h)) for w, q in fl.parts]
+    mix = lambda k: sum(w * np.array(s[k]) for w, s in shapes).tolist()
+    parts = fl.slices(np.array([h]))
     return {
         "h": float(h),
-        "outer": shape["outer"],
-        "inner": shape["inner"],
-        "force_per_mm": float(sum(fl.slices(np.array([h])))[0]),
-        "pressure_share_per_mm": float(fl.slices(np.array([h]))[2][0]),
+        "outer": mix("outer"),
+        "inner": mix("inner"),
+        "force_per_mm": float(sum(parts)[0]),
+        "pressure_share_per_mm": float(parts[2][0]),
         "open_area_mm2": float(fl.area(h)),
         "bore_area_mm2": fl.bore,
-        "h_contact": float(r.h_contact),
+        "h_contact": float(sum(w * q.h_contact for w, q in fl.parts)),
         "h_closed": float(r.h_closed),
-        "h_sealed": float(r.h_sealed),
+        "h_sealed": fl.closed_gap,
         "full_open_gap": fl.full_open_gap,
-        "h_min_solved": float(r.h_min),
+        "h_min_solved": float(min(q.h_min for _, q in fl.parts)),
         "e_mpa": float(r.e_mpa),
         "max_stretch": float(np.interp(h, r.h[::-1], r.stretch_max[::-1])),
     }
