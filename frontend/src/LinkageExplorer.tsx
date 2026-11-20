@@ -83,6 +83,9 @@ interface LinkageSearch {
   lever_max: number;
   anchor_min: number;
   anchor_max: number;
+  /** No-go zone for the anchor (assembly): strictly between the two ends is never proposed; equal ends = no zone. */
+  anchor_avoid_min: number;
+  anchor_avoid_max: number;
   foot_min: number;
   foot_max: number;
   foot_angle_min: number;
@@ -249,7 +252,7 @@ const DEFAULT_PARAMS: Record<LinkageKind, LinkageParams> = {
   pendulum: { ...COMMON, linkage_type: 'pendulum', bar1_length: 11.95, bar2_length: 14.43, anchor_distance: 4.79, pivot_offset: 4.0, pin_diameter: 1.0, pad_length: 1.0, link_curved: true, compliant: true },
 };
 
-const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, fixed: [] as SearchVar[] };
+const SEARCH_COMMON = { lever_min: 10, lever_max: 22, foot_min: 1, foot_max: 6, foot_angle_min: 45, foot_angle_max: 135, min_pivot_height: 3, max_pivot_height: 16, max_oversqueeze: 0.5, objective: 'response' as const, max_stroke: 3, anchor_avoid_min: 0, anchor_avoid_max: 0, fixed: [] as SearchVar[] };
 const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
   elbow: { ...SEARCH_COMMON, bar1_min: 6, bar1_max: 20, bar2_min: 3, bar2_max: 14, anchor_min: 0, anchor_max: 6, max_stroke: 5 },
   lever: { ...SEARCH_COMMON, bar1_min: 3, bar1_max: 12, bar2_min: 3, bar2_max: 12, anchor_min: 2, anchor_max: 8 },
@@ -990,6 +993,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
     }
   };
   const setS = (key: Exclude<keyof LinkageSearch, 'objective' | 'fixed'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
+  /** Same rule as `_anchor_allowed` in backend/linkage.py: strictly inside, ends allowed, equal ends = no zone. */
+  const anchorZone = [Math.min(search.anchor_avoid_min, search.anchor_avoid_max), Math.max(search.anchor_avoid_min, search.anchor_avoid_max)];
+  const anchorInZone = anchorZone[1] > anchorZone[0] && params.anchor_distance > anchorZone[0] && params.anchor_distance < anchorZone[1];
 
   useEffect(() => {
     try { localStorage.setItem(storageKey(kind), JSON.stringify({ params, search, profile: activeProfile, chart_settings: chartSettings })); } catch { /* ignore */ }
@@ -1310,12 +1316,14 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
           description="Carriage pivot (blue) to the elbow that pinches the tube." />,
     lever: <ParameterSlider key="lever" label="Lever, L (mm)" value={params.lever_length} min={4} max={30} step={0.05} onChange={(v) => set('lever_length', v)}
       description="Fixed anchor to the tip that pinches the tube. The lever reaches across the screw." />,
-    anchor: <ParameterSlider key="anchor" label="Anchor dist, a (mm)" value={params.anchor_distance} min={-5} max={10} step={0.01} onChange={(v) => set('anchor_distance', v)}
+    anchor: <div key="anchor" className="space-y-1"><ParameterSlider label="Anchor dist, a (mm)" value={params.anchor_distance} min={-5} max={10} step={0.01} onChange={(v) => set('anchor_distance', v)}
       description={pendulum
         ? 'Fixed anchor offset from the centre of the base, toward its tube, on the wall opposite the carriage side it starts from.'
         : lever
         ? 'Fixed anchor offset from the centre of the base, on the side opposite its tube.'
-        : 'Fixed anchor offset from the centre of the base, toward the tube. Negative puts it on the far side of the screw.'} />,
+        : 'Fixed anchor offset from the centre of the base, toward the tube. Negative puts it on the far side of the screw.'} />
+      {anchorInZone && <p className="text-[10px] leading-snug text-amber-400" role="status">{`Inside the anchor no-go zone (${anchorZone[0]} to ${anchorZone[1]} mm) set under Finder > Geometry to search.`}</p>}
+    </div>,
     foot: <ParameterSlider key="foot" label="Foot, f (mm)" value={params.foot_length} min={0} max={8} step={0.05} onChange={(v) => set('foot_length', v)}
       description="Rigid foot from the joint to the centre of the pin that presses on the tube." />,
     foot_angle: <ParameterSlider key="foot_angle" label="Foot angle (deg)" value={params.foot_angle_deg} min={0} max={180} step={1} onChange={(v) => set('foot_angle_deg', v)}
@@ -1642,6 +1650,14 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             );
           })}
           <p className="text-[10px] leading-snug text-neutral-400">A fixed dimension keeps its value on screen; the others are searched between their two ends.</p>
+          <div className="space-y-1 rounded-lg border border-neutral-700 p-2">
+            <RangeRow label="Anchor no-go zone" min={search.anchor_avoid_min} max={search.anchor_avoid_max}
+              onMin={(x) => setS('anchor_avoid_min', x)} onMax={(x) => setS('anchor_avoid_max', x)} />
+            <p className="text-[10px] leading-snug text-neutral-400">
+              Anchor distances strictly between these two values are never proposed, for assembly reasons. The two ends stay allowed; equal values mean no zone.
+            </p>
+            {anchorInZone && <p className="text-[10px] leading-snug text-amber-400" role="status">{`The anchor on screen (${params.anchor_distance} mm) is inside this zone.`}</p>}
+          </div>
         </div>
       </Accordion>
 

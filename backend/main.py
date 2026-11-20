@@ -856,6 +856,8 @@ class LinkageOptimizeRequest(LinkageRequest):
     lever_max: float = 22.0
     anchor_min: float = 0.0
     anchor_max: float = 6.0
+    anchor_avoid_min: float = 0.0
+    anchor_avoid_max: float = 0.0
     foot_min: float = Field(1.0, ge=0, le=50)
     foot_max: float = Field(6.0, ge=0, le=50)
     foot_angle_min: float = Field(45.0, ge=0, le=180)

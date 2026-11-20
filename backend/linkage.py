@@ -968,6 +968,10 @@ class LinkageSearch:
     lever_max: float = 22.0
     anchor_min: float = 0.0
     anchor_max: float = 6.0
+    # No-go zone for the anchor (assembly): designs with avoid_min < anchor < avoid_max are refused.
+    # Equal ends mean no zone.
+    anchor_avoid_min: float = 0.0
+    anchor_avoid_max: float = 0.0
     foot_min: float = 1.0             # mm, pendulum foot; min = max keeps it as it is
     foot_max: float = 6.0
     foot_angle_min: float = 45.0      # deg
@@ -988,6 +992,13 @@ def _crossing(y: np.ndarray, gap: np.ndarray, level: float) -> np.ndarray:
     yc = y[i1 - 1] + (level - g0) / (g1 - g0) * (y[i1] - y[i1 - 1])
     yc = np.where(above[..., 0], y[0], yc)
     return np.where(np.any(above, axis=-1) & np.isfinite(yc), yc, np.inf)
+
+
+def _anchor_allowed(s: LinkageSearch, a) -> np.ndarray:
+    """False where the anchor falls strictly inside the no-go zone; its two ends are allowed."""
+    lo, hi = sorted((s.anchor_avoid_min, s.anchor_avoid_max))
+    a = np.asarray(a, dtype=float)
+    return np.ones_like(a, dtype=bool) if hi <= lo else ~((a > lo) & (a < hi))
 
 
 def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=None, foot_angle_deg=None) -> np.ndarray:
@@ -1058,7 +1069,7 @@ def _score(p: LinkageParams, s: LinkageSearch, l1, l2, a, lever_length, foot=Non
             )
             if p.fixed_height <= 0:
                 ok &= h0 + p.stroke <= s.max_pivot_height
-        ok &= np.isfinite(score) & ((reach >= l2) | (p.linkage_type != TYPE_LEVER))
+        ok &= np.isfinite(score) & ((reach >= l2) | (p.linkage_type != TYPE_LEVER)) & _anchor_allowed(s, a)
         if p.fixed_height > 0:
             ok &= (l1 >= min(s.bar1_min, s.bar1_max)) & (l1 <= max(s.bar1_min, s.bar1_max))
         else:

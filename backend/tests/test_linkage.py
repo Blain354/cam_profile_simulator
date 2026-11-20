@@ -199,6 +199,19 @@ class LinkageTests(unittest.TestCase):
         # Over-squeeze below the preload leaves nothing feasible.
         self.assertIsNone(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, max_oversqueeze=0.05))[0])
 
+    def test_anchor_no_go_zone_is_avoided(self):
+        free = optimize_linkage(PENDULUM, PENDULUM_SEARCH)[0]
+        a = free.anchor_distance
+        zone = replace(PENDULUM_SEARCH, anchor_avoid_min=a - 1.0, anchor_avoid_max=a + 1.0)
+        best = optimize_linkage(PENDULUM, zone)[0]
+        self.assertIsNotNone(best)
+        self.assertFalse(a - 1.0 < best.anchor_distance < a + 1.0, best.anchor_distance)
+        # Ends given the other way round mean the same zone; equal ends mean no zone.
+        self.assertEqual(optimize_linkage(PENDULUM, replace(zone, anchor_avoid_min=a + 1.0, anchor_avoid_max=a - 1.0))[0], best)
+        self.assertEqual(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, anchor_avoid_min=2.0, anchor_avoid_max=2.0))[0], free)
+        # The whole range inside the zone leaves nothing.
+        self.assertIsNone(optimize_linkage(PENDULUM, replace(PENDULUM_SEARCH, anchor_avoid_min=-50.0, anchor_avoid_max=50.0))[0])
+
     def test_fixed_height_solves_the_link(self):
         free = compute_linkage(PENDULUM)
         self.assertAlmostEqual(free.link_length, PENDULUM.bar1_length)
