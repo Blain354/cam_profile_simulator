@@ -53,6 +53,8 @@ services:
       # Linkage tabs, "Write to Onshape variables" — see docs/onshape-export.md.
       ONSHAPE_LINKAGE_MAPPING: ${ONSHAPE_LINKAGE_MAPPING:-}
       ONSHAPE_LINKAGE_WORKSPACE_ID: ${ONSHAPE_LINKAGE_WORKSPACE_ID:-}
+      ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID: ${ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID:-}
+      ONSHAPE_LINKAGE_MEASURED: ${ONSHAPE_LINKAGE_MEASURED:-}
     networks:
       - web_network
     labels:

@@ -293,3 +293,23 @@ measure it in the sketch to check that the CAD pinches the tube as the simulator
 These calls are made from the container and are not in `~/automation/state/onshape-appels.jsonl`.
 A bad table name comes back as HTTP 422 with the rule. Duplicate table names, missing keys, an
 unusable target, or a geometry that cannot be built come back as HTTP 409 with the reason. A refusal from Onshape is HTTP 502.
+
+### Inputs the CAD decides
+
+Some inputs are set by the CAD, not by the simulator: the Part Studio measures them with a measured
+variable, and the simulator reads them back. Today: the pendulum's tube centre, from `#pend_CALC_tube_center`
+(distance from the tube centre to the main axis) in `SMART_VALVE_MOTOR_V3_compliant links`.
+
+| Env | Meaning |
+|-----|---------|
+| `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` | Part Studio holding the measured variables, in the table's document and branch. Unset: nothing is read or checked. |
+| `ONSHAPE_LINKAGE_MEASURED` | Optional JSON `{kind: {simulator value key: variable name}}` replacing `DEFAULT_MEASURED` for a kind. |
+
+- **Sync from Onshape** (under Tube centre) calls `POST /api/linkage/onshape/measured`: one read-only
+  FeatureScript evaluation per variable (`getVariable`), and the value overwrites the simulator's.
+- **Export check.** Opening the write window also reads the measured values and says whether the export
+  is valid: every measured input must equal the simulator's within 0.001 mm. If not, the write button is
+  disabled, the window offers "Sync from Onshape and check again", and `/apply` itself refuses with HTTP 409
+  without writing anything. A measure that cannot be read (variable missing, after the rollback bar, wrong unit)
+  also makes the export invalid. Each check costs one API call per measured variable.
+

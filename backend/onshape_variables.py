@@ -99,6 +99,16 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
     },
 }
 
+# Inputs the CAD decides: measured variables of a Part Studio, read back into the simulator.
+# {kind: {simulator value key: Onshape variable name}}. The Part Studio is ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID,
+# in the same document and branch as the table; ONSHAPE_LINKAGE_MEASURED (same JSON shape) replaces a kind's names.
+DEFAULT_MEASURED: dict[str, dict[str, str]] = {
+    "pendulum": {"tube_center_x": "pend_CALC_tube_center"},
+}
+# Written values carry 4 decimals and the slider moves by 0.05 mm: a match within a micrometre is the same input.
+MEASURE_TOLERANCE_MM = 0.001
+_VARIABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
 _NUMBER = re.compile(r"^\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*\*?\s*([a-zA-Z]*)\s*$")
 _TABLE_NAME = re.compile(r"^[A-Za-z0-9 _-]{1,60}$")
 _ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
@@ -107,6 +117,10 @@ _TYPE = {"mm": "LENGTH", "deg": "ANGLE", "": "NUMBER"}
 
 class LinkageOnshapeError(RuntimeError):
     """Configuration or request problem worth showing to the user as is."""
+
+
+class ExportRefused(LinkageOnshapeError):
+    """The design on screen does not start from the inputs the CAD measures now (HTTP 409)."""
 
 
 class TableNameError(LinkageOnshapeError):
@@ -217,6 +231,88 @@ def wanted_rows(params: LinkageParams) -> list[Row]:
     return rows
 
 
+# ── Inputs measured in the CAD ───────────────────────────────────────────────
+
+
+def measured_for(kind: str) -> dict[str, str]:
+    mapping = dict(DEFAULT_MEASURED.get(kind, {}))
+    raw = os.environ.get("ONSHAPE_LINKAGE_MEASURED", "").strip()
+    if raw:
+        try:
+            custom = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise LinkageOnshapeError(f"ONSHAPE_LINKAGE_MEASURED is not valid JSON: {exc}") from exc
+        if isinstance(custom, dict) and isinstance(custom.get(kind), dict):
+            mapping = {str(k): str(v) for k, v in custom[kind].items()}
+    for key, var in mapping.items():
+        if key not in VALUES or not _VARIABLE.match(var):
+            raise LinkageOnshapeError(f"Measured input {key!r} -> {var!r} is not usable: unknown simulator value or odd variable name.")
+    return mapping
+
+
+def _measure_source() -> Optional[str]:
+    eid = os.environ.get("ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID", "").strip()
+    return _checked_id(eid, "Part Studio") if eid else None
+
+
+def _fs_value(result: Any, var: str, unit: str) -> float:
+    """A FeatureScript value in the simulator's unit: lengths come back in metres, angles in radians."""
+    if not isinstance(result, dict) or not isinstance(result.get("value"), (int, float)):
+        raise LinkageOnshapeError(f"Onshape gave no value for #{var}: is the variable defined, before the rollback bar, in that Part Studio?")
+    value, powers = float(result["value"]), result.get("unitToPower") or {}
+    scale = {"mm": ({"METER": 1}, 1000.0), "deg": ({"RADIAN": 1}, 180.0 / math.pi), "": ({}, 1.0)}[unit]
+    if powers != scale[0]:
+        raise LinkageOnshapeError(f"#{var} in Onshape is not a {unit or 'plain number'} value (units {powers}).")
+    return value * scale[1]
+
+
+def read_measured(kind: str, target: Optional[Target] = None) -> dict:
+    """The inputs the CAD decides, as Onshape computes them now. One read-only FeatureScript call per variable.
+
+    `configured` is False, and nothing is called, when this kind has no measured input or no Part Studio is set.
+    """
+    mapping, eid = measured_for(kind), _measure_source()
+    if not mapping or not eid:
+        return {"configured": False, "values": [], "api_calls": 0, "part_studio_url": None}
+    t = target or target_from_env()
+    values = []
+    for key, var in mapping.items():
+        label, unit = VALUES[key]
+        # Evaluating a lambda reads the regenerated Part Studio; it changes nothing.
+        reply = _call("POST", f"/partstudios/d/{t.document_id}/w/{t.workspace_id}/e/{eid}/featurescript",
+                      body={"script": f'function(context is Context, queries) {{ return getVariable(context, "{var}"); }}'})
+        values.append({"key": key, "variable": var, "label": label, "unit": unit,
+                       "value": _fs_value(reply.get("result") if isinstance(reply, dict) else None, var, unit)})
+    return {"configured": True, "values": values, "api_calls": len(values), "part_studio_url": table_url(t, eid)}
+
+
+def input_check(params: LinkageParams, measured: dict) -> dict:
+    """Does the design on screen start from the inputs the CAD measures now? An export is valid only if so."""
+    rows = []
+    for v in measured.get("values", []):
+        sim = float(getattr(params, v["key"]))
+        rows.append({**v, "simulator": sim, "ok": abs(sim - v["value"]) <= MEASURE_TOLERANCE_MM})
+    return {"configured": measured.get("configured", False), "valid": all(r["ok"] for r in rows), "rows": rows,
+            "part_studio_url": measured.get("part_studio_url"), "error": None}
+
+
+def _checked_inputs(params: LinkageParams, t: Target) -> tuple[dict, int]:
+    try:
+        measured = read_measured(params.linkage_type, t)
+    except (LinkageOnshapeError, oe.OnshapeAPIError, oe.OnshapeConfigError) as exc:
+        return {"configured": True, "valid": False, "rows": [], "part_studio_url": None,
+                "error": f"The inputs measured in Onshape could not be read: {exc}"}, 1
+    return input_check(params, measured), measured["api_calls"]
+
+
+def _refusal(check: dict) -> str:
+    if check["error"]:
+        return f"Export refused, the inputs could not be checked. {check['error']}"
+    bad = "; ".join(f"{r['label']}: simulator {r['simulator']:g} {r['unit']}, Onshape #{r['variable']} {r['value']:.4f} {r['unit']}"
+                    for r in check["rows"] if not r["ok"])
+    return f"Export refused: the simulation does not start from the inputs Onshape measures now ({bad}). Sync them from Onshape first."
+
+
 # ── The table ────────────────────────────────────────────────────────────────
 
 
@@ -321,10 +417,11 @@ def preview(params: LinkageParams, table_name: Optional[str] = None, target: Opt
     t = target or target_from_env()
     name = table_name_for(params.linkage_type, table_name)
     rows = wanted_rows(params)
+    check, check_calls = _checked_inputs(params, t)
     eid = find_table(t, name)
     studio, referenced = _read_table(t, eid) if eid else ([], set())
     _locate(rows, studio, frozenset(referenced))
-    return _summary(t, name, eid, rows, 2 if eid else 1)
+    return {**_summary(t, name, eid, rows, (2 if eid else 1) + check_calls), "input_check": check}
 
 
 # ── Writing ──────────────────────────────────────────────────────────────────
@@ -357,8 +454,13 @@ def apply(
     name = table_name_for(params.linkage_type, table_name)
     keep = set(names)
     rows = wanted_rows(params)
+    check, check_calls = _checked_inputs(params, t)
+    if check["configured"] and not check["valid"]:
+        raise ExportRefused(_refusal(check))
     with _lock_for(t, name):
-        return _apply_locked(t, name, keep, rows)
+        out = _apply_locked(t, name, keep, rows)
+    out["api_calls"] += check_calls
+    return {**out, "input_check": check}
 
 
 def _apply_locked(t: Target, name: str, keep: set, rows: list[Row]) -> dict:

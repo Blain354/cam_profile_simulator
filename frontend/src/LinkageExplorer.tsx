@@ -4,7 +4,7 @@ import type { ReactElement, Ref } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
-import { Pause, Play, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
+import { Pause, Play, RefreshCw, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
 import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
 import type { ProfileHandle, ProfileState } from './lib/profiles';
 import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
@@ -696,10 +696,33 @@ interface OnshapeRow {
   status: 'update' | 'same' | 'new' | 'written' | 'created' | 'skipped' | 'error';
   detail: string;
 }
+/** One input the CAD decides, as a measured variable of the Part Studio computes it (backend `read_measured`). */
+interface MeasuredValue { key: keyof LinkageParams; variable: string; label: string; unit: string; value: number }
+interface MeasuredInputs { configured: boolean; values: MeasuredValue[]; api_calls: number; part_studio_url: string | null }
+interface InputCheck {
+  configured: boolean; valid: boolean; error: string | null; part_studio_url: string | null;
+  rows: (MeasuredValue & { simulator: number; ok: boolean })[];
+}
 interface OnshapeTable {
   rows: OnshapeRow[]; api_calls: number; table_name: string; table_exists: boolean; table_created: boolean;
-  element_id: string | null; table_url: string | null; write_error?: string | null;
+  element_id: string | null; table_url: string | null; write_error?: string | null; input_check?: InputCheck;
 }
+
+/** Inputs of each kind that the CAD measures (same keys as DEFAULT_MEASURED in backend/onshape_variables.py). */
+const ONSHAPE_MEASURED: Partial<Record<LinkageKind, (keyof LinkageParams)[]>> = { pendulum: ['tube_center_x'] };
+
+async function readMeasured(params: LinkageParams): Promise<MeasuredInputs> {
+  const res = await apiFetch('/api/linkage/onshape/measured', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => (typeof j.detail === 'string' ? j.detail : null)).catch(() => null);
+    throw new Error(detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/** The measured values as a params patch, rounded to the micrometre like what the table receives. */
+const measuredPatch = (values: MeasuredValue[]): Partial<LinkageParams> =>
+  Object.fromEntries(values.map((v) => [v.key, Math.round(v.value * 1e4) / 1e4]));
 
 async function onshapeCall(path: string, body: unknown): Promise<OnshapeTable> {
   const res = await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -722,7 +745,11 @@ function storedTableName(kind: LinkageKind): string {
 }
 
 /** Shows what the simulator's own Variable Studio holds against the values on screen, then writes the ticked rows (creating the table if needed). */
-function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClose: () => void; params: LinkageParams }) {
+function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
+  open: boolean; onClose: () => void; params: LinkageParams;
+  /** Puts the values Onshape measures into the design; the window then checks again with them. */
+  onSyncMeasured: (patch: Partial<LinkageParams>) => void;
+}) {
   const kind = params.linkage_type;
   const [table, setTable] = useState<OnshapeTable | null>(null);
   const [nameInput, setNameInput] = useState(() => storedTableName(kind));
@@ -732,6 +759,7 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
   const [done, setDone] = useState(false);
   const staleRef = useRef(0);
   const writingRef = useRef(false);   // busy state lags a render: this stops a double click sending two writes
+  const recheckRef = useRef(false);   // after a sync, read again once the new values are on screen
 
   const name = nameInput.trim();
   const nameOk = TABLE_NAME.test(name);
@@ -759,6 +787,20 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
     // Read once per opening: the values are those on screen when the button was pressed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    if (open && recheckRef.current) { recheckRef.current = false; read(table?.table_name ?? name); }
+    // Only a sync sets recheckRef; the values to check are the synced ones.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
+  const check = table?.input_check;
+  const blocked = check != null && check.configured && !check.valid;
+  const syncAndCheck = () => {
+    if (!check || check.rows.length === 0) return;
+    recheckRef.current = true;
+    onSyncMeasured(measuredPatch(check.rows));
+  };
 
   const checkName = () => { if (nameOk && busy == null && name !== table?.table_name) read(name); };
   const canPick = (r: OnshapeRow) => r.status === 'update' || r.status === 'new' || r.status === 'error';
@@ -827,6 +869,25 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
                   : `There is no table called ${table.table_name} in the document yet. Writing creates it with the ticked variables.`}
             </p>
             {!current && !done && <p className="text-xs text-amber-300">The name changed: press Look up before writing.</p>}
+            {check?.configured && (
+              <div className={`rounded-lg border p-2 text-xs ${check.valid ? 'border-emerald-600/60 bg-emerald-900/20 text-emerald-200' : 'border-red-500/50 bg-red-900/30 text-red-200'}`} role="status">
+                <p className="font-bold">
+                  {check.valid ? 'Valid export: the simulation starts from the inputs Onshape measures now.' : 'Export not valid: the simulation does not start from the inputs Onshape measures now.'}
+                </p>
+                {check.error && <p className="mt-1">{check.error}</p>}
+                {check.rows.map((r) => (
+                  <p key={r.key} className="mt-1 font-mono">
+                    {r.label}: simulator {r.simulator.toFixed(4)} {r.unit}, Onshape #{r.variable} {r.value.toFixed(4)} {r.unit} {r.ok ? '✓' : '✗'}
+                  </p>
+                ))}
+                {!check.valid && check.rows.some((r) => !r.ok) && (
+                  <Button variant="ghost" type="button" onClick={syncAndCheck} disabled={busy != null}
+                    className="mt-2 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 disabled:opacity-40">
+                    Sync from Onshape and check again
+                  </Button>
+                )}
+              </div>
+            )}
             <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-neutral-700">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-neutral-900 text-left text-neutral-400">
@@ -859,11 +920,13 @@ function OnshapeVariablesModal({ open, onClose, params }: { open: boolean; onClo
                   {done ? 'Close' : 'Cancel'}
                 </Button>
                 {!done && (
-                  <Button variant="ghost" type="button" onClick={write} disabled={busy != null || n === 0}
+                  <Button variant="ghost" type="button" onClick={write} disabled={busy != null || n === 0 || blocked}
+                    title={blocked ? 'Sync the measured inputs from Onshape first' : undefined}
                     className="flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-bold text-neutral-900 disabled:opacity-40">
                     <UploadCloud className="w-3.5 h-3.5" />
                     {busy === 'write' ? 'Writing…'
-                      : n === 0 ? 'Nothing to write'
+                      : blocked ? 'Export not valid'
+                        : n === 0 ? 'Nothing to write'
                         : table.table_exists ? `Overwrite ${n} variable${plural} in ${table.table_name}`
                           : `Create the table and write ${n} variable${plural}`}
                   </Button>
@@ -916,6 +979,22 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
   const motion = useRef({ d: 0, speed: 0, stroke: 1 });
 
   const set = <K extends keyof LinkageParams>(key: K, value: LinkageParams[K]) => setParams((p) => ({ ...p, [key]: value }));
+  const [measure, setMeasure] = useState<{ busy: boolean; ok: boolean; text: string | null }>({ busy: false, ok: true, text: null });
+  /** Overwrites the inputs the CAD decides with what Onshape measures now (one read-only API call per value). */
+  const syncMeasured = async () => {
+    setMeasure({ busy: true, ok: true, text: null });
+    try {
+      const m = await readMeasured(params);
+      if (!m.configured || m.values.length === 0) {
+        setMeasure({ busy: false, ok: false, text: 'No measured input is set up in Onshape for this linkage.' });
+        return;
+      }
+      setParams((p) => ({ ...p, ...measuredPatch(m.values) }));
+      setMeasure({ busy: false, ok: true, text: m.values.map((v) => `${v.value.toFixed(4)} ${v.unit} from #${v.variable}`).join(', ') });
+    } catch (e) {
+      setMeasure({ busy: false, ok: false, text: e instanceof Error ? e.message : 'Could not read Onshape.' });
+    }
+  };
   const setS = (key: Exclude<keyof LinkageSearch, 'objective' | 'fixed'>, value: number) => setSearch((s) => ({ ...s, [key]: value }));
 
   useEffect(() => {
@@ -1190,6 +1269,16 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       <ParameterSlider label="Tube centre (mm)" value={params.tube_center_x} min={3} max={20} step={0.05} onChange={(v) => set('tube_center_x', v)}
         secondaryValue={data ? `wall ${data.wall_x.toFixed(2)}` : undefined}
         description="Tube axis distance from the screw axis. The tube rests on a wall half an OD further out." />
+      {ONSHAPE_MEASURED[kind]?.includes('tube_center_x') && (
+        <div className="-mt-1 flex flex-wrap items-center gap-2">
+          <Button variant="ghost" type="button" onClick={syncMeasured} disabled={measure.busy}
+            title="Overwrite the tube centre with the value the Onshape Part Studio measures now. The CAD decides this input."
+            className="inline-flex items-center gap-1 rounded-lg border border-neutral-700 px-2 py-1 text-[11px] text-neutral-200 disabled:opacity-40">
+            <RefreshCw className={`w-3 h-3 ${measure.busy ? 'animate-spin' : ''}`} /> {measure.busy ? 'Reading Onshape…' : 'Sync from Onshape'}
+          </Button>
+          {measure.text && <span className={`text-[10px] ${measure.ok ? 'text-emerald-400' : 'text-red-300'}`} role="status">{measure.text}</span>}
+        </div>
+      )}
       <ParameterSlider label="Pinch pin Ø (mm)" value={params.pin_diameter} min={0} max={4} step={0.1} onChange={(v) => set('pin_diameter', v)}
         description="Diameter of the pin that presses on the tube." />
       <ParameterSlider label="Preload (mm)" value={params.preload} min={0} max={0.5} step={0.01} onChange={(v) => set('preload', v)}
@@ -1650,7 +1739,8 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40">
             <UploadCloud className="w-3.5 h-3.5" /> Write to Onshape variables
           </Button>
-          <OnshapeVariablesModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params} />
+          <OnshapeVariablesModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params}
+            onSyncMeasured={(patch) => setParams((p) => ({ ...p, ...patch }))} />
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-4">

@@ -867,6 +867,12 @@ def linkage_onshape_preview(req: LinkageOnshapePreviewRequest):
     return _onshape_variables(lambda: onshape_variables.preview(_linkage_params(req), req.table_name))
 
 
+@app.post("/api/linkage/onshape/measured")
+def linkage_onshape_measured(req: LinkageRequest):
+    """The inputs the CAD decides (measured variables of the Part Studio), as Onshape computes them now. Reads only."""
+    return _onshape_variables(lambda: onshape_variables.read_measured(req.linkage_type))
+
+
 @app.post("/api/linkage/onshape/apply")
 def linkage_onshape_apply(req: LinkageOnshapeApplyRequest):
     """Write the named variables into the simulator's own Variable Studio, creating it if missing."""

@@ -37,6 +37,7 @@ class FakeOnshape:
         self.ignore_filter = False   # a listing that returns every element, Part Studios included
         self.references = {}         # eid -> blocks of referenced Variable Studios in its read
         self.listing_delay = 0.0
+        self.measured = {}           # variable name -> FeatureScript result, for the Part Studio PSM
 
     def __call__(self, method, path, *, query=None, body=None, follow_redirects=True):
         assert follow_redirects is False, "the linkage write must never follow a redirect"
@@ -51,6 +52,9 @@ class FakeOnshape:
             self.elements.append({"id": eid, "name": body["name"], "elementType": "VARIABLESTUDIO"})
             self.tables[eid] = []
             return {"id": eid, "name": body["name"], "elementType": "VARIABLESTUDIO"}
+        if (method, path) == ("POST", "/partstudios/d/doc/w/ws/e/PSM/featurescript"):
+            var = body["script"].split('getVariable(context, "')[1].split('"')[0]
+            return {"result": copy.deepcopy(self.measured.get(var)), "notices": []}
         prefix, _, eid_part = path.partition("/variables/d/doc/w/ws/e/")
         eid = eid_part[: -len("/variables")] if eid_part.endswith("/variables") else None
         if prefix == "" and eid in self.tables:
@@ -352,6 +356,81 @@ class OnshapeVariablesTests(unittest.TestCase):
                 ov.mapping_for("pendulum")
         with self.assertRaises(ov.LinkageOnshapeError):
             ov.wanted_rows(replace(LinkageParams(), bar2_length=-1.0))
+
+
+def metres(mm):
+    return {"btType": "com.belmonttech.serialize.fsvalue.BTFSValueWithUnits", "unitToPower": {"METER": 1}, "value": mm / 1000.0}
+
+
+class MeasuredInputsTests(unittest.TestCase):
+    """The CAD's measured tube centre is an input: an export is valid only when the simulation starts from it."""
+
+    use = OnshapeVariablesTests.use
+
+    def setUp(self):
+        patcher = mock.patch.dict(ov.os.environ, {"ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID": "PSM"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_not_configured_reads_nothing(self):
+        self.use(FakeOnshape())
+        with mock.patch.dict(ov.os.environ, {"ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID": ""}):
+            out = ov.preview(PENDULUM, target=TARGET)
+            self.assertEqual(ov.read_measured("pendulum", TARGET)["configured"], False)
+        self.assertEqual(out["input_check"]["configured"], False)
+        self.assertNotIn("partstudios", " ".join(p for _, p in self.fake.calls))
+        self.assertFalse(ov.read_measured("lever", TARGET)["configured"])   # no measured input for this kind
+
+    def test_read_gives_millimetres(self):
+        fake = self.use(FakeOnshape())
+        fake.measured["pend_CALC_tube_center"] = metres(8.075)
+        out = ov.read_measured("pendulum", TARGET)
+        self.assertEqual(out["api_calls"], 1)
+        self.assertAlmostEqual(out["values"][0]["value"], 8.075, places=9)
+        self.assertEqual((out["values"][0]["key"], out["values"][0]["variable"]), ("tube_center_x", "pend_CALC_tube_center"))
+
+    def test_matching_inputs_make_a_valid_export(self):
+        fake = self.use(FakeOnshape())
+        fake.measured["pend_CALC_tube_center"] = metres(PENDULUM.tube_center_x + 0.0004)
+        out = ov.preview(PENDULUM, target=TARGET)
+        self.assertTrue(out["input_check"]["valid"])
+        self.assertEqual(out["api_calls"], 2)          # the listing and the measure
+        written = ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        self.assertTrue(written["input_check"]["valid"])
+        self.assertEqual(fake.expression("cam_sim_pendulum", "pend_arm_L"), "14.43 mm")
+
+    def test_differing_inputs_refuse_the_export_before_any_write(self):
+        fake = self.use(FakeOnshape())
+        fake.measured["pend_CALC_tube_center"] = metres(8.075)
+        out = ov.preview(replace(PENDULUM, tube_center_x=8.1), target=TARGET)
+        check = out["input_check"]
+        self.assertFalse(check["valid"])
+        self.assertEqual([(r["key"], r["ok"]) for r in check["rows"]], [("tube_center_x", False)])
+        calls = len(fake.calls)
+        with self.assertRaises(ov.ExportRefused) as refused:
+            ov.apply(replace(PENDULUM, tube_center_x=8.1), ["pend_arm_L"], target=TARGET)
+        self.assertIn("8.0750", str(refused.exception))
+        self.assertEqual([m for m, p in fake.calls[calls:] if "/variables" in p and m == "POST"], [])
+        self.assertIsNone(fake.table("cam_sim_pendulum"))
+        # Synced to the measure, the same export goes through.
+        ov.apply(replace(PENDULUM, tube_center_x=8.075), ["pend_arm_L"], target=TARGET)
+        self.assertEqual(fake.expression("cam_sim_pendulum", "pend_arm_L"), "14.43 mm")
+
+    def test_a_measure_that_cannot_be_read_refuses_the_export(self):
+        fake = self.use(FakeOnshape())          # the variable is not in the Part Studio
+        out = ov.preview(PENDULUM, target=TARGET)
+        self.assertFalse(out["input_check"]["valid"])
+        self.assertIn("pend_CALC_tube_center", out["input_check"]["error"])
+        with self.assertRaises(ov.ExportRefused):
+            ov.apply(PENDULUM, ["pend_arm_L"], target=TARGET)
+        fake.measured["pend_CALC_tube_center"] = {"btType": "BTFSValueWithUnits", "unitToPower": {"RADIAN": 1}, "value": 1.0}
+        self.assertIn("not a mm", ov.preview(PENDULUM, target=TARGET)["input_check"]["error"])
+
+    def test_odd_measured_mapping_is_refused(self):
+        self.use(FakeOnshape())
+        with mock.patch.dict(ov.os.environ, {"ONSHAPE_LINKAGE_MEASURED": '{"pendulum": {"tube_center_x": "x\\" + 1"}}'}):
+            with self.assertRaises(ov.LinkageOnshapeError):
+                ov.read_measured("pendulum", TARGET)
 
 
 class OnshapeEndpointsTests(unittest.TestCase):
