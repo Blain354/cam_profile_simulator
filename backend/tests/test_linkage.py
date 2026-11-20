@@ -528,6 +528,18 @@ class LinkageTests(unittest.TestCase):
         self.assertGreater(max(v or 0.0 for v in r.flow_a) / r.max_flow_l_min, 0.5)
         self.assertLessEqual(r.max_stress_mpa, p.member_strength_mpa)
 
+    def test_stroke_used_stops_where_the_closed_side_locks(self):
+        # Full bore at 2.46 mm, but this lever's hinged bar reaches dead centre at Y = -2.275: a
+        # full-bore stroke (2.5) would not run. The travel used stops before, and runs.
+        p = LinkageParams(linkage_type="lever", bar1_length=10.632, bar2_length=6.931, anchor_distance=2.145,
+                          lever_length=10.735, stroke=3.0, chamber_volume_ml=0.0, tube_model="simple")
+        r = compute_linkage(p)
+        self.assertAlmostEqual(r.y_min, -2.275)
+        self.assertGreater(r.y_full_open, 2.45)
+        used = linkage._stroke_used(r, LinkageSearch())
+        self.assertLessEqual(used, -r.y_min)
+        self.assertTrue(compute_linkage(replace(p, stroke=used)).feasible)
+
     def test_segment_distance_by_hand(self):
         d = lambda a, b, c, e: float(linkage._seg_dist(*a, *b, *c, *e))
         self.assertAlmostEqual(d((0, 0), (4, 0), (1, 2), (3, 2)), 2.0)          # parallel, one over the other
