@@ -264,20 +264,31 @@ export function Accordion({
   defaultOpen = false,
   showBottomBorder = true,
   id,
+  openSignal,
 }: {
   title: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
   showBottomBorder?: boolean;
   id?: string;
+  /** When incremented above 0, forces the accordion open (e.g. when a user unlocks a solver variable). */
+  openSignal?: number;
 }) {
   const scope = useContext(AccordionScopeContext);
   const storageKey = `${scope}:${id ?? title}`;
   const [isOpen, setIsOpen] = useState(() => storedOpen(storageKey) ?? defaultOpen);
   const [seenKey, setSeenKey] = useState(storageKey);
+  const [seenSignal, setSeenSignal] = useState(openSignal ?? 0);
   if (storageKey !== seenKey) {
     setSeenKey(storageKey);
     setIsOpen(storedOpen(storageKey) ?? defaultOpen);
+  }
+  if (openSignal != null && openSignal > 0 && openSignal !== seenSignal) {
+    setSeenSignal(openSignal);
+    if (!isOpen) {
+      setIsOpen(true);
+      storeOpen(storageKey, true);
+    }
   }
   const toggle = () => {
     setIsOpen((prev) => {

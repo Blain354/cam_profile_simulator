@@ -376,7 +376,7 @@ const COMMON = {
   motor_torque_mnm: 30,
   screw_diameter: 3.0,
   screw_friction: 0.3,
-  member_modulus_mpa: 2500,
+  member_modulus_mpa: 1950,
   member_width: 2.0,
   member_thickness: 3.0,
   contact_deformation: true,
@@ -389,8 +389,8 @@ const COMMON = {
   carriage_clamped: false,
   carriage_pin_diameter: 1.5,
   carriage_pin_length: 8,
-  // Assumed: about printed PETG at yield.
-  member_strength_mpa: 40,
+  // Default: Bambu Lab PETG Basic bending strength (XY).
+  member_strength_mpa: 75,
   carriage_pin_strength_mpa: 300,
   pivot_inverted: false,
   // Assumed: room enough to assemble printed parts side by side.
@@ -419,10 +419,12 @@ const DEFAULT_SEARCH: Record<LinkageKind, LinkageSearch> = {
 };
 
 interface Material { name: string; modulus_mpa: number; strength_mpa: number; builtin: boolean }
-/** Shown until the server's list arrives; the server holds the same two plus the custom ones. */
+/** Shown until the server's list arrives; the server holds the same built-in materials plus the custom ones. */
 const BUILTIN_MATERIALS: Material[] = [
-  { name: 'PETG', modulus_mpa: 2500, strength_mpa: 40, builtin: true },
-  { name: 'PLA', modulus_mpa: 3500, strength_mpa: 50, builtin: true },
+  { name: 'PETG Basic (bamb)', modulus_mpa: 1950, strength_mpa: 75, builtin: true },
+  { name: 'PETG Translucent (bamb)', modulus_mpa: 1610, strength_mpa: 68, builtin: true },
+  { name: 'PLA Basic (bamb)', modulus_mpa: 2750, strength_mpa: 76, builtin: true },
+  { name: 'ABS (bamb)', modulus_mpa: 1880, strength_mpa: 62, builtin: true },
 ];
 
 const storageKey = (kind: LinkageKind) => `cam-sim.linkage.${kind}.v2`;
@@ -1857,7 +1859,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
               <select id={`linkage-material-${kind}`} value={material?.name ?? ''} onChange={(e) => pickMaterial(e.target.value)}
                 className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100">
                 {!material && <option value="">Custom values</option>}
-                {materials.map((m) => <option key={m.name} value={m.name}>{`${m.name} (${(m.modulus_mpa / 1000).toFixed(1)} GPa, ${m.strength_mpa} MPa)`}</option>)}
+                {materials.map((m) => <option key={m.name} value={m.name}>{`${m.name} (${(m.modulus_mpa / 1000).toFixed(2)} GPa, ${m.strength_mpa} MPa)`}</option>)}
               </select>
               <Button variant="ghost" type="button" onClick={deleteMaterial} disabled={!material || material.builtin}
                 title={material?.builtin ? 'A built-in material cannot be deleted' : 'Delete this material'} aria-label="Delete this material"
@@ -1878,14 +1880,14 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             )}
             {materialMessage && <p className="text-[10px] leading-snug text-red-400" role="alert">{materialMessage}</p>}
             <p className="text-[10px] leading-snug text-neutral-400">
-              A material is the modulus and the strength below. PETG and PLA are indicative values for printed parts. To add your own, set the two sliders, name them and save.
+              A material is the bending modulus (XY) and bending strength (XY) below. Built-in presets are from Bambu Lab (bamb). To add your own, set the two sliders, name them and save.
             </p>
           </div>
-          <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={100} onChange={(v) => set('member_modulus_mpa', v)}
-            secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(1)} GPa`}
-            description="Young's modulus of the bars: about 2 500 for printed PETG, 3 500 for PLA, 70 000 for aluminium." />
+          <ParameterSlider label="Bar modulus (MPa)" value={params.member_modulus_mpa} min={500} max={210000} step={10} onChange={(v) => set('member_modulus_mpa', v)}
+            secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(2)} GPa`}
+            description="Bending modulus (XY) of the bars: 1 950 MPa for PETG Basic (bamb), 1 610 for PETG Translucent (bamb), 2 750 for PLA Basic (bamb), 1 880 for ABS (bamb), 70 000 for aluminium." />
           <ParameterSlider label="Material strength (MPa)" value={params.member_strength_mpa} min={5} max={1000} step={1} onChange={(v) => set('member_strength_mpa', v)}
-            description="Stress the material may see; the one-piece pendulum is checked against it. Assumed 40 for printed PETG at yield; use less for a part that must flex many times, about 30 to 60 for PLA, 20 to 30 for TPU-like or nylon parts in fatigue." />
+            description="Bending strength (XY) the material may see; the one-piece pendulum is checked against it. 75 MPa for PETG Basic (bamb), 68 for PETG Translucent (bamb), 76 for PLA Basic (bamb), 62 for ABS (bamb); use less for a part that must flex many times." />
           <ParameterSlider label="Bar width (mm)" value={params.member_width} min={0.5} max={10} step={0.1} onChange={(v) => set('member_width', v)}
             description="Bar section in the plane of the mechanism. Bending stiffness goes with its cube." />
           <ParameterSlider label="Bar thickness (mm)" value={params.member_thickness} min={0.5} max={15} step={0.1} onChange={(v) => set('member_thickness', v)}

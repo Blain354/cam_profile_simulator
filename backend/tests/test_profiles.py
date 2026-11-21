@@ -263,6 +263,23 @@ class ProfileRouteTests(unittest.TestCase):
             self.assertEqual(c.get(f"/api/linkage/profiles/{kind}/x").status_code, 404)
         self.assertEqual(c.put("/api/profiles/pendulum/" + "n" * 61, json={"payload": {}}).status_code, 400)
 
+    def test_compliant_profiles(self):
+        c = self.client
+        payload = {"params": {"anchor_distance": 5.2, "pinch_y": 11.0}, "constraints": {"max_rotation_deg": 12}}
+        self.assertEqual(
+            c.put("/api/profiles/compliant/beam-a", json={"payload": payload, "note": "soft foot"}).json(),
+            {"status": "saved", "name": "beam-a"},
+        )
+        got = c.get("/api/profiles/compliant/beam-a").json()
+        self.assertEqual(got["payload"], payload)
+        self.assertEqual(got["note"], "soft foot")
+        self.assertEqual([p["name"] for p in c.get("/api/profiles?type=compliant").json()["profiles"]], ["beam-a"])
+        self.assertEqual(c.put("/api/profiles/compliant/default/beam-a").json(), {"status": "set", "default": "beam-a"})
+        self.assertEqual(c.get("/api/profiles/compliant/default").json(), {"default": "beam-a"})
+        self.assertEqual(c.delete("/api/profiles/compliant/beam-a").json(), {"status": "deleted"})
+        self.assertEqual(c.get("/api/profiles/compliant/beam-a").status_code, 404)
+        self.assertIsNone(c.get("/api/profiles/compliant/default").json()["default"])
+
     def test_materials_never_listed_as_profiles(self):
         c = self.client
         self.assertEqual(c.put("/api/linkage/materials/PA12", json={"modulus_mpa": 1700, "strength_mpa": 45}).status_code, 200)

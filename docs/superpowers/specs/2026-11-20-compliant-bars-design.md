@@ -4,7 +4,7 @@ Onglet à côté de Pendulum. Pendulum ne change pas. Le sous-onglet de recherch
 
 Trois courbes de Bézier cubiques, forme au repos = pose à Y = 0 (tube juste fermé, preload inclus).
 
-- L : ancre `(-anchor_distance, 0)`, encastrée, jusqu'à la jonction `(junction_x, junction_y)`.
+- L : ancre `(-anchor_distance, l_thickness / 2)` (contour tangent à la surface du bas `y = 0`), encastrée, jusqu'à la jonction `(junction_x, junction_y)`.
 - R : jonction jusqu'au pivot `(±pivot_offset, closed_carriage_height)`, articulé (rotation libre, translation imposée par le chariot).
 - Pied : jonction jusqu'au contact. `pinch_y` est libre. `pinch_x` place la face du bout à `closed_gap - preload` de la paroi.
 

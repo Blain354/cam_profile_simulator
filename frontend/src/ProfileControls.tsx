@@ -58,25 +58,26 @@ export function ProfilePill({ state, onImport, onSaveAsNew, onUpdate }: {
 
 // ─── Save as new ─────────────────────────────────────────────────
 
-export function ProfileSaveDialog({ open, type, initialNote, onClose, onSave }: {
+export function ProfileSaveDialog({ open, type, initialName = '', initialNote, onClose, onSave }: {
   open: boolean;
   type: ProfileType;
+  initialName?: string;
   initialNote: string;
   onClose: () => void;
   /** An empty name means a generated one. */
   onSave: (name: string, note: string) => Promise<boolean>;
 }) {
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [note, setNote] = useState(initialNote);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
-    setName('');
+    setName(initialName);
     setNote(initialNote);
     setError(null);
     setBusy(false);
-  }, [open, initialNote]);
+  }, [open, initialName, initialNote]);
   const optional = nameIsOptional(type);
   const limit = optional ? 120 : 60;
   const trimmed = name.trim();

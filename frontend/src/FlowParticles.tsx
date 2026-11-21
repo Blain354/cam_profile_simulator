@@ -14,6 +14,8 @@ export type FlowParticlesProps = {
   radius: number;
   /** Maps the particles' local frame into the drawing. */
   transform?: string;
+  /** Render particles regardless of the global Flow particles switch. */
+  forceOn?: boolean;
 } & (
   /** Along the tube: local y is the tube axis, local x across it; the air runs toward +y (direction 1) or -y (-1). */
   | { view: 'side'; bore: Bore; direction: 1 | -1 }
@@ -23,10 +25,10 @@ export type FlowParticlesProps = {
 
 const SEEDS = Array.from({ length: MAX_PARTICLES }, (_, i) => seed(i));
 
-/** Particles in an SVG tube, their density and speed proportional to the flow; nothing when the "Flow particles" switch is off. */
+/** Particles in an SVG tube, their density and speed proportional to the flow; nothing when the "Flow particles" switch is off (unless forceOn is set). */
 export function FlowParticles(props: FlowParticlesProps) {
   const on = useFlowParticlesOn();
-  return on ? <ParticleLayer {...props} /> : null;
+  return on || props.forceOn ? <ParticleLayer {...props} /> : null;
 }
 
 function ParticleLayer(props: FlowParticlesProps) {

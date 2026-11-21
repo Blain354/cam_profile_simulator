@@ -15,7 +15,7 @@ import {
   apiFetch, defaultParams, mergeConfigParams,
 } from './components';
 import { ProfileImportModal, ProfilePill, ProfileSaveDialog } from './ProfileControls';
-import { UNSAVED_PROFILE, createProfile, getDefaultProfile, getProfile, listProfiles, profileTypeOf, saveProfile } from './lib/profiles';
+import { UNSAVED_PROFILE, createProfile, getDefaultProfile, getProfile, listProfiles, profileTypeOf, saveProfile, suggestNextProfileName } from './lib/profiles';
 import type { ProfileHandle, ProfilePayload, ProfileState, ProfileType, StoredProfile } from './lib/profiles';
 import { CamSchematicCard } from './CamSchematic';
 import { interpAt, useCamTravel } from './lib/camTravel';
@@ -26,7 +26,7 @@ import { chartDomain } from './lib/chartDomain';
 import type { ChartCardView } from './ChartCard';
 import ProfileBuilder, { FinderProfilePreview } from './ProfileBuilder';
 import LinkageExplorer, { LinkageProfilePreview } from './LinkageExplorer';
-import CompliantBars from './CompliantBars';
+import CompliantBars, { CompliantProfilePreview } from './CompliantBars';
 import { SubTabs } from './SubTabs';
 import type { SubTab } from './SubTabs';
 import {
@@ -63,7 +63,8 @@ function camParamsFromProfile(payload: Record<string, unknown>, note: string): S
 const renderProfilePreview = (type: ProfileType) => (payload: ProfilePayload) =>
   type === 'cam' ? <CamProfilePreview payload={payload} />
     : type === 'cam-finder' ? <FinderProfilePreview payload={payload} />
-      : <LinkageProfilePreview kind={type} payload={payload} />;
+      : type === 'compliant' ? <CompliantProfilePreview payload={payload} />
+        : <LinkageProfilePreview kind={type} payload={payload} />;
 
 function loadTabs(): { tab: TopTab; sub: Record<TopTab, SubTab> } {
   const sub = { ...DEFAULT_SUB_TABS };
@@ -131,8 +132,10 @@ export default function App() {
   const [finderProfile, setFinderProfile] = useState<ProfileState>(UNSAVED_PROFILE);
   /** Tagged with its type: the state a closed linkage tab reported never shows on another one. */
   const [linkageProfile, setLinkageProfile] = useState<{ type: ProfileType; state: ProfileState } | null>(null);
+  const [compliantProfile, setCompliantProfile] = useState<ProfileState>(UNSAVED_PROFILE);
   const finderRef = useRef<ProfileHandle>(null);
   const linkageRef = useRef<ProfileHandle>(null);
+  const compliantRef = useRef<ProfileHandle>(null);
   const [guidanceMode, setGuidanceMode] = useState(true);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -299,7 +302,7 @@ export default function App() {
   const hasChanges = useMemo(() => savedParams ? JSON.stringify(params) !== JSON.stringify(savedParams) : false, [params, savedParams]);
 
   // ─── Saved profiles: one pill, one import window, one save dialog for every tab ───
-  const profileType = activeTab === 'compliant' ? 'cam' : profileTypeOf(activeTab, subTab);
+  const profileType = profileTypeOf(activeTab, subTab);
   const camProfile: ProfileState = { name: activeConfigName, dirty: hasChanges, canSave: true, note: params.note };
   const camHandle: ProfileHandle = {
     type: 'cam',
@@ -312,12 +315,16 @@ export default function App() {
     },
     detach: () => { setActiveConfigName(null); setSavedParams(null); },
   };
-  const profileState = activeTab === 'compliant' ? { name: null, dirty: false, canSave: false }
-    : camExplorer ? camProfile : camFinder ? finderProfile
+  const profileState = camExplorer ? camProfile
+    : camFinder ? finderProfile
+    : activeTab === 'compliant' ? compliantProfile
     : linkageProfile?.type === profileType ? linkageProfile.state : UNSAVED_PROFILE;
   /** The open feature's handle, only when it saves the open context's type. */
   const profileHandle = (): ProfileHandle | null => {
-    const handle = camExplorer ? camHandle : camFinder ? finderRef.current : linkageRef.current;
+    const handle = camExplorer ? camHandle
+      : camFinder ? finderRef.current
+      : activeTab === 'compliant' ? compliantRef.current
+      : linkageRef.current;
     return handle && handle.type === profileType ? handle : null;
   };
 
@@ -578,7 +585,7 @@ export default function App() {
           </div>
 
           {/* The open tab's profile: one pill for every tab and sub-tab */}
-          <ProfilePill state={profileState} onImport={() => { if (activeTab !== 'compliant') setImportType(profileType); }}
+          <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
             onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -760,7 +767,12 @@ export default function App() {
           </div>
         </div>
       ) : activeTab === 'compliant' ? (
-        <CompliantBars mode={subTab} onOpenExplorer={() => setSubTab('compliant', 'explorer')} />
+        <CompliantBars
+          mode={subTab}
+          onOpenExplorer={() => setSubTab('compliant', 'explorer')}
+          onProfileStateChange={setCompliantProfile}
+          profileRef={compliantRef}
+        />
       ) : activeTab !== 'cam' ? (
         <LinkageExplorer
           key={activeTab}
@@ -817,7 +829,11 @@ export default function App() {
         }}
       />
       <ProfileSaveDialog
-        open={saveTarget !== null} onClose={() => setSaveTarget(null)} type={saveTarget?.type ?? profileType} initialNote={saveTarget?.note ?? ''}
+        open={saveTarget !== null}
+        onClose={() => setSaveTarget(null)}
+        type={saveTarget?.type ?? profileType}
+        initialName={suggestNextProfileName(saveTarget?.loaded ?? null)}
+        initialNote={saveTarget?.note ?? ''}
         onSave={(name, note) => (saveTarget ? saveAsNew(saveTarget.type, saveTarget.handle, name, note) : Promise.resolve(false))}
       />
 

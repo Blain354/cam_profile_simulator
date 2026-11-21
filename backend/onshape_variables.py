@@ -63,6 +63,7 @@ VALUES = {
     "tube_od": ("Tube OD", "mm"),
     "member_width": ("Bar width", "mm"),
     "member_thickness": ("Bar thickness", "mm"),
+    "member_depth": ("Depth, out of plane", "mm"),
     # Derived by the simulation.
     "link_length": ("Link actually used (solved when the height is fixed)", "mm"),
     "pivot_height_y0": ("Carriage pivot height at Y = 0", "mm"),
@@ -108,6 +109,10 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
 # in the same document and branch as the table; ONSHAPE_LINKAGE_MEASURED (same JSON shape) replaces a kind's names.
 DEFAULT_MEASURED: dict[str, dict[str, str]] = {
     "pendulum": {"tube_center_x": "pend_CALC_tube_center"},
+    "compliant": {
+        "tube_center_x": "pend_CALC_tube_center",
+        "member_depth": "pend_bar_thickness",
+    },
 }
 # Written values carry 4 decimals and the slider moves by 0.05 mm: a match within a micrometre is the same input.
 MEASURE_TOLERANCE_MM = 0.001
@@ -185,8 +190,11 @@ def mapping_for(kind: str) -> dict[str, str]:
             custom = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise LinkageOnshapeError(f"ONSHAPE_LINKAGE_MAPPING is not valid JSON: {exc}") from exc
-        if isinstance(custom, dict) and isinstance(custom.get(kind), dict):
-            mapping = {str(k): str(v) for k, v in custom[kind].items()}
+        if isinstance(custom, dict):
+            if isinstance(custom.get(kind), dict):
+                mapping = {str(k): str(v) for k, v in custom[kind].items()}
+            elif kind == "compliant" and isinstance(custom.get("pendulum"), dict):
+                mapping = {str(k): str(v) for k, v in custom["pendulum"].items()}
     unknown = sorted(set(mapping.values()) - set(VALUES))
     if unknown:
         raise LinkageOnshapeError(f"ONSHAPE_LINKAGE_MAPPING names values the simulator does not have: {', '.join(unknown)}")
@@ -256,8 +264,11 @@ def measured_for(kind: str) -> dict[str, str]:
             custom = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise LinkageOnshapeError(f"ONSHAPE_LINKAGE_MEASURED is not valid JSON: {exc}") from exc
-        if isinstance(custom, dict) and isinstance(custom.get(kind), dict):
-            mapping = {str(k): str(v) for k, v in custom[kind].items()}
+        if isinstance(custom, dict):
+            if isinstance(custom.get(kind), dict):
+                mapping = {str(k): str(v) for k, v in custom[kind].items()}
+            elif kind == "compliant" and isinstance(custom.get("pendulum"), dict):
+                mapping = {str(k): str(v) for k, v in custom["pendulum"].items()}
     for key, var in mapping.items():
         if key not in VALUES or not _VARIABLE.match(var):
             raise LinkageOnshapeError(f"Measured input {key!r} -> {var!r} is not usable: unknown simulator value or odd variable name.")

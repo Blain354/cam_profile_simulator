@@ -18,14 +18,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from simulation import SimulationParams, compute_simulation, SolverParams, SolverResult, solve_cam_profile
-from storage import LINKAGE_KINDS, PROFILE_TYPES, LinkageProfileStorage, ProfileStorage, default_db_path
+from storage import (
+    LINKAGE_KINDS, PROFILE_TYPES, CompliantExperimentStorage, LinkageProfileStorage,
+    ProfileStorage, default_db_path,
+)
 
 import onshape_export
 import onshape_variables
 from legacy_units import legacy_psi_to_kpa
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
 from compliant_bars import compute_compliant, solve_compliant
+from compliant_bars import _constraints_from_mapping as _compliant_constraints
 from compliant_bars import _params_from_mapping as _compliant_params
+from compliant_solver import CompliantSolveJobManager
 import tube_model as tube_law
 
 
@@ -42,6 +47,8 @@ _MAX_SOLVE_CANDIDATE_SETS = 6
 # linkage_storage only serves the custom materials, still in linkage_profiles.
 profiles = ProfileStorage(default_db_path())
 linkage_storage = LinkageProfileStorage(default_db_path())
+compliant_experiments = CompliantExperimentStorage(default_db_path())
+compliant_jobs = CompliantSolveJobManager(compliant_experiments)
 
 app.add_middleware(
     CORSMiddleware,
@@ -902,13 +909,16 @@ def linkage_simulate(req: LinkageRequest):
 
 @app.post("/api/compliant/simulate")
 def compliant_simulate(payload: dict = Body(...)):
-    return dataclasses.asdict(compute_compliant(_compliant_params(payload)))
+    constraints = _compliant_constraints(payload.get("constraints"))
+    return dataclasses.asdict(compute_compliant(_compliant_params(payload), constraints=constraints))
 
 
 class CompliantSolveBody(BaseModel):
     params: dict
     bounds: dict = Field(default_factory=dict)
     budget: int = Field(36, ge=1, le=80)
+    constraints: Optional[dict] = None
+    pivot_side: str = Field("current", pattern="^(current|normal|inverted|both)$")
 
 
 @app.post("/api/compliant/solve")
@@ -917,10 +927,126 @@ def compliant_solve(body: CompliantSolveBody):
     for key, pair in body.bounds.items():
         if isinstance(pair, (list, tuple)) and len(pair) == 2:
             bounds[key] = (float(pair[0]), float(pair[1]))
+    constraints = _compliant_constraints(body.constraints)
     try:
-        return solve_compliant(_compliant_params(body.params), bounds, budget=body.budget)
+        return solve_compliant(
+            _compliant_params(body.params),
+            bounds,
+            budget=body.budget,
+            constraints=constraints,
+            pivot_side=body.pivot_side,
+        )
     except tube_law.TubeModelError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.post("/api/compliant/onshape/measured")
+def compliant_onshape_measured():
+    """The inputs the CAD decides for compliant bars, as Onshape computes them now. Reads only."""
+    return _onshape_variables(lambda: onshape_variables.read_measured("compliant"))
+
+
+class CompliantSolveJobBody(BaseModel):
+    params: dict
+    bounds: dict = Field(default_factory=dict)
+    constraints: Optional[dict] = None
+    pivot_side: str = Field("current", pattern="^(current|normal|inverted|both)$")
+    goal: str = Field("dx_at_025", pattern="^(dx_at_025|min_open_stroke|flow_slope|trajectory_target)$")
+    goal_weights: Optional[dict] = None
+    method: str = Field("hybrid", pattern="^(hybrid|brute_force|evolutionary|local_refine)$")
+    method_params: Optional[dict] = None
+    time_budget_s: float = Field(30.0, ge=1.0, le=3600.0)
+    name: Optional[str] = None
+    note: str = ""
+
+
+class CompliantExperimentPatchBody(BaseModel):
+    name: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/api/compliant/solve/jobs")
+def compliant_solve_job_start(body: CompliantSolveJobBody):
+    bounds = {}
+    for key, pair in body.bounds.items():
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            bounds[key] = (float(pair[0]), float(pair[1]))
+    return compliant_jobs.start_job(
+        params_dict=body.params,
+        bounds=bounds,
+        constraints_dict=body.constraints,
+        pivot_side=body.pivot_side,
+        goal=body.goal,
+        goal_weights=body.goal_weights,
+        method=body.method,
+        method_params=body.method_params,
+        time_budget_s=body.time_budget_s,
+        name=body.name,
+        note=body.note,
+    )
+
+
+@app.get("/api/compliant/solve/jobs/{job_id}")
+def compliant_solve_job_status(job_id: str):
+    job = compliant_jobs.get_job(job_id)
+    if job is not None:
+        return job
+    exp = compliant_experiments.get_experiment(job_id)
+    if exp is not None:
+        return {
+            "job_id": exp["id"],
+            "experiment_id": exp["id"],
+            "name": exp["name"],
+            "note": exp["note"],
+            "status": exp["status"],
+            "goal": exp["goal"],
+            "time_budget_s": exp["time_budget_s"],
+            "summary": exp["summary"],
+            "found": exp["best_params"] is not None,
+            "params": exp["best_params"],
+            "result": exp["best_result"],
+            "runners": exp["summary"].get("runners", []),
+            "message": "Loaded from saved experiment.",
+            "error": None,
+        }
+    raise HTTPException(status_code=404, detail="Solve job not found.")
+
+
+@app.post("/api/compliant/solve/jobs/{job_id}/cancel")
+def compliant_solve_job_cancel(job_id: str):
+    ok = compliant_jobs.cancel_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Solve job not found.")
+    return {"cancelled": True, "job_id": job_id}
+
+
+@app.get("/api/compliant/experiments")
+def compliant_experiments_list():
+    return {"experiments": compliant_experiments.list_experiments()}
+
+
+@app.get("/api/compliant/experiments/{exp_id}")
+def compliant_experiments_get(exp_id: str):
+    exp = compliant_experiments.get_experiment(exp_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="Experiment not found.")
+    return exp
+
+
+@app.patch("/api/compliant/experiments/{exp_id}")
+def compliant_experiments_patch(exp_id: str, body: CompliantExperimentPatchBody):
+    ok = compliant_experiments.update_meta(exp_id, name=body.name, note=body.note)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Experiment not found.")
+    return {"updated": True, "id": exp_id}
+
+
+@app.delete("/api/compliant/experiments/{exp_id}")
+def compliant_experiments_delete(exp_id: str):
+    ok = compliant_experiments.delete_experiment(exp_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Experiment not found.")
+    return {"deleted": True, "id": exp_id}
 
 
 @app.post("/api/linkage/optimize")
@@ -1037,8 +1163,10 @@ def linkage_profile_delete(kind: str, name: str):
 # printed parts; custom ones are kept with the profiles, under a kind no linkage uses.
 
 BUILTIN_MATERIALS = {
-    "PETG": {"modulus_mpa": 2500.0, "strength_mpa": 40.0},
-    "PLA": {"modulus_mpa": 3500.0, "strength_mpa": 50.0},
+    "PETG Basic (bamb)": {"modulus_mpa": 1950.0, "strength_mpa": 75.0},
+    "PETG Translucent (bamb)": {"modulus_mpa": 1610.0, "strength_mpa": 68.0},
+    "PLA Basic (bamb)": {"modulus_mpa": 2750.0, "strength_mpa": 76.0},
+    "ABS (bamb)": {"modulus_mpa": 1880.0, "strength_mpa": 62.0},
 }
 _MATERIAL_KIND = "material"
 

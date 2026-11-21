@@ -488,7 +488,7 @@ class LinkageProfileStorage:
 # once and then left as a frozen copy; linkage_profiles still holds the custom
 # materials (kind "material"), which are not profiles.
 
-PROFILE_TYPES = ("cam", "cam-finder", "elbow", "lever", "pendulum")
+PROFILE_TYPES = ("cam", "cam-finder", "elbow", "lever", "pendulum", "compliant")
 _MIGRATION_KEY = "profiles_migrated_v1"
 
 
@@ -756,3 +756,166 @@ class ProfileStorage:
                     (_default_key(profile_type), name),
                 )
             conn.commit()
+
+
+class CompliantExperimentStorage:
+    """SQLite persistence for Compliant Bars solving experiments."""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS compliant_solve_experiments (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    goal TEXT NOT NULL DEFAULT 'dx_at_025',
+                    time_budget_s REAL NOT NULL DEFAULT 60.0,
+                    elapsed_s REAL NOT NULL DEFAULT 0.0,
+                    tested INTEGER NOT NULL DEFAULT 0,
+                    feasible INTEGER NOT NULL DEFAULT 0,
+                    best_score REAL,
+                    request_json TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    best_params_json TEXT,
+                    best_result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def save_experiment(
+        self,
+        exp_id: str,
+        name: str,
+        note: str,
+        status: str,
+        goal: str,
+        time_budget_s: float,
+        elapsed_s: float,
+        tested: int,
+        feasible: int,
+        best_score: Optional[float],
+        request: Dict[str, Any],
+        summary: Dict[str, Any],
+        best_params: Optional[Dict[str, Any]],
+        best_result: Optional[Dict[str, Any]],
+    ) -> str:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO compliant_solve_experiments (
+                    id, name, note, status, goal, time_budget_s, elapsed_s,
+                    tested, feasible, best_score, request_json, summary_json,
+                    best_params_json, best_result_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    note = excluded.note,
+                    status = excluded.status,
+                    elapsed_s = excluded.elapsed_s,
+                    tested = excluded.tested,
+                    feasible = excluded.feasible,
+                    best_score = excluded.best_score,
+                    summary_json = excluded.summary_json,
+                    best_params_json = excluded.best_params_json,
+                    best_result_json = excluded.best_result_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    exp_id,
+                    name,
+                    note,
+                    status,
+                    goal,
+                    float(time_budget_s),
+                    float(elapsed_s),
+                    int(tested),
+                    int(feasible),
+                    float(best_score) if best_score is not None else None,
+                    json.dumps(request, ensure_ascii=False),
+                    json.dumps(summary, ensure_ascii=False),
+                    json.dumps(best_params, ensure_ascii=False) if best_params is not None else None,
+                    json.dumps(best_result, ensure_ascii=False) if best_result is not None else None,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return exp_id
+
+    def list_experiments(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, note, status, goal, time_budget_s, elapsed_s,
+                       tested, feasible, best_score, created_at, updated_at
+                FROM compliant_solve_experiments
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_experiment(self, exp_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM compliant_solve_experiments WHERE id = ?",
+                (exp_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "note": row["note"],
+            "status": row["status"],
+            "goal": row["goal"],
+            "time_budget_s": row["time_budget_s"],
+            "elapsed_s": row["elapsed_s"],
+            "tested": row["tested"],
+            "feasible": row["feasible"],
+            "best_score": row["best_score"],
+            "request": json.loads(row["request_json"]),
+            "summary": json.loads(row["summary_json"]),
+            "best_params": json.loads(row["best_params_json"]) if row["best_params_json"] else None,
+            "best_result": json.loads(row["best_result_json"]) if row["best_result_json"] else None,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def update_meta(self, exp_id: str, name: Optional[str] = None, note: Optional[str] = None) -> bool:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute("SELECT name, note FROM compliant_solve_experiments WHERE id = ?", (exp_id,)).fetchone()
+            if row is None:
+                return False
+            new_name = name.strip() if isinstance(name, str) and name.strip() else row["name"]
+            new_note = note if isinstance(note, str) else row["note"]
+            cur = conn.execute(
+                "UPDATE compliant_solve_experiments SET name = ?, note = ?, updated_at = ? WHERE id = ?",
+                (new_name, new_note, now, exp_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def delete_experiment(self, exp_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM compliant_solve_experiments WHERE id = ?", (exp_id,))
+            conn.commit()
+            return cur.rowcount > 0

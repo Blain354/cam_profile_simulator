@@ -1,290 +1,224 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Line, LineChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { Ref } from 'react';
 import { Button } from '@blain-projects/ui';
-import { Pause, Play, Settings } from 'lucide-react';
-import { FlowParticles, FlowParticlesSwitch } from './FlowParticles';
-import { sideBore, tubeProfile } from './lib/tubeSide';
+import { RefreshCw, Settings, Target } from 'lucide-react';
 import { useTubeSweep } from './lib/tubeSweep';
-import type { TubeSweep } from './lib/tubeSweep';
-import { Accordion, AccordionScope, ParameterSlider, StatRow, apiFetch } from './components';
+import { sameDomainSettings } from './lib/chartDomain';
+import { formatKpa } from './lib/pressure';
+import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
+import type { ProfileHandle, ProfileState } from './lib/profiles';
+import { Accordion, AccordionScope, ParameterSlider, apiFetch } from './components';
 import type { ChartDomainSettings } from './components';
-import { ChartCard } from './ChartCard';
-import { chartDomain } from './lib/chartDomain';
-import { TubeModelControls } from './TubeModel';
-import type { TubeModel } from './lib/tubeModel';
 import type { SubTab } from './SubTabs';
+import {
+  BUILTIN_MATERIALS, COMPLIANT_DEFAULTS, CONTEXT_VAR_KEYS, LIMITS, LOAD_FACTOR,
+  MEMBERS, MOTOR_RPM, SCREW_PITCH_MM, SHAPE_KEYS, SOLVER_METHOD_META, STORE, defaultQuadrantMap,
+  effectivePinchY, fromCompliantProfilePayload, loadStore, mm,
+} from './compliant/types';
+import type {
+  ChartScaleSettings, CompliantChartKey, CompliantChartSettings, CompliantParams, CompliantResult,
+  ContextToggleKey, ContextVarKey, HoveredBoundTarget, Material, QuadrantConfig, QuadrantKey,
+  QuadrantMap, Runner, ShapeKey, SolveExperimentSummary, SolveJobState, SolverConstraints,
+  SolverGoalConfig, SolverMethodConfig,
+} from './compliant/types';
+import { CompliantCharts } from './compliant/CompliantCharts';
+import { CompliantSchematic } from './compliant/CompliantSchematic';
+import {
+  ContextControls, FixedParametersSections, ResultsAccordion,
+  SolveExperimentsList, SolverConstraintsContent,
+  SolverRunners, SplineBoundsList,
+} from './compliant/CompliantControls';
+import type { MeasureState } from './compliant/CompliantControls';
+import { SolverModal } from './compliant/SolverModal';
 
-/** Shape knobs, in the same order and with the same defaults as backend/compliant_bars.py. */
-export const COMPLIANT_DEFAULTS = {
-  anchor_distance: 4.8,
-  junction_x: -5.5,
-  junction_y: 12,
-  pinch_y: 10.5,
-  l_u1: 0.35, l_v1: -0.8, l_u2: 0.65, l_v2: -0.8,
-  r_u1: 0.35, r_v1: 0.6, r_u2: 0.65, r_v2: 0.4,
-  f_u1: 0.35, f_v1: 0.45, f_u2: 0.65, f_v2: 0.35,
-  l_thickness: 1, r_thickness: 0.9, f_thickness: 1,
-  closed_carriage_height: 8,
-  pivot_offset: 4,
-  pivot_inverted: false,
-  stroke: 1.5,
-  preload: 0.1,
-  member_depth: 3,
-  member_modulus_mpa: 2500,
-  member_strength_mpa: 40,
-  carriage_pin_diameter: 1.5,
-  tube_center_x: 8,
-  tube_id: 2,
-  tube_od: 3,
-  input_pressure_kpa: 100,
-  compliance: 0.7,
-  tube_model: 'simple' as TubeModel,
-  tube_shore_a: 50,
-};
+export { COMPLIANT_DEFAULTS };
+export type { CompliantParams };
 
-export type CompliantParams = typeof COMPLIANT_DEFAULTS;
-
-const SHAPE_KEYS = [
-  'anchor_distance', 'junction_x', 'junction_y', 'pinch_y',
-  'l_u1', 'l_v1', 'l_u2', 'l_v2', 'r_u1', 'r_v1', 'r_u2', 'r_v2',
-  'f_u1', 'f_v1', 'f_u2', 'f_v2', 'l_thickness', 'r_thickness', 'f_thickness',
-] as const;
-
-type ShapeKey = typeof SHAPE_KEYS[number];
-type Member = 'l' | 'r' | 'f';
-type Pt = [number, number];
-
-const LIMITS: Record<ShapeKey, { min: number; max: number; step: number; label: string }> = {
-  anchor_distance: { min: -2, max: 12, step: 0.05, label: 'Anchor distance' },
-  junction_x: { min: -12, max: 8, step: 0.05, label: 'Junction x' },
-  junction_y: { min: 2, max: 22, step: 0.05, label: 'Junction y' },
-  pinch_y: { min: 1, max: 22, step: 0.05, label: 'Pinch height' },
-  l_u1: { min: 0.05, max: 0.95, step: 0.01, label: 'Handle 1 along' },
-  l_v1: { min: -8, max: 8, step: 0.05, label: 'Handle 1 side' },
-  l_u2: { min: 0.05, max: 0.95, step: 0.01, label: 'Handle 2 along' },
-  l_v2: { min: -8, max: 8, step: 0.05, label: 'Handle 2 side' },
-  r_u1: { min: 0.05, max: 0.95, step: 0.01, label: 'Handle 1 along' },
-  r_v1: { min: -8, max: 8, step: 0.05, label: 'Handle 1 side' },
-  r_u2: { min: 0.05, max: 0.95, step: 0.01, label: 'Handle 2 along' },
-  r_v2: { min: -8, max: 8, step: 0.05, label: 'Handle 2 side' },
-  f_u1: { min: 0.05, max: 0.95, step: 0.01, label: 'Handle 1 along' },
-  f_v1: { min: -8, max: 8, step: 0.05, label: 'Handle 1 side' },
-  f_u2: { min: 0.05, max: 0.95, step: 0.01, label: 'Handle 2 along' },
-  f_v2: { min: -8, max: 8, step: 0.05, label: 'Handle 2 side' },
-  l_thickness: { min: 0.3, max: 3, step: 0.05, label: 'Thickness' },
-  r_thickness: { min: 0.3, max: 3, step: 0.05, label: 'Thickness' },
-  f_thickness: { min: 0.3, max: 3, step: 0.05, label: 'Thickness' },
-};
-
-const MEMBERS: { id: Member; title: string; color: string }[] = [
-  { id: 'l', title: 'Member L', color: '#f59e0b' },
-  { id: 'r', title: 'Member R', color: '#60a5fa' },
-  { id: 'f', title: 'Foot', color: '#34d399' },
-];
-
-const STORE = 'cam-sim.compliant.v1';
-/** Same motor the other tabs start from, so Oscillate runs at the same carriage speed. */
-const MOTOR_RPM = 100;
-const SCREW_PITCH_MM = 0.5;
-const LOAD_FACTOR = 0.85;
-
-interface Line {
-  x: number[]; y: number[];
-  x_per_y: number[]; y_per_y: number[];
-  x_per_n: number[]; y_per_n: number[];
-  thickness: number;
+interface MeasuredValue {
+  key: keyof CompliantParams;
+  variable: string;
+  label: string;
+  unit: string;
+  value: number;
 }
 
-interface CompliantResult {
-  feasible: boolean;
-  passes: boolean;
-  message: string;
-  Y_positions: number[];
-  flow_a: (number | null)[];
-  flow_slope_mean: number | null;
-  flow_slope_max: number | null;
-  max_stress_mpa: number | null;
-  stress_margin: number | null;
-  plastic_ok: boolean;
-  shell_ok: boolean;
-  pivot_ok: boolean;
-  shell_clearance_mm: number | null;
-  pivot_clearance_mm: number | null;
-  max_rotation_deg: number | null;
-  wall_x: number;
-  pivot_height_y0: number;
-  pinch_x: number;
-  travel_sign: number;
-  force_a: (number | null)[];
-  lines: Record<Member, Line>;
-  anchor: Pt;
-  junction: Pt;
-  pinch: Pt;
-  pivot: Pt;
-}
-
-interface Runner {
-  slope: number | null;
-  max_stress_mpa: number | null;
-  shell_clearance_mm: number | null;
-  pivot_clearance_mm: number | null;
-  params: Partial<CompliantParams>;
-}
-
-function loadStore(): { params: CompliantParams; bounds: Record<ShapeKey, [number, number]> } {
-  const bounds = defaultBounds();
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORE) ?? 'null');
-    if (raw && typeof raw === 'object') {
-      const params = { ...COMPLIANT_DEFAULTS, ...raw.params };
-      params.tube_model = raw.params?.tube_model === 'fem' ? 'fem' : 'simple';
-      for (const key of SHAPE_KEYS) {
-        const pair = raw.bounds?.[key];
-        if (Array.isArray(pair) && pair.length === 2) bounds[key] = [Number(pair[0]), Number(pair[1])];
-      }
-      return { params, bounds };
-    }
-  } catch { /* keep defaults */ }
-  return { params: { ...COMPLIANT_DEFAULTS }, bounds };
-}
-
-function defaultBounds(): Record<ShapeKey, [number, number]> {
-  const out = {} as Record<ShapeKey, [number, number]>;
-  for (const key of SHAPE_KEYS) {
-    const value = COMPLIANT_DEFAULTS[key] as number;
-    const { min, max } = LIMITS[key];
-    const span = key.endsWith('thickness') ? 0.4 : key.includes('_u') ? 0.15 : key.includes('_v') ? 1.5 : 1.5;
-    out[key] = [Math.max(min, value - span), Math.min(max, value + span)];
-  }
-  return out;
-}
-
-function leftNormal(s: Pt, e: Pt): { n: Pt; length: number } {
-  const dx = e[0] - s[0], dy = e[1] - s[1];
-  const length = Math.hypot(dx, dy);
-  if (length < 1e-9) return { n: [0, 1], length: 0 };
-  return { n: [-dy / length, dx / length], length };
-}
-
-function bezier(s: Pt, e: Pt, u1: number, v1: number, u2: number, v2: number, n = 13): Pt[] {
-  const { n: normal } = leftNormal(s, e);
-  const h = (u: number, v: number): Pt => [
-    s[0] + u * (e[0] - s[0]) + v * normal[0],
-    s[1] + u * (e[1] - s[1]) + v * normal[1],
+/** The import window's preview of a compliant bars profile: its main dimensions and solver constraints. */
+export function CompliantProfilePreview({ payload }: { payload: Record<string, unknown> }) {
+  const { params: p, constraints: c } = fromCompliantProfilePayload(payload);
+  const rows: [string, string][] = [
+    ['Anchor distance', mm(p.anchor_distance)],
+    ['Junction', `${p.junction_x.toFixed(2)}, ${p.junction_y.toFixed(2)} mm`],
+    ['Pinch height', mm(p.pinch_y)],
+    ['Thickness L / R / Foot', `${p.l_thickness.toFixed(2)} / ${p.r_thickness.toFixed(2)} / ${p.f_thickness.toFixed(2)} mm`],
+    ['Carriage height', mm(p.closed_carriage_height)],
+    ['Pivot offset', mm(p.pivot_offset)],
+    ['Pivot side', p.pivot_inverted ? 'Inverted (tube side)' : 'Normal (far side)'],
+    ['Stroke', mm(p.stroke, 2)],
+    ['Preload', mm(p.preload)],
+    ['Depth', mm(p.member_depth)],
+    ['Tube', `${p.tube_id.toFixed(2)} × ${p.tube_od.toFixed(2)} mm`],
+    ['Pressure', `${formatKpa(p.input_pressure_kpa)} kPa`],
   ];
-  let a = u1, b = u2, va = v1, vb = v2;
-  if (a > b) { a = u2; b = u1; va = v2; vb = v1; }
-  const p1 = h(a, va), p2 = h(b, vb);
-  const pts: Pt[] = [];
-  for (let i = 0; i < n; i++) {
-    const t = i / (n - 1), o = 1 - t;
-    pts.push([
-      o ** 3 * s[0] + 3 * o ** 2 * t * p1[0] + 3 * o * t ** 2 * p2[0] + t ** 3 * e[0],
-      o ** 3 * s[1] + 3 * o ** 2 * t * p1[1] + 3 * o * t ** 2 * p2[1] + t ** 3 * e[1],
-    ]);
-  }
-  return pts;
-}
-
-function pinchX(p: CompliantParams): number {
-  const wall = p.tube_center_x + p.tube_od / 2;
-  const opening = p.tube_model === 'simple' ? p.compliance * p.input_pressure_kpa * 1e-3 : 0;
-  const closed = (p.tube_od - p.tube_id) - opening;
-  return (closed - p.preload) - wall + p.f_thickness / 2;
-}
-
-function interp(y: number, ys: number[], vs: (number | null)[]): number {
-  if (!ys.length) return 0;
-  for (let i = 0; i < ys.length - 1; i++) {
-    const a = ys[i], b = ys[i + 1];
-    if ((y - a) * (y - b) <= 0 && a !== b) {
-      const t = (y - a) / (b - a);
-      const va = vs[i] ?? 0, vb = vs[i + 1] ?? 0;
-      return va + t * (vb - va);
-    }
-  }
-  return vs[0] ?? 0;
-}
-
-function deflected(line: Line, y: number, force: number): Pt[] {
-  return line.x.map((x, i) => [
-    x + line.x_per_y[i] * y + line.x_per_n[i] * force,
-    line.y[i] + line.y_per_y[i] * y + line.y_per_n[i] * force,
-  ] as Pt);
-}
-
-const mm = (v: number | null | undefined, digits = 2) => (v == null || !Number.isFinite(v) ? '—' : `${v.toFixed(digits)} mm`);
-
-/** The foot sample nearest that wall. A constant thickness makes the nearest centre the contact. */
-function nearestToWall(pts: Pt[], sign: 1 | -1): Pt {
-  return pts.reduce((best, p) => (sign * p[0] > sign * best[0] ? p : best));
-}
-
-/** Same side-view tube as the pendulum: the foot is a round pin, the silicone climbs back to its diameter beside it. */
-function pinchedTube({
-  sign, name, contact, rPin, wall, od, id, top, flow, maxFlow, sweep, stale,
-}: {
-  sign: 1 | -1; name: string; contact: Pt; rPin: number; wall: number; od: number; id: number;
-  top: number; flow: number; maxFlow: number; sweep: TubeSweep | null; stale: boolean;
-}) {
-  const frac = maxFlow > 0 ? Math.min(Math.max(flow, 0) / maxFlow, 1) : 0;
-  const fromWall = wall - sign * contact[0];
-  const ends: [Pt, Pt] = [[fromWall, contact[1]], [fromWall, contact[1]]];
-  const profile = tubeProfile(ends, rPin, od, -1, top + 1, sweep ? od : undefined);
-  const bore = sideBore(profile, od, id, sweep);
-  const xy = (u: number, v: number) => `${(sign * (wall - u)).toFixed(3)},${(-v).toFixed(3)}`;
-  const ring = (inner: number[], outer: number[]) =>
-    [...profile.map(([, v], i) => xy(outer[i], v)), ...profile.map(([, v], i) => xy(inner[i], v)).reverse()].join(' ');
-  const cx = sign * (wall - od / 2);
+  const constraintRows: [string, string][] = [
+    ['Material', `${p.member_modulus_mpa} / ${p.member_strength_mpa} MPa`],
+    ['Ceiling margin', mm(c.pinch_ceiling_margin_mm)],
+    ['Floor margin', mm(c.pinch_floor_margin_mm)],
+    ['Shell clearance', mm(c.min_shell_clearance_mm)],
+    ['Pivot clearance', mm(c.min_pivot_clearance_mm)],
+    ['Max rotation', `${c.max_rotation_deg}°`],
+    ['Max stress factor', `${Math.round((c.stress_limit_factor ?? 1) * 100)}% (${(p.member_strength_mpa * (c.stress_limit_factor ?? 1)).toFixed(1)} MPa)`],
+  ];
+  const row = (label: string, value: string, tone = 'text-neutral-200') => (
+    <div key={label} className="flex justify-between gap-4">
+      <span className="text-[11px] text-neutral-400">{label}</span>
+      <span className={`text-[11px] font-mono ${tone}`}>{value}</span>
+    </div>
+  );
   return (
-    <g>
-      {sweep && <title>{`Tube ${name.trim()[0]}, side view: the wall follows the foot, and the open bore at each station is the FEM section's at the local foot-to-wall distance, so it shuts before the wall stops moving. The shoulders on each side of the foot (about one OD) are schematic.${stale ? ' The previous tube, shown while the new one solves.' : ''}`}</title>}
-      <polygon points={ring(profile.map(() => 0), profile.map(([h]) => h))} fill="var(--bui-text)" fillOpacity={0.16} stroke="var(--bui-text)" strokeWidth={0.05} strokeLinejoin="round" />
-      <polygon points={ring(bore.map((b) => b[1]), bore.map((b) => b[2]))} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
-      <FlowParticles view="side" frac={frac} bore={bore} direction={sign < 0 ? -1 : 1}
-        radius={Math.min(0.16, id / 6)} color="var(--bui-text)" transform={`matrix(${-sign} 0 0 -1 ${sign * wall} 0)`} />
-      <line x1={cx} y1={-top - 1} x2={cx} y2={1} stroke="var(--bui-text)" strokeOpacity={0.5} strokeWidth={0.04} strokeDasharray="0.5 0.12 0.1 0.12" />
-      <text x={cx} y={-(top + 1.1)} fill="var(--bui-text)" fontSize={0.62} fontWeight="bold" textAnchor="middle"
-        stroke="var(--bui-surface)" strokeWidth={0.18} paintOrder="stroke">{name}</text>
-    </g>
+    <div className="grid h-full min-h-0 grid-cols-1 gap-4 overflow-y-auto p-4 md:grid-cols-2">
+      <div>
+        <div className="text-[10px] text-neutral-500 font-bold mb-2">Dimensions</div>
+        <div className="grid grid-cols-1 gap-2">{rows.map(([l, v]) => row(l, v))}</div>
+      </div>
+      <div>
+        <div className="text-[10px] text-neutral-500 font-bold mb-2">Material & constraints</div>
+        <div className="grid grid-cols-1 gap-2">{constraintRows.map(([l, v]) => row(l, v, 'text-amber-300'))}</div>
+      </div>
+    </div>
   );
 }
 
-function shapeLabel(key: ShapeKey): string {
-  const who = key.startsWith('l_') ? 'L' : key.startsWith('r_') ? 'R' : key.startsWith('f_') ? 'foot' : '';
-  return who ? `${LIMITS[key].label}, ${who}` : LIMITS[key].label;
-}
-
-export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; onOpenExplorer: () => void }) {
+export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChange, profileRef }: {
+  mode: SubTab;
+  onOpenExplorer: () => void;
+  /** The header pill's view of the loaded profile (type = 'compliant'). */
+  onProfileStateChange?: (state: ProfileState) => void;
+  profileRef?: Ref<ProfileHandle>;
+}) {
   const [initial] = useState(loadStore);
   const [params, setParams] = useState<CompliantParams>(initial.params);
   const [bounds, setBounds] = useState(initial.bounds);
+  const [quadrantMap, setQuadrantMap] = useState<QuadrantMap>(initial.quadrantMap);
+  const [contextBounds, setContextBounds] = useState(initial.contextBounds);
+  const [contextFixed, setContextFixed] = useState(initial.contextFixed);
+  const [constraints, setConstraints] = useState<SolverConstraints>(initial.constraints);
+  const [chartSettings, setChartSettings] = useState(initial.chartSettings);
+  const [chartScales, setChartScales] = useState<ChartScaleSettings>(initial.chartScales);
+  const [activeProfile, setActiveProfile] = useState<string | null>(initial.profile);
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [savedChartSettings, setSavedChartSettings] = useState<CompliantChartSettings | null>(null);
+  const [solverOpenSignal, setSolverOpenSignal] = useState(0);
+
   const [result, setResult] = useState<CompliantResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [solving, setSolving] = useState(false);
+  const [goalConfig, setGoalConfig] = useState<SolverGoalConfig>(initial.goalConfig);
+  const [methodConfig, setMethodConfig] = useState<SolverMethodConfig>(initial.methodConfig);
+  const [timeBudgetS, setTimeBudgetS] = useState<number>(initial.timeBudgetS);
+  const [activeJob, setActiveJob] = useState<SolveJobState | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<'setup' | 'live'>('setup');
+  const [experiments, setExperiments] = useState<SolveExperimentSummary[]>([]);
+  const [hoveredBound, setHoveredBound] = useState<HoveredBoundTarget>(null);
   const [runners, setRunners] = useState<Runner[]>([]);
   const [solveNote, setSolveNote] = useState<string | null>(null);
+
+  const [materials, setMaterials] = useState<Material[]>(BUILTIN_MATERIALS);
+  const [measure, setMeasure] = useState<MeasureState>({ busy: false, ok: true, text: null });
+
   const [y, setY] = useState(0);
   const [playing, setPlaying] = useState(false);
   const motion = useRef({ d: 0, speed: 0, stroke: COMPLIANT_DEFAULTS.stroke });
   const { drawn: tubeSweep, stale: tubeStale } = useTubeSweep(params);
+
   const yPose = Math.min(params.stroke, Math.max(-params.stroke, y));
   const loadedRpm = MOTOR_RPM * LOAD_FACTOR;
   const carriageSpeed = loadedRpm * SCREW_PITCH_MM / 60;
-  const [domain, setDomain] = useState<ChartDomainSettings>({ autoX: true, autoY: true, xMin: 0, xMax: 2, yMin: 0, yMax: 12 });
-  const svgRef = useRef<SVGSVGElement>(null);
-  const drag = useRef<null | { kind: 'anchor' } | { kind: 'junction' } | { kind: 'pinch' } | { kind: 'handle'; member: Member; index: 0 | 1 }>(null);
+  const wallX = result?.wall_x ?? params.tube_center_x + params.tube_od / 2;
+
+  const hasFreeContext = CONTEXT_VAR_KEYS.some((k) => !contextFixed[k]) || !contextFixed.pivot_inverted;
 
   useEffect(() => {
-    try { localStorage.setItem(STORE, JSON.stringify({ params, bounds })); } catch { /* ignore */ }
-  }, [params, bounds]);
+    try {
+      localStorage.setItem(STORE, JSON.stringify({
+        params, bounds, quadrantMap, goalConfig, methodConfig, timeBudgetS,
+        contextBounds, contextFixed, constraints, chartSettings, chartScales, profile: activeProfile,
+      }));
+    } catch { /* ignore */ }
+  }, [params, bounds, quadrantMap, goalConfig, methodConfig, timeBudgetS, contextBounds, contextFixed, constraints, chartSettings, chartScales, activeProfile]);
+
+  const snapshot = stableJson({ params, bounds, contextBounds, contextFixed, constraints });
+  const chartSettingsDirty = savedChartSettings != null
+    && (Object.keys(savedChartSettings) as CompliantChartKey[]).some((k) => !sameDomainSettings(chartSettings[k], savedChartSettings[k]));
+  const profileDirty = activeProfile != null && ((savedSnapshot != null && savedSnapshot !== snapshot) || chartSettingsDirty);
+
+  useReportProfileState({ name: activeProfile, dirty: profileDirty, canSave: true }, onProfileStateChange);
+
+  useEffect(() => {
+    const name = initial.profile;
+    if (!name) return;
+    let live = true;
+    getProfile('compliant', name).then((p) => {
+      if (!live) return;
+      const f = fromCompliantProfilePayload(p.payload);
+      setSavedSnapshot((prev) => prev ?? stableJson({
+        params: f.params, bounds: f.bounds, contextBounds: f.contextBounds, contextFixed: f.contextFixed, constraints: f.constraints,
+      }));
+      setSavedChartSettings((prev) => prev ?? f.chartSettings);
+    }).catch(() => { /* unknown: no marker */ });
+    return () => { live = false; };
+  }, [initial.profile]);
+
+  useImperativeHandle(profileRef, () => ({
+    type: 'compliant' as const,
+    getPayload: () => ({ params, bounds, quadrantMap, contextBounds, contextFixed, constraints, chartSettings, chartScales }),
+    apply: (profile) => {
+      const f = fromCompliantProfilePayload(profile.payload);
+      setPlaying(false);
+      setParams(f.params);
+      setBounds(f.bounds);
+      setQuadrantMap(f.quadrantMap ?? defaultQuadrantMap(f.params, f.bounds));
+      setContextBounds(f.contextBounds);
+      setContextFixed(f.contextFixed);
+      setConstraints(f.constraints);
+      setChartSettings(f.chartSettings);
+      if (f.chartScales) setChartScales(f.chartScales);
+      setSavedChartSettings(f.chartSettings);
+      setActiveProfile(profile.name);
+      setSavedSnapshot(stableJson({
+        params: f.params, bounds: f.bounds, contextBounds: f.contextBounds, contextFixed: f.contextFixed, constraints: f.constraints,
+      }));
+    },
+    markSaved: (name, _note, payload) => {
+      const f = fromCompliantProfilePayload(payload);
+      setActiveProfile(name);
+      setSavedSnapshot(stableJson({
+        params: f.params, bounds: f.bounds, contextBounds: f.contextBounds, contextFixed: f.contextFixed, constraints: f.constraints,
+      }));
+      setSavedChartSettings(f.chartSettings);
+    },
+    detach: () => {
+      setActiveProfile(null);
+      setSavedSnapshot(null);
+      setSavedChartSettings(null);
+    },
+  }));
+
+  useEffect(() => {
+    apiFetch('/api/linkage/materials')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (Array.isArray(data?.materials)) setMaterials(data.materials); })
+      .catch(() => { /* keep built-in materials */ });
+  }, []);
 
   useEffect(() => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
       apiFetch('/api/compliant/simulate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params), signal: ctrl.signal,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...params, constraints }),
+        signal: ctrl.signal,
       }).then(async (res) => {
         const data = await res.json().catch(() => null);
         if (!res.ok || !data?.lines) {
@@ -293,13 +227,99 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
         }
         setError(null);
         setResult(data as CompliantResult);
-      }).catch((err) => { if (err?.name !== 'AbortError') setError('The shape could not be solved.'); });
+      }).catch((err) => {
+        if (err?.name !== 'AbortError') setError('The shape could not be solved.');
+      });
     }, 160);
     return () => { clearTimeout(timer); ctrl.abort(); };
-  }, [params]);
+  }, [params, constraints]);
 
   const setShape = useCallback((key: ShapeKey, value: number) => {
-    setParams((prev) => ({ ...prev, [key]: value }));
+    setParams((prev) => {
+      if (key === 'pinch_y') {
+        const nextFromTop = Math.max(0, Number((2 * prev.closed_carriage_height - value).toFixed(2)));
+        setConstraints((c) => (c.target_pinch_from_top_mm != null ? { ...c, target_pinch_from_top_mm: nextFromTop } : c));
+      }
+      return { ...prev, [key]: value };
+    });
+  }, []);
+
+  const patchParams = useCallback((patch: Partial<CompliantParams>) => {
+    setParams((prev) => {
+      const next = { ...prev, ...patch };
+      if (patch.closed_carriage_height !== undefined && constraints.target_pinch_from_top_mm != null) {
+        next.pinch_y = Number((2 * patch.closed_carriage_height - constraints.target_pinch_from_top_mm).toFixed(2));
+      }
+      return next;
+    });
+  }, [constraints.target_pinch_from_top_mm]);
+
+  const toggleContextFixed = useCallback((key: ContextToggleKey, fixed: boolean) => {
+    setContextFixed((prev) => ({ ...prev, [key]: fixed }));
+    if (!fixed) setSolverOpenSignal((n) => n + 1);
+  }, []);
+
+  const setContextRange = useCallback((key: ContextVarKey, next: [number, number]) => {
+    setContextBounds((prev) => ({ ...prev, [key]: next }));
+  }, []);
+
+  const patchConstraints = useCallback((patch: Partial<SolverConstraints>) => {
+    setConstraints((prev) => ({ ...prev, ...patch }));
+    if (patch.target_pinch_from_top_mm !== undefined && patch.target_pinch_from_top_mm !== null) {
+      const fromTop = patch.target_pinch_from_top_mm;
+      setParams((prev) => ({
+        ...prev,
+        pinch_y: Number((2 * prev.closed_carriage_height - fromTop).toFixed(2)),
+      }));
+    }
+  }, []);
+
+  const setChartSetting = useCallback((key: CompliantChartKey, next: ChartDomainSettings) => {
+    setChartSettings((prev) => ({ ...prev, [key]: next }));
+  }, []);
+
+  const patchChartScales = useCallback((patch: Partial<ChartScaleSettings>) => {
+    setChartScales((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const refreshExperiments = useCallback(() => {
+    apiFetch('/api/compliant/experiments')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (Array.isArray(data?.experiments)) setExperiments(data.experiments); })
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  useEffect(() => {
+    refreshExperiments();
+  }, [refreshExperiments]);
+
+  const syncMeasured = useCallback(async (onlyKey?: keyof CompliantParams) => {
+    setMeasure({ busy: true, ok: true, text: null });
+    try {
+      const res = await apiFetch('/api/compliant/onshape/measured', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === 'string' ? data.detail : `HTTP ${res.status}`);
+      }
+      const allValues: MeasuredValue[] = Array.isArray(data?.values) ? data.values : [];
+      const values = onlyKey ? allValues.filter((v) => v.key === onlyKey) : allValues;
+      if (!data?.configured || values.length === 0) {
+        setMeasure({ busy: false, ok: false, text: 'No measured input is set up in Onshape.' });
+        return;
+      }
+      const patch = Object.fromEntries(values.map((v) => [v.key, Math.round(v.value * 1e4) / 1e4]));
+      setParams((prev) => ({ ...prev, ...patch }));
+      setMeasure({
+        busy: false,
+        ok: true,
+        text: values.map((v) => `${v.value.toFixed(4)} ${v.unit} from #${v.variable}`).join(', '),
+      });
+    } catch (err) {
+      setMeasure({ busy: false, ok: false, text: err instanceof Error ? err.message : 'Could not read Onshape.' });
+    }
   }, []);
 
   useEffect(() => {
@@ -333,327 +353,387 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
     setPlaying(!playing);
   };
 
-  const anchor: Pt = [-params.anchor_distance, 0];
-  const junction: Pt = [params.junction_x, params.junction_y];
-  const pivot: Pt = [params.pivot_inverted ? -params.pivot_offset : params.pivot_offset, params.closed_carriage_height];
-  const pinch: Pt = [result?.pinch_x ?? pinchX(params), params.pinch_y];
-  const wall = result?.wall_x ?? params.tube_center_x + params.tube_od / 2;
-  const h0 = result?.pivot_height_y0 ?? params.closed_carriage_height;
-  const ceiling = 2 * h0;
-  const force = result ? interp(yPose, result.Y_positions, result.force_a) : 0;
-  const restLines = useMemo(() => ({
-    l: bezier(anchor, junction, params.l_u1, params.l_v1, params.l_u2, params.l_v2),
-    r: bezier(junction, pivot, params.r_u1, params.r_v1, params.r_u2, params.r_v2),
-    f: bezier(junction, pinch, params.f_u1, params.f_v1, params.f_u2, params.f_v2),
-  }), [anchor[0], anchor[1], junction[0], junction[1], pivot[0], pivot[1], pinch[0], pinch[1], params]);
-  const lines = useMemo(() => {
-    if (!result?.lines) return restLines;
-    return {
-      l: deflected(result.lines.l, yPose, force),
-      r: deflected(result.lines.r, yPose, force),
-      f: deflected(result.lines.f, yPose, force),
-    };
-  }, [result, yPose, force, restLines]);
+  // Poll active background solve job while running
+  useEffect(() => {
+    if (!activeJob || activeJob.status !== 'running') return;
+    let alive = true;
+    const id = activeJob.job_id;
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiFetch(`/api/compliant/solve/jobs/${id}`);
+        if (!res.ok || !alive) return;
+        const data = (await res.json()) as SolveJobState;
+        if (!alive) return;
+        setActiveJob(data);
+        if (data.status !== 'running') {
+          setSolving(false);
+          setRunners(data.runners ?? []);
+          const s = data.summary;
+          setSolveNote(data.found
+            ? `Tested ${s?.tested ?? 0}. ${s?.feasible ?? 0} valid. Best ΔX₀.₂₅ ${s?.best_dx_at_025_mm?.toFixed(3) ?? '—'} mm.`
+            : `Tested ${s?.tested ?? 0}. None passed. ${data.message ?? ''}`);
+          if (data.found && data.params) {
+            setParams((prev) => ({ ...prev, ...data.params }));
+            if (data.result) setResult(data.result);
+          }
+          refreshExperiments();
+        }
+      } catch { /* retry next tick */ }
+    }, 500);
+    return () => { alive = false; clearInterval(interval); };
+  }, [activeJob?.job_id, activeJob?.status, refreshExperiments]);
 
-  const chords: Record<Member, [Pt, Pt]> = { l: [anchor, junction], r: [junction, pivot], f: [junction, pinch] };
-  const handleOf = (member: Member, index: 0 | 1): Pt => {
-    const [s, e] = chords[member];
-    const { n } = leftNormal(s, e);
-    const u = params[`${member}_u${index + 1}` as ShapeKey] as number;
-    const v = params[`${member}_v${index + 1}` as ShapeKey] as number;
-    return [s[0] + u * (e[0] - s[0]) + v * n[0], s[1] + u * (e[1] - s[1]) + v * n[1]];
+  const openSolveSetup = () => {
+    setModalMode(solving ? 'live' : 'setup');
+    setModalOpen(true);
   };
 
-  const toWorld = (event: React.PointerEvent): Pt | null => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = event.clientX;
-    pt.y = event.clientY;
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return null;
-    const p = pt.matrixTransform(ctm.inverse());
-    return [p.x, -p.y];
-  };
-
-  const onPointerMove = (event: React.PointerEvent) => {
-    const what = drag.current;
-    if (!what) return;
-    const p = toWorld(event);
-    if (!p) return;
-    if (what.kind === 'anchor') setShape('anchor_distance', Math.min(12, Math.max(-2, -p[0])));
-    else if (what.kind === 'junction') setParams((prev) => ({ ...prev, junction_x: p[0], junction_y: Math.max(1, p[1]) }));
-    else if (what.kind === 'pinch') setShape('pinch_y', Math.max(0.5, p[1]));
-    else {
-      const [s, e] = chords[what.member];
-      const { n, length } = leftNormal(s, e);
-      if (length < 1e-6) return;
-      const dx = e[0] - s[0], dy = e[1] - s[1];
-      const u = Math.min(0.95, Math.max(0.05, ((p[0] - s[0]) * dx + (p[1] - s[1]) * dy) / (length * length)));
-      const v = (p[0] - s[0]) * n[0] + (p[1] - s[1]) * n[1];
-      setParams((prev) => ({ ...prev, [`${what.member}_u${what.index + 1}`]: u, [`${what.member}_v${what.index + 1}`]: v }));
-    }
-  };
-
-  const flowRows = (result?.Y_positions ?? []).map((yy, i) => ({ y: yy, flow: result?.flow_a[i] }))
-    .filter((row) => row.y >= -1e-9 && row.flow != null);
-
-  const solve = async () => {
+  const launchSolve = async (customName?: string, customNote?: string) => {
     setSolving(true);
     setSolveNote(null);
     try {
-      const boundPayload = Object.fromEntries(SHAPE_KEYS.map((key) => [key, bounds[key]]));
-      const res = await apiFetch('/api/compliant/solve', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ params, bounds: boundPayload, budget: 36 }),
+      const boundPayload: Record<string, [number, number]> = {};
+      for (const key of SHAPE_KEYS) boundPayload[key] = bounds[key];
+      const yGoal = effectivePinchY(params, constraints);
+      if (constraints.target_pinch_from_top_mm != null) {
+        boundPayload.pinch_y = [yGoal, yGoal];
+      }
+      for (const key of CONTEXT_VAR_KEYS) {
+        boundPayload[key] = contextFixed[key] ? [params[key], params[key]] : contextBounds[key];
+      }
+      const pivotSide = contextFixed.pivot_inverted ? 'current' : 'both';
+      const activeGoals = goalConfig.selected.length > 0 ? goalConfig.selected : ['dx_at_025' as const];
+      const goalWeightsPayload: Record<string, number> = {};
+      for (const g of activeGoals) {
+        goalWeightsPayload[g] = goalConfig.useWeights ? Math.max(1, goalConfig.weights[g]) : 1;
+      }
+      const res = await apiFetch('/api/compliant/solve/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          params: { ...params, pinch_y: yGoal },
+          bounds: boundPayload,
+          constraints,
+          pivot_side: pivotSide,
+          goal: activeGoals[0],
+          goal_weights: goalWeightsPayload,
+          method: methodConfig.method,
+          method_params: methodConfig.params[methodConfig.method] ?? {},
+          time_budget_s: timeBudgetS,
+          name: customName?.trim() || undefined,
+          note: customNote?.trim() || '',
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setSolveNote(typeof data?.detail === 'string' ? data.detail : 'The solver failed.');
+        setSolveNote(typeof data?.detail === 'string' ? data.detail : 'The solver failed to start.');
+        setSolving(false);
         return;
       }
-      setRunners(data.runners ?? []);
-      setSolveNote(data.found
-        ? `Tested ${data.tested}. ${data.feasible} passed. Best slope ${Number(data.result?.flow_slope_mean).toFixed(2)} L/min per mm.`
-        : `Tested ${data.tested}. None passed. ${data.message ?? ''}`);
-      if (data.found && data.params) {
-        setParams((prev) => ({ ...prev, ...data.params }));
-        setResult(data.result);
-      }
+      setActiveJob(data as SolveJobState);
+      setModalMode('live');
+      setModalOpen(true);
     } catch {
-      setSolveNote('The solver failed.');
-    } finally {
+      setSolveNote('The solver failed to start.');
       setSolving(false);
     }
   };
 
+  const cancelSolve = async () => {
+    if (!activeJob) return;
+    await apiFetch(`/api/compliant/solve/jobs/${activeJob.job_id}/cancel`, { method: 'POST' }).catch(() => {});
+  };
+
+  const openExperiment = async (expId: string) => {
+    try {
+      const res = await apiFetch(`/api/compliant/solve/jobs/${expId}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as SolveJobState;
+      setActiveJob(data);
+      setRunners(data.runners ?? []);
+      setModalMode('live');
+      setModalOpen(true);
+    } catch { /* ignore */ }
+  };
+
+  const deleteExperiment = async (expId: string) => {
+    await apiFetch(`/api/compliant/experiments/${expId}`, { method: 'DELETE' }).catch(() => {});
+    refreshExperiments();
+  };
+
+  const saveExperimentMeta = async (expId: string, name: string, note: string) => {
+    await apiFetch(`/api/compliant/experiments/${expId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, note }),
+    });
+    setActiveJob((prev) => (prev && prev.experiment_id === expId ? { ...prev, name, note } : prev));
+    refreshExperiments();
+  };
+
   const applyRunner = (runner: Runner) => {
     setParams((prev) => ({ ...prev, ...runner.params }));
+    setModalOpen(false);
     onOpenExplorer();
   };
 
-  const margin = 2;
-  const poly = (pts: Pt[]) => pts.map(([x, yy]) => `${x.toFixed(3)},${(-yy).toFixed(3)}`).join(' ');
-  const dot = (p: Pt, color: string, kind: 'anchor' | 'junction' | 'pinch', label: string) => (
-    <g className="cursor-grab" onPointerDown={(e) => { drag.current = { kind }; svgRef.current?.setPointerCapture(e.pointerId); }}>
-      <circle cx={p[0]} cy={-p[1]} r={0.45} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />
-      <text x={p[0] + 0.5} y={-p[1] - 0.45} fill={color} fontSize={0.55} fontWeight="bold">{label}</text>
-    </g>
-  );
-
-  const carriageY = h0 + (result?.travel_sign ?? 1) * yPose;
-  const hw = params.pivot_offset + 1;
-  const mirror = (pts: Pt[]): Pt[] => pts.map(([x, yy]) => [-x, ceiling - yy]);
-
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
-      <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 overflow-y-auto">
-        <div className="flex items-center gap-2 mb-4">
-          <Settings className="w-5 h-5 text-blue-500" />
-          <h2 className="text-lg font-bold text-white tracking-tight">{mode === 'finder' ? 'Solver' : 'Splines'}</h2>
+      {/* Panel 1: parameters & solver */}
+      <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+        <div className="flex items-center gap-2 mb-3 min-w-0 shrink-0">
+          <Settings className="w-5 h-5 text-amber-500 shrink-0" />
+          <h2 className="text-lg font-bold text-white tracking-tight truncate">
+            {mode === 'finder' ? 'Solver' : 'Splines'}
+          </h2>
         </div>
-        {mode === 'explorer' ? (
-          <AccordionScope id="compliant:explorer">
-          <div className="space-y-1">
-            <Accordion title="Skeleton">
-              <div className="space-y-4 pt-2">
-                {(['anchor_distance', 'junction_x', 'junction_y', 'pinch_y'] as ShapeKey[]).map((key) => (
-                  <ParameterSlider key={key} value={params[key] as number} {...LIMITS[key]} onChange={(v) => setShape(key, v)} />
-                ))}
-              </div>
-            </Accordion>
-            {MEMBERS.map((member) => (
-              <Accordion key={member.id} title={member.title}>
+
+        <div className="shrink-0 mb-3 space-y-1">
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => syncMeasured()}
+            disabled={measure.busy}
+            title="Load measured CAD values from the Onshape Part Studio (tube centre, depth)"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${measure.busy ? 'animate-spin' : ''}`} />
+            {measure.busy ? 'Loading from Onshape…' : 'Load CAD values from Onshape'}
+          </Button>
+          {measure.text && (
+            <p className={`text-[10px] leading-snug ${measure.ok ? 'text-emerald-400' : 'text-red-300'}`} role="status">
+              {measure.text}
+            </p>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto pr-2 space-y-1">
+          {mode === 'explorer' ? (
+            <AccordionScope id="compliant:explorer">
+              <Accordion title="Skeleton" defaultOpen={true}>
                 <div className="space-y-4 pt-2">
-                  {([1, 2] as const).flatMap((n) => (['u', 'v'] as const).map((axis) => {
-                    const key = `${member.id}_${axis}${n}` as ShapeKey;
-                    return <ParameterSlider key={key} value={params[key] as number} {...LIMITS[key]} onChange={(v) => setShape(key, v)} />;
-                  }))}
-                  <ParameterSlider value={params[`${member.id}_thickness`] as number} {...LIMITS[`${member.id}_thickness` as ShapeKey]} onChange={(v) => setShape(`${member.id}_thickness` as ShapeKey, v)} />
-                </div>
-              </Accordion>
-            ))}
-            <Accordion title="Context" defaultOpen={false}>
-              <div className="space-y-4 pt-2">
-                <div className="flex gap-2">
-                  {([['PETG', 2500, 40], ['PLA', 3500, 50]] as const).map(([name, modulus, strength]) => (
-                    <button key={name} type="button" onClick={() => setParams((prev) => ({ ...prev, member_modulus_mpa: modulus, member_strength_mpa: strength }))}
-                      className="px-2 py-1 text-xs rounded border border-neutral-600 text-neutral-200 hover:bg-neutral-700">{name}</button>
+                  {(['anchor_distance', 'junction_x', 'junction_y', 'pinch_y'] as ShapeKey[]).map((key) => (
+                    <ParameterSlider
+                      key={key}
+                      value={key === 'pinch_y' ? effectivePinchY(params, constraints) : (params[key] as number)}
+                      {...LIMITS[key]}
+                      onChange={(v) => setShape(key, v)}
+                    />
                   ))}
                 </div>
-                <ParameterSlider label="Modulus" value={params.member_modulus_mpa} min={200} max={20000} step={50} onChange={(v) => setParams((p) => ({ ...p, member_modulus_mpa: v }))} secondaryValue="MPa" />
-                <ParameterSlider label="Strength" value={params.member_strength_mpa} min={1} max={200} step={1} onChange={(v) => setParams((p) => ({ ...p, member_strength_mpa: v }))} secondaryValue="MPa" />
-                <ParameterSlider label="Depth, out of plane" value={params.member_depth} min={0.4} max={8} step={0.1} onChange={(v) => setParams((p) => ({ ...p, member_depth: v }))} />
-                <ParameterSlider label="Carriage height at closure" value={params.closed_carriage_height} min={3} max={16} step={0.05} onChange={(v) => setParams((p) => ({ ...p, closed_carriage_height: v }))} />
-                <ParameterSlider label="Pivot offset" value={params.pivot_offset} min={0} max={10} step={0.05} onChange={(v) => setParams((p) => ({ ...p, pivot_offset: v }))} />
-                <button type="button" onClick={() => setParams((p) => ({ ...p, pivot_inverted: !p.pivot_inverted }))}
-                  className={`w-full text-left text-sm px-2 py-1.5 rounded border ${params.pivot_inverted ? 'border-blue-500 text-blue-300' : 'border-neutral-600 text-neutral-300'}`}>
-                  {params.pivot_inverted ? 'Pivot on the tube side' : 'Pivot on the far side'}
-                </button>
-                <ParameterSlider label="Pivot diameter" value={params.carriage_pin_diameter} min={0.4} max={4} step={0.05} onChange={(v) => setParams((p) => ({ ...p, carriage_pin_diameter: v }))} />
-                <ParameterSlider label="Stroke" value={params.stroke} min={0.4} max={6} step={0.05} onChange={(v) => setParams((p) => ({ ...p, stroke: v }))} />
-                <ParameterSlider label="Tube center" value={params.tube_center_x} min={3} max={16} step={0.05} onChange={(v) => setParams((p) => ({ ...p, tube_center_x: v }))} />
-                <ParameterSlider label="Tube ID" value={params.tube_id} min={0.4} max={8} step={0.05} onChange={(v) => setParams((p) => ({ ...p, tube_id: v }))} />
-                <ParameterSlider label="Tube OD" value={params.tube_od} min={0.6} max={12} step={0.05} onChange={(v) => setParams((p) => ({ ...p, tube_od: v }))} />
-                <ParameterSlider label="Pressure" value={params.input_pressure_kpa} min={0} max={400} step={5} onChange={(v) => setParams((p) => ({ ...p, input_pressure_kpa: v }))} secondaryValue="kPa" />
-                <TubeModelControls model={params.tube_model} shore={params.tube_shore_a}
-                  onModel={(tube_model) => setParams((p) => ({ ...p, tube_model }))}
-                  onShore={(tube_shore_a) => setParams((p) => ({ ...p, tube_shore_a }))} />
-                <ParameterSlider label="Compliance" value={params.compliance} min={0.05} max={3} step={0.05} onChange={(v) => setParams((p) => ({ ...p, compliance: v }))} disabled={params.tube_model !== 'simple'} />
-              </div>
-            </Accordion>
-          </div>
-          </AccordionScope>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-xs text-neutral-400 leading-snug">The solver varies the splines inside these ranges. It keeps a shape only when the stress stays under the material limit, and the part clears the pivot and the shell. The winner is the steepest static-flow slope.</p>
-            {SHAPE_KEYS.map((key) => (
-              <div key={key} className="grid grid-cols-[1fr_4.5rem_4.5rem] gap-2 items-center">
-                <span className="text-xs text-neutral-300 truncate">{shapeLabel(key)}</span>
-                <input aria-label={`${shapeLabel(key)} min`} type="number" value={bounds[key][0]} step={LIMITS[key].step}
-                  onChange={(e) => setBounds((prev) => ({ ...prev, [key]: [Number(e.target.value), prev[key][1]] }))}
-                  className="bg-neutral-900 border border-neutral-700 rounded px-1 py-1 text-xs text-neutral-100 font-mono" />
-                <input aria-label={`${shapeLabel(key)} max`} type="number" value={bounds[key][1]} step={LIMITS[key].step}
-                  onChange={(e) => setBounds((prev) => ({ ...prev, [key]: [prev[key][0], Number(e.target.value)] }))}
-                  className="bg-neutral-900 border border-neutral-700 rounded px-1 py-1 text-xs text-neutral-100 font-mono" />
-              </div>
-            ))}
-            <button type="button" onClick={solve} disabled={solving}
-              className="w-full mt-2 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-semibold text-white">
-              {solving ? 'Solving…' : 'Solve'}
-            </button>
-            {solveNote && <p className="text-xs text-neutral-300 leading-snug">{solveNote}</p>}
-            {runners.length > 1 && (
-              <div className="space-y-1">
-                {runners.slice(1).map((runner, i) => (
-                  <button key={i} type="button" onClick={() => applyRunner(runner)}
-                    className="w-full text-left text-xs px-2 py-1.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-700">
-                    Slope {runner.slope == null ? '—' : runner.slope.toFixed(2)} · stress {runner.max_stress_mpa == null ? '—' : runner.max_stress_mpa.toFixed(0)} MPa
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="lg:col-span-5 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
-        <h3 className="mb-3 shrink-0 text-sm font-semibold text-neutral-300">Schematic</h3>
-        <div className="mb-3 flex shrink-0 flex-col gap-1">
-          <div className="flex items-center justify-between gap-2 text-sm">
-            <label htmlFor="compliant-y" className="font-medium text-neutral-300">Carriage Y</label>
-            {result != null && result.travel_sign < 0 && (
-              <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the chart. This part pulls, so its carriage moves the other way from a part that pushes for the same Y: the motor turns the other way.">
-                link pulls: carriage runs the other way
-              </span>
-            )}
-            <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
-          </div>
-          <div className="order-last flex items-center justify-between gap-2 pt-1">
-            <Button variant="ghost" type="button" onClick={togglePlay} disabled={carriageSpeed <= 0} aria-pressed={playing}
-              title="Run the carriage back and forth over the full stroke at the loaded motor speed"
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
-              {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {playing ? 'Stop' : 'Oscillate'}
-            </Button>
-            <Button variant="ghost" type="button" onClick={() => { setPlaying(false); setY(0); }} disabled={!playing && yPose === 0}
-              title="Bring the carriage back to Y = 0"
-              className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
-              Center
-            </Button>
-            <FlowParticlesSwitch note="Full density and speed at the flow through the full bore. The chamber is not drawn: it is taken as below the drawing, so the air runs down tube A (supply) and up tube B (exhaust)." />
-            <span className="text-right text-xs text-neutral-400">
-              {loadedRpm.toFixed(0)} RPM under load ({MOTOR_RPM} × {Math.round(LOAD_FACTOR * 100)} %), {carriageSpeed.toFixed(2)} mm/s
-            </span>
-          </div>
-          <input id="compliant-y" type="range" min={-params.stroke} max={params.stroke} step={0.01} value={yPose}
-            onChange={(e) => { setPlaying(false); setY(parseFloat(e.target.value)); }} className="w-full accent-amber-500 cursor-pointer" />
-        </div>
-        <div className="min-h-[180px] w-full flex-1 overflow-hidden rounded-lg border border-neutral-800/80 bg-neutral-900/60">
-        <svg ref={svgRef} viewBox={`${-(wall + margin)} ${-ceiling - margin} ${2 * (wall + margin)} ${ceiling + 2 * margin}`}
-          className="h-full w-full select-none touch-none" role="img" aria-label="Compliant bars"
-          onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
-          <rect x={-wall} y={-ceiling} width={2 * wall} height={ceiling} fill="var(--bui-muted)" fillOpacity={0.08} stroke="var(--bui-text)" strokeWidth={0.14} />
-          {[-1, 1].map((side) => (
-            <rect key={side} x={side < 0 ? -wall - 0.7 : wall} y={-ceiling - 1} width={0.7} height={ceiling + 2} fill="var(--bui-text)" fillOpacity={0.35} />
-          ))}
-          {(() => {
-            const rPin = Math.max(params.f_thickness / 2, 0.18);
-            const maxFlow = result ? Math.max(0, ...result.flow_a.map((f) => f ?? 0)) : 0;
-            const footB = result
-              ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a)))
-              : mirror(lines.f);
-            const tubeArgs = { rPin, wall, od: params.tube_od, id: params.tube_id, top: ceiling, maxFlow, sweep: tubeSweep, stale: tubeStale };
-            return (
-              <>
-                {pinchedTube({ ...tubeArgs, sign: -1, name: 'A  supply', contact: nearestToWall(lines.f, -1), flow: result ? interp(yPose, result.Y_positions, result.flow_a) : 0 })}
-                {pinchedTube({ ...tubeArgs, sign: 1, name: 'B  exhaust', contact: nearestToWall(footB, 1), flow: result ? interp(-yPose, result.Y_positions, result.flow_a) : 0 })}
-              </>
-            );
-          })()}
-          <rect x={-0.45} y={-ceiling - 0.4} width={0.9} height={ceiling + 0.8} rx={0.2} fill="#d4a94a" fillOpacity={0.85} />
-          <polygon points={[[-hw, carriageY + 0.9], [-hw + 0.9, carriageY + 1.5], [hw - 0.9, carriageY + 1.5], [hw, carriageY + 0.9], [hw, carriageY - 0.9], [hw - 0.9, carriageY - 1.5], [-hw + 0.9, carriageY - 1.5], [-hw, carriageY - 0.9]].map(([px, py]) => `${px},${-py}`).join(' ')}
-            fill="var(--bui-muted)" fillOpacity={0.75} stroke="var(--bui-text)" strokeWidth={0.06} />
-          <line x1={-wall} y1={-h0} x2={wall} y2={-h0} stroke="#60a5fa" strokeWidth={0.04} strokeDasharray="0.2 0.2" />
-          <circle cx={pivot[0]} cy={-carriageY} r={Math.max(params.carriage_pin_diameter / 2, 0.2)} fill="#60a5fa" />
-          {MEMBERS.map((member) => (
-            <g key={member.id}>
-              <polyline points={poly(lines[member.id])} fill="none" stroke={member.color} strokeOpacity={0.35} strokeWidth={params[`${member.id}_thickness`]} strokeLinecap="round" strokeLinejoin="round" />
-              <polyline points={poly(lines[member.id])} fill="none" stroke={member.color} strokeWidth={0.12} strokeLinecap="round" />
-              {([0, 1] as const).map((index) => {
-                const h = handleOf(member.id, index);
-                const end = index === 0 ? chords[member.id][0] : chords[member.id][1];
-                return (
-                  <g key={index} className="cursor-grab" onPointerDown={(e) => { drag.current = { kind: 'handle', member: member.id, index }; svgRef.current?.setPointerCapture(e.pointerId); }}>
-                    <line x1={end[0]} y1={-end[1]} x2={h[0]} y2={-h[1]} stroke={member.color} strokeOpacity={0.7} strokeWidth={0.06} />
-                    <circle cx={h[0]} cy={-h[1]} r={0.32} fill={member.color} />
-                  </g>
-                );
-              })}
-            </g>
-          ))}
-          {result && (
-            <g opacity={0.35}>
+              </Accordion>
               {MEMBERS.map((member) => (
-                <polyline key={member.id} points={poly(mirror(deflected(result.lines[member.id], -yPose, interp(-yPose, result.Y_positions, result.force_a))))}
-                  fill="none" stroke={member.color} strokeWidth={params[`${member.id}_thickness`]} strokeLinecap="round" />
+                <Accordion key={member.id} title={member.title}>
+                  <div className="space-y-4 pt-2">
+                    {([1, 2] as const).flatMap((n) => (['u', 'v'] as const).map((axis) => {
+                      const key = `${member.id}_${axis}${n}` as ShapeKey;
+                      return <ParameterSlider key={key} value={params[key] as number} {...LIMITS[key]} onChange={(v) => setShape(key, v)} />;
+                    }))}
+                    <ParameterSlider
+                      value={params[`${member.id}_thickness`] as number}
+                      {...LIMITS[`${member.id}_thickness` as ShapeKey]}
+                      onChange={(v) => setShape(`${member.id}_thickness` as ShapeKey, v)}
+                    />
+                  </div>
+                </Accordion>
               ))}
-            </g>
+              <Accordion title="Context" defaultOpen={false}>
+                <ContextControls
+                  params={params}
+                  contextFixed={contextFixed}
+                  measure={measure}
+                  onPatchParams={patchParams}
+                  onToggleFixed={toggleContextFixed}
+                  onSyncMeasured={syncMeasured}
+                />
+              </Accordion>
+              {hasFreeContext && (
+                <Accordion title="Solver" defaultOpen={true} openSignal={solverOpenSignal}>
+                  <SolverConstraintsContent
+                    contextFixed={contextFixed}
+                    contextBounds={contextBounds}
+                    constraints={constraints}
+                    memberStrengthMpa={params.member_strength_mpa}
+                    onContextBoundsChange={setContextRange}
+                    onConstraintsChange={patchConstraints}
+                    onSolve={openSolveSetup}
+                    solving={solving}
+                    solveNote={solveNote}
+                    showSolveButton={true}
+                  />
+                </Accordion>
+              )}
+              <FixedParametersSections
+                params={params}
+                wallX={wallX}
+                materials={materials}
+                measure={measure}
+                onPatchParams={patchParams}
+                onSyncMeasured={syncMeasured}
+              />
+              <ResultsAccordion params={params} result={result} constraints={constraints} />
+            </AccordionScope>
+          ) : (
+            <AccordionScope id="compliant:solver">
+              <div className="space-y-3">
+                <p className="text-xs text-neutral-400 leading-snug">
+                  Configure constraints, unlocked context, and spline bounds below, then click <strong className="text-amber-300">Solve…</strong> to choose your search method, goals, weights, and time budget.
+                </p>
+                <Accordion title="Solver" defaultOpen={true} openSignal={solverOpenSignal}>
+                  <SolverConstraintsContent
+                    contextFixed={contextFixed}
+                    contextBounds={contextBounds}
+                    constraints={constraints}
+                    memberStrengthMpa={params.member_strength_mpa}
+                    onContextBoundsChange={setContextRange}
+                    onConstraintsChange={patchConstraints}
+                  />
+                </Accordion>
+                <Accordion title="Context" defaultOpen={false}>
+                  <ContextControls
+                    params={params}
+                    contextFixed={contextFixed}
+                    measure={measure}
+                    onPatchParams={patchParams}
+                    onToggleFixed={toggleContextFixed}
+                    onSyncMeasured={syncMeasured}
+                  />
+                </Accordion>
+                <Accordion title="Spline bounds" defaultOpen={false}>
+                  <SplineBoundsList
+                    params={params}
+                    bounds={bounds}
+                    quadrantMap={quadrantMap}
+                    constraints={constraints}
+                    onPatchBounds={(patch) => setBounds((prev) => ({ ...prev, ...patch }))}
+                    onQuadrantChange={(key: QuadrantKey, next: QuadrantConfig) =>
+                      setQuadrantMap((prev) => ({ ...prev, [key]: next }))
+                    }
+                    onConstraintsChange={patchConstraints}
+                    onHover={setHoveredBound}
+                  />
+                </Accordion>
+                <FixedParametersSections
+                  params={params}
+                  wallX={wallX}
+                  materials={materials}
+                  measure={measure}
+                  onPatchParams={patchParams}
+                  onSyncMeasured={syncMeasured}
+                />
+                <div className="pt-2 space-y-2">
+                  <div className="flex items-center justify-between text-[10px] text-neutral-400 px-0.5">
+                    <span>Method: <strong className="text-neutral-200">{SOLVER_METHOD_META[methodConfig.method].short}</strong></span>
+                    <span className="font-mono text-amber-300">{timeBudgetS < 60 ? `${timeBudgetS}s` : `${Math.round(timeBudgetS / 60)}m`} · {goalConfig.selected.length} goal{goalConfig.selected.length > 1 ? 's' : ''}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={openSolveSetup}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-2 text-sm font-bold text-amber-300 hover:bg-amber-500/30"
+                  >
+                    <Target className="w-4 h-4" /> {solving ? 'View live solve…' : 'Solve…'}
+                  </Button>
+                  {activeJob && !solving && (
+                    <button
+                      type="button"
+                      onClick={() => { setModalMode('live'); setModalOpen(true); }}
+                      className="w-full rounded-lg border border-neutral-600 bg-neutral-900/60 px-3 py-1.5 text-xs font-semibold text-neutral-200 hover:border-amber-500/50 hover:text-amber-200"
+                    >
+                      Open last solve report
+                    </button>
+                  )}
+                  {solveNote && <p className="text-xs text-neutral-300 leading-snug">{solveNote}</p>}
+                  <SolverRunners runners={runners} onApply={applyRunner} />
+                </div>
+                <Accordion title={`Solve history (${experiments.length})`} defaultOpen={experiments.length > 0}>
+                  <SolveExperimentsList
+                    experiments={experiments}
+                    onOpen={openExperiment}
+                    onDelete={deleteExperiment}
+                  />
+                </Accordion>
+              </div>
+            </AccordionScope>
           )}
-          {dot(anchor, '#f59e0b', 'anchor', 'A')}
-          {dot(junction, '#e5e5e5', 'junction', 'J')}
-          {dot(pinch, '#34d399', 'pinch', 'P')}
-        </svg>
         </div>
-        {error && <p className="mt-2 shrink-0 text-xs text-red-300" role="alert">{error}</p>}
-        {result && !result.passes && <p className="mt-2 shrink-0 text-xs text-amber-300">{result.message}</p>}
       </div>
 
-      <div className="lg:col-span-4 min-w-0 flex flex-col gap-4 min-h-0 overflow-y-auto">
-        <ChartCard title="Static flow vs carriage Y" settings={domain} onSettingsChange={setDomain}>
-          {() => (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={flowRows} margin={{ top: 16, right: 12, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#404040" />
-                <XAxis dataKey="y" type="number" domain={chartDomain(domain, 'x', [0, params.stroke])} stroke="#a3a3a3" tick={{ fontSize: 11 }}
-                  label={{ value: 'Y (mm)', position: 'insideBottom', offset: -2, fill: '#a3a3a3', fontSize: 11 }} />
-                <YAxis domain={chartDomain(domain, 'y')} stroke="#a3a3a3" tick={{ fontSize: 11 }} width={48}
-                  label={{ value: 'L/min', angle: -90, position: 'insideLeft', fill: '#a3a3a3', fontSize: 11 }} />
-                <Tooltip formatter={(value) => [`${Number(value).toFixed(3)} L/min`, 'Flow']} labelFormatter={(label) => `Y ${Number(label).toFixed(2)} mm`} />
-                <Line type="monotone" dataKey="flow" name="Static flow" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
-        <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-3 space-y-2">
-          <StatRow label="Flow slope" value={result?.flow_slope_mean == null ? '—' : `${result.flow_slope_mean.toFixed(2)} L/min/mm`} highlight />
-          <StatRow label="Peak slope" value={result?.flow_slope_max == null ? '—' : `${result.flow_slope_max.toFixed(2)}`} />
-          <StatRow label="Worst stress" value={result?.max_stress_mpa == null ? '—' : `${result.max_stress_mpa.toFixed(1)} / ${params.member_strength_mpa} MPa`} highlight={result ? !result.plastic_ok : false} />
-          <StatRow label="Shell clearance" value={mm(result?.shell_clearance_mm)} highlight={result ? !result.shell_ok : false} />
-          <StatRow label="Pivot clearance" value={mm(result?.pivot_clearance_mm)} highlight={result ? !result.pivot_ok : false} />
-          <StatRow label="Largest rotation" value={result?.max_rotation_deg == null ? '—' : `${result.max_rotation_deg.toFixed(1)}°`} />
-        </div>
-      </div>
+      {/* Panel 2: schematic */}
+      <CompliantSchematic
+        params={params}
+        result={result}
+        constraints={constraints}
+        bounds={bounds}
+        quadrantMap={quadrantMap}
+        hoveredBound={hoveredBound}
+        yPose={yPose}
+        playing={playing}
+        loadedRpm={loadedRpm}
+        carriageSpeed={carriageSpeed}
+        tubeSweep={tubeSweep}
+        tubeStale={tubeStale}
+        error={error}
+        onYChange={(next) => { setPlaying(false); setY(next); }}
+        onTogglePlay={togglePlay}
+        onCenter={() => { setPlaying(false); setY(0); }}
+        onSetShape={setShape}
+        onPatchParams={patchParams}
+      />
+
+      {/* Panel 3: charts */}
+      <CompliantCharts
+        params={params}
+        result={result}
+        constraints={constraints}
+        yPose={yPose}
+        chartSettings={chartSettings}
+        chartScales={chartScales}
+        onChartSettingsChange={setChartSetting}
+        onChartScalesChange={patchChartScales}
+      />
+
+      <SolverModal
+        open={modalOpen}
+        modalMode={modalMode}
+        job={activeJob}
+        baseParams={params}
+        constraints={constraints}
+        tubeSweep={tubeSweep}
+        goalConfig={goalConfig}
+        methodConfig={methodConfig}
+        timeBudgetS={timeBudgetS}
+        spaceSummary={(() => {
+          let freeCount = 0;
+          let lockedCount = 0;
+          for (const key of SHAPE_KEYS) {
+            if (key === 'pinch_y' && constraints.target_pinch_from_top_mm != null) {
+              lockedCount += 1;
+            } else if (Math.abs(bounds[key][1] - bounds[key][0]) > 1e-9) {
+              freeCount += 1;
+            } else {
+              lockedCount += 1;
+            }
+          }
+          for (const key of CONTEXT_VAR_KEYS) {
+            if (!contextFixed[key] && Math.abs(contextBounds[key][1] - contextBounds[key][0]) > 1e-9) freeCount += 1;
+            else lockedCount += 1;
+          }
+          const pivotBoth = !contextFixed.pivot_inverted;
+          if (pivotBoth) freeCount += 1;
+          else lockedCount += 1;
+          return { freeCount, lockedCount, pivotBoth };
+        })()}
+        onGoalConfigChange={setGoalConfig}
+        onMethodConfigChange={setMethodConfig}
+        onTimeBudgetChange={setTimeBudgetS}
+        onLaunch={launchSolve}
+        onSwitchToSetup={() => setModalMode('setup')}
+        onClose={() => setModalOpen(false)}
+        onCancel={cancelSolve}
+        onApplyRunner={applyRunner}
+        onSaveMeta={saveExperimentMeta}
+      />
     </div>
   );
 }

@@ -67,7 +67,28 @@ test('Compliant Bars names its search sub-tab Solver', () => {
   expect(getByRole('button', { name: 'Oscillate' })).toBeTruthy()
   expect(getByRole('button', { name: 'Center' })).toBeTruthy()
   fireEvent.click(getByRole('tab', { name: 'Solver' }))
-  expect(getByRole('button', { name: 'Solve' })).toBeTruthy()
+  expect(getByRole('button', { name: 'Solve…' })).toBeTruthy()
+})
+
+test('Compliant Bars toggles spline parameter nodes and keeps them on top', () => {
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'compliant', sub: { compliant: 'explorer' } }))
+  const { getByRole } = render(<App />)
+  const toggle = getByRole('button', { name: 'Spline nodes' })
+  const svg = document.querySelector('svg[aria-label="Compliant bars"]')!
+  expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  const nodesLayer = svg.querySelector('[data-layer="spline-nodes"]')
+  expect(nodesLayer).toBeTruthy()
+  expect(svg.lastElementChild).toBe(nodesLayer)
+  // 6 bezier handles + 3 skeleton nodes (A, J, P)
+  expect(nodesLayer!.querySelectorAll('g').length).toBe(9)
+
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-pressed')).toBe('false')
+  expect(svg.querySelector('[data-layer="spline-nodes"]')).toBeNull()
+
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  expect(svg.querySelector('[data-layer="spline-nodes"]')).toBeTruthy()
 })
 
 function stubLinkage(optimize: unknown) {

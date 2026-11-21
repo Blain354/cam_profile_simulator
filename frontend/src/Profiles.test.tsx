@@ -1,11 +1,12 @@
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
-import { profileTypeOf } from './lib/profiles'
+import { profileTypeOf, suggestNextProfileName } from './lib/profiles'
 import { ProfileImportModal } from './ProfileControls'
 import { CamProfilePreview } from './components'
 import { FinderProfilePreview } from './ProfileBuilder'
 import { LinkageProfilePreview } from './LinkageExplorer'
+import { CompliantProfilePreview } from './CompliantBars'
 import { simulateDefault } from './simulate.fixture'
 
 type Call = { url: string; method: string; body: Record<string, unknown> | null }
@@ -139,6 +140,7 @@ test('each tab and sub-tab maps to its profile type', () => {
     expect(profileTypeOf('linkage', sub)).toBe('elbow')
     expect(profileTypeOf('lever', sub)).toBe('lever')
     expect(profileTypeOf('pendulum', sub)).toBe('pendulum')
+    expect(profileTypeOf('compliant', sub)).toBe('compliant')
   }
 })
 
@@ -148,6 +150,8 @@ test.each([
   ['linkage', 'finder', 'elbow', 'Bar linkage profiles'],
   ['lever', 'explorer', 'lever', 'Lever linkage profiles'],
   ['pendulum', 'finder', 'pendulum', 'Pendulum linkage profiles'],
+  ['compliant', 'explorer', 'compliant', 'Compliant Bars profiles'],
+  ['compliant', 'finder', 'compliant', 'Compliant Bars profiles'],
 ])('the header Import on %s / %s opens the %s window', async (tab, sub, type, title) => {
   const { calls } = stubStore(allProfiles)
   localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab, sub: { [tab]: sub } }))
@@ -309,6 +313,7 @@ test.each([
   ['cam-finder', (payload: Record<string, unknown>) => <FinderProfilePreview payload={payload} />],
   ['elbow', (payload: Record<string, unknown>) => <LinkageProfilePreview kind="elbow" payload={payload} />],
   ['pendulum', (payload: Record<string, unknown>) => <LinkageProfilePreview kind="pendulum" payload={payload} />],
+  ['compliant', (payload: Record<string, unknown>) => <CompliantProfilePreview payload={payload} />],
 ])('the %s preview renders an old or empty payload', (_type, preview) => {
   stubStore([])
   for (const payload of [{}, { params: {}, search: {} }, { solver_result: {} }, { solver_result: { simulation: {} }, builder_params: null }]) {
@@ -345,4 +350,65 @@ test('the linkage Update resends the stored note', async () => {
   expect(put.body!.note).toBe('kept note')
   expect((put.body!.payload as { params: Record<string, unknown> }).params.input_pressure_kpa).toBe(120)
   await waitFor(() => expect(getByRole('button', { name: 'Import profile' })).toBeTruthy())
+})
+
+test('Compliant Bars saves as new, updates, and survives reload', async () => {
+  const { calls, store } = stubStore(allProfiles)
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'compliant', sub: { compliant: 'explorer' } }))
+  const first = render(<App />)
+  const saveBtn = first.getByRole('button', { name: 'Save as new profile' }) as HTMLButtonElement
+  expect(saveBtn.disabled).toBe(false)
+  fireEvent.click(saveBtn)
+  const d = dialog()
+  fireEvent.change(within(d).getByLabelText('Profile name'), { target: { value: 'soft-beam' } })
+  fireEvent.change(within(d).getByLabelText('Profile note'), { target: { value: 'petg 3mm' } })
+  fireEvent.click(within(d).getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(first.getByTestId('profile-name').textContent).toBe('soft-beam'))
+  const put = calls.find((c) => c.method === 'PUT' && c.url === '/api/profiles/compliant/soft-beam')
+  expect(put).toBeTruthy()
+  expect(put!.body!.note).toBe('petg 3mm')
+  expect((put!.body!.payload as { params: Record<string, unknown> }).params.anchor_distance).toBe(4.8)
+  expect(store.some((p) => p.type === 'compliant' && p.name === 'soft-beam')).toBe(true)
+
+  // Reloading keeps the active profile name and re-syncs its snapshot from the server.
+  first.unmount()
+  const second = render(<App />)
+  await waitFor(() => expect(second.getByTestId('profile-name').textContent).toBe('soft-beam'))
+  expect(calls.some((c) => c.method === 'GET' && c.url === '/api/profiles/compliant/soft-beam')).toBe(true)
+})
+
+test('suggestNextProfileName increments a trailing number and ignores non-numeric suffixes', () => {
+  expect(suggestNextProfileName(null)).toBe('')
+  expect(suggestNextProfileName('')).toBe('')
+  expect(suggestNextProfileName('custom-interessant')).toBe('')
+  expect(suggestNextProfileName('20260326_233901_11.json')).toBe('')
+  expect(suggestNextProfileName('beam-1')).toBe('beam-2')
+  expect(suggestNextProfileName('beam_09')).toBe('beam_10')
+  expect(suggestNextProfileName('beam 01')).toBe('beam 02')
+  expect(suggestNextProfileName('v99')).toBe('v100')
+  expect(suggestNextProfileName('7')).toBe('8')
+})
+
+test('Save as new pre-fills the incremented numeric suffix so clicking Save creates the next profile', async () => {
+  const { calls, store } = stubStore([
+    ...allProfiles,
+    { name: 'beam-01', type: 'compliant', note: 'first beam', updated_at: '', payload: { params: { anchor_distance: 4.8 }, search: {} } },
+  ])
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'compliant', sub: { compliant: 'explorer' } }))
+  const { getByRole, getByTestId, findByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Import profile' }))
+  fireEvent.doubleClick(await findByText('beam-01'))
+  await waitFor(() => expect(getByTestId('profile-name').textContent).toBe('beam-01'))
+
+  fireEvent.click(getByRole('button', { name: 'Save as new profile' }))
+  const d = await openedDialog()
+  const nameInput = within(d).getByLabelText('Profile name') as HTMLInputElement
+  expect(nameInput.value).toBe('beam-02')
+  const saveBtn = within(d).getByRole('button', { name: 'Save' }) as HTMLButtonElement
+  expect(saveBtn.disabled).toBe(false)
+
+  fireEvent.click(saveBtn)
+  await waitFor(() => expect(getByTestId('profile-name').textContent).toBe('beam-02'))
+  expect(calls.some((c) => c.method === 'PUT' && c.url === '/api/profiles/compliant/beam-02')).toBe(true)
+  expect(store.some((p) => p.type === 'compliant' && p.name === 'beam-02')).toBe(true)
 })

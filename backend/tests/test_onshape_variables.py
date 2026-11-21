@@ -503,20 +503,26 @@ class OnshapeEndpointsTests(unittest.TestCase):
     def test_materials_builtin_and_custom(self):
         c = self.client
         names = lambda: [(m["name"], m["builtin"]) for m in c.get("/api/linkage/materials").json()["materials"]]
-        self.assertEqual(names(), [("PETG", True), ("PLA", True)])
+        expected_builtins = [
+            ("PETG Basic (bamb)", True),
+            ("PETG Translucent (bamb)", True),
+            ("PLA Basic (bamb)", True),
+            ("ABS (bamb)", True),
+        ]
+        self.assertEqual(names(), expected_builtins)
         self.assertEqual(c.put("/api/linkage/materials/Nylon PA12", json={"modulus_mpa": 1700, "strength_mpa": 45}).json()["status"], "saved")
         self.assertEqual(c.put("/api/linkage/materials/Nylon PA12", json={"modulus_mpa": 1800, "strength_mpa": 45}).json()["status"], "updated")
         got = c.get("/api/linkage/materials").json()["materials"][-1]
         self.assertEqual(got, {"name": "Nylon PA12", "modulus_mpa": 1800.0, "strength_mpa": 45.0, "builtin": False})
         # The built-in ones cannot be overwritten or deleted, and a material needs a modulus.
-        self.assertEqual(c.put("/api/linkage/materials/pla", json={"modulus_mpa": 1, "strength_mpa": 1}).status_code, 409)
-        self.assertEqual(c.delete("/api/linkage/materials/PETG").status_code, 409)
+        self.assertEqual(c.put("/api/linkage/materials/pla basic (bamb)", json={"modulus_mpa": 1, "strength_mpa": 1}).status_code, 409)
+        self.assertEqual(c.delete("/api/linkage/materials/PETG Basic (bamb)").status_code, 409)
         self.assertEqual(c.put("/api/linkage/materials/X", json={"modulus_mpa": 0, "strength_mpa": 1}).status_code, 422)
         # Custom materials do not show up as linkage profiles.
         self.assertEqual(c.get("/api/linkage/profiles?kind=material").status_code, 404)
         self.assertEqual(c.delete("/api/linkage/materials/Nylon PA12").json()["status"], "deleted")
         self.assertEqual(c.delete("/api/linkage/materials/Nylon PA12").status_code, 404)
-        self.assertEqual(names(), [("PETG", True), ("PLA", True)])
+        self.assertEqual(names(), expected_builtins)
 
     def test_linkage_profile_keeps_chart_settings(self):
         c = self.client
