@@ -87,7 +87,15 @@ attentes Solve / export STL via `Button.loading` / `LoadingState` / `Loader`) : 
 [`docs/ui-uniformity-2026-10-08.md`](docs/ui-uniformity-2026-10-08.md).
 En Docker, passer `APP_VERSION` / `APP_COMMIT` / `APP_COMMIT_DATE` au build
 frontend pour peupler le pied de page (pas de `.git` dans l'image) — voir
-le commentaire dans `docker-compose.yml`.
+le commentaire dans `docker-compose.yml`. Ce build passe aussi
+`VITE_API_BASE_URL` (`args` dans `docker-compose.yml`, `ARG` puis `ENV`
+dans `frontend/Dockerfile`, avant `npm run build`). Vite 5.4.21
+(`frontend/package-lock.json`) recopie les `VITE_*` du process apres les
+fichiers `.env*`, donc cette cle l'emporte sur la meme cle d'un
+`.env.production` copie : git ignore ce fichier, `frontend/.dockerignore`
+non. Absente, `docker-compose.yml` et le Dockerfile posent le meme defaut,
+et un clone sans fichier d'env n'embarque pas le repli
+`http://localhost:8000` de `frontend/src/components.tsx`.
 
 ## Demarrer toute la stack ensuite
 
@@ -206,6 +214,6 @@ documentation longue. Pour la communication avec les agents OpenClaw
 
 ## Notes
 
-- Le frontend utilise `VITE_API_BASE_URL` (fichier `frontend/.env.local`).
-- Valeur recommandee: `http://localhost:8001`.
+- En local (`npm run dev`), le frontend lit `VITE_API_BASE_URL` dans `frontend/.env.local`.
+- Valeur recommandee: `http://localhost:8001`. Pour l'image Docker, voir le paragraphe Docker plus haut.
 - Les configurations sont stockees en base SQLite (`SIM_DB_PATH` optionnel pour surcharger le chemin).
