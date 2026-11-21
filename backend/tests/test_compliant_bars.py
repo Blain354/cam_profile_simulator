@@ -456,6 +456,76 @@ class ComputeTests(unittest.TestCase):
         self.assertFalse(rej_85.passes)
         self.assertIn("85%", rej_85.message)
 
+    def test_crossing_members_are_rejected(self):
+        from backend.compliant_solver import _classify_rejections
+
+        # Default non-crossing shape must pass crossing_ok.
+        ok = compute_compliant(CompliantParams(), fast=True)
+        self.assertTrue(ok.crossing_ok)
+
+        # Anchor on the far right (anchor_distance = -5.5 -> x = +5.5), junction on the left,
+        # pivot on the right above anchor, with L bowing up across R -> L and R clearly cross.
+        crossed = CompliantParams(
+            anchor_distance=-1.0,
+            junction_x=-4.0,
+            junction_y=12.0,
+            pinch_y=10.5,
+            l_u1=0.35, l_v1=-5.0, l_u2=0.65, l_v2=-5.0,
+            r_u1=0.35, r_v1=-2.0, r_u2=0.65, r_v2=-2.0,
+        )
+        res = compute_compliant(crossed, fast=True)
+        self.assertFalse(res.crossing_ok)
+        self.assertFalse(res.passes)
+        self.assertIn("cross", res.message.lower())
+        self.assertIn("crossing", _classify_rejections(res))
+
+    def test_anchor_symmetric_samples_both_sides_and_skips_center_gap(self):
+        from backend.compliant_bars import anchor_symmetric_range, anchor_val_to_z, anchor_z_to_val
+        from backend.compliant_solver import run_time_budgeted_solve
+
+        # Helper round-trip on [2.5, 5.8] -> [-5.8, -2.5] U [2.5, 5.8]
+        a_lo, a_hi = anchor_symmetric_range(2.5, 5.8)
+        self.assertAlmostEqual(a_lo, 2.5)
+        self.assertAlmostEqual(a_hi, 5.8)
+        self.assertAlmostEqual(anchor_z_to_val(0.0, a_lo, a_hi), -5.8)
+        self.assertAlmostEqual(anchor_z_to_val(0.5, a_lo, a_hi), 2.5)
+        self.assertAlmostEqual(anchor_z_to_val(1.0, a_lo, a_hi), 5.8)
+        for v in (-5.8, -4.15, -2.5, 2.5, 4.15, 5.8):
+            z = anchor_val_to_z(v, a_lo, a_hi)
+            self.assertAlmostEqual(anchor_z_to_val(z, a_lo, a_hi), v, places=5)
+
+        # Brute-force LHS with anchor_symmetric=True must sample both sides and never land in (-2.5, 2.5).
+        seen_anchors = []
+        base = CompliantParams(anchor_distance=4.8)
+        bounds = {"anchor_distance": (2.5, 5.8)}
+        cons = CompliantConstraints(anchor_symmetric=True)
+        out = run_time_budgeted_solve(
+            base,
+            bounds,
+            time_budget_s=0.6,
+            method="brute_force",
+            method_params={"sampling": "lhs", "target_evals": 40},
+            constraints=cons,
+            seed=13,
+        )
+        summary = out["summary"]
+        self.assertIn("anchor_distance", summary["free_vars"])
+        self.assertTrue(summary["active_constraints"]["anchor_symmetric"])
+        cov = next(c for c in summary["coverage"] if c["key"] == "anchor_distance")
+        self.assertAlmostEqual(cov["lo"], -5.8, places=3)
+        self.assertAlmostEqual(cov["hi"], 5.8, places=3)
+        # Both negative half (bins 0..4) and positive half (bins 5..9) must be tested.
+        self.assertGreater(sum(cov["tested_bins"][:5]), 0)
+        self.assertGreater(sum(cov["tested_bins"][5:]), 0)
+        # Every preview frame's anchor x must satisfy |x| in [2.5, 5.8].
+        for fr in summary.get("preview_timeline", []):
+            ax = abs(float(fr["a"][0]))
+            seen_anchors.append(float(fr["a"][0]))
+            self.assertGreaterEqual(ax, 2.5 - 0.02)
+            self.assertLessEqual(ax, 5.8 + 0.02)
+        self.assertTrue(any(x < 0 for x in seen_anchors))
+        self.assertTrue(any(x > 0 for x in seen_anchors))
+
 
 if __name__ == "__main__":
     unittest.main()

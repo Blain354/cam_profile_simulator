@@ -168,7 +168,7 @@ export interface SliderMeta {
 }
 
 export const LIMITS: Record<ShapeKey, SliderMeta> = {
-  anchor_distance: { min: -2, max: 12, step: 0.05, label: 'Anchor distance', unit: 'mm' },
+  anchor_distance: { min: -12, max: 12, step: 0.05, label: 'Anchor distance', unit: 'mm' },
   junction_x: { min: -12, max: 8, step: 0.05, label: 'Junction x', unit: 'mm' },
   junction_y: { min: 2, max: 22, step: 0.05, label: 'Junction y', unit: 'mm' },
   pinch_y: { min: 1, max: 22, step: 0.05, label: 'Pinch height', unit: 'mm' },
@@ -225,6 +225,7 @@ export interface SolverConstraints {
   junction_exclude_y?: [number, number] | null;
   target_pinch_from_top_mm?: number | null;
   target_attack_angle_deg?: number;
+  anchor_symmetric?: boolean;
 }
 
 export const DEFAULT_CONSTRAINTS: SolverConstraints = {
@@ -240,6 +241,7 @@ export const DEFAULT_CONSTRAINTS: SolverConstraints = {
   junction_exclude_y: null,
   target_pinch_from_top_mm: 5.5,
   target_attack_angle_deg: 0,
+  anchor_symmetric: true,
 };
 
 export const DEFAULT_CONTEXT_FIXED: ContextFixedMap = {
@@ -347,6 +349,7 @@ export interface CompliantResult {
   pinch_ok?: boolean;
   rotation_ok?: boolean;
   tube_ok?: boolean;
+  crossing_ok?: boolean;
   shell_clearance_mm: number | null;
   pivot_clearance_mm: number | null;
   tube_clearance_mm?: number | null;
@@ -624,6 +627,7 @@ export interface SolveSummary {
     max_rotation_deg: number;
     stroke_fixed: boolean;
     stroke_mm: number;
+    anchor_symmetric?: boolean;
   };
   coverage: CoverageVar[];
   scatter: ScatterPoint[];
@@ -883,6 +887,9 @@ export function fromCompliantProfilePayload(raw: Record<string, unknown>): Compl
         constraints[key] = [Number(pair[0]), Number(pair[1])];
       }
     }
+    if (typeof map.anchor_symmetric === 'boolean') {
+      constraints.anchor_symmetric = map.anchor_symmetric;
+    }
   }
   const chartSettings = resolveChartSettings(raw.chartSettings ?? raw.chart_settings);
   const chartScales = resolveChartScales(raw.chartScales ?? raw.chart_scales);
@@ -960,6 +967,15 @@ export function anchorY(p: CompliantParams): number {
 /** World-space anchor center A at rest (Y = 0), tangent to the bottom surface (y = 0). */
 export function anchorPoint(p: CompliantParams): Pt {
   return [-p.anchor_distance, anchorY(p)];
+}
+
+/** Return [aLo, aHi] with 0 <= aLo <= aHi representing [-aHi, -aLo] U [aLo, aHi] around center. */
+export function anchorSymmetricRange(range: [number, number]): [number, number] {
+  const lo = Math.min(range[0], range[1]);
+  const hi = Math.max(range[0], range[1]);
+  if (lo >= 0) return [lo, hi];
+  if (hi <= 0) return [-hi, -lo];
+  return [0, Math.max(-lo, hi)];
 }
 
 /** Allowable stress limit in MPa after applying the solver safety factor (default 1.0 when unset). */

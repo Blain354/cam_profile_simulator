@@ -7,7 +7,7 @@ import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import { buildMechanismGif } from './mechanismGif';
 import {
-  LOAD_FACTOR, MEMBERS, MOTOR_RPM, anchorPoint, bezier, deflected, effectivePinchY, interp, interpNullable,
+  LOAD_FACTOR, MEMBERS, MOTOR_RPM, anchorPoint, anchorSymmetricRange, bezier, deflected, effectivePinchY, interp, interpNullable,
   leftNormal, nearestToWall, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
@@ -233,7 +233,7 @@ export function CompliantSchematic({
     if (!what) return;
     const p = toWorld(event);
     if (!p) return;
-    if (what.kind === 'anchor') onSetShape('anchor_distance', Math.min(12, Math.max(-2, -p[0])));
+    if (what.kind === 'anchor') onSetShape('anchor_distance', Math.min(12, Math.max(-12, -p[0])));
     else if (what.kind === 'junction') onPatchParams({ junction_x: p[0], junction_y: Math.max(1, p[1]) });
     else if (what.kind === 'pinch') onSetShape('pinch_y', Math.max(0.5, p[1]));
     else {
@@ -750,6 +750,17 @@ export function CompliantSchematic({
           {/* Hover highlight & search-zone overlay when hovering a Spline Bounds card */}
           {hoveredBound && bounds && (() => {
             if (hoveredBound === 'anchor') {
+              const sym = constraints.anchor_symmetric === true;
+              if (sym) {
+                const [aLo, aHi] = anchorSymmetricRange(bounds.anchor_distance);
+                return (
+                  <g data-layer="bound-hover" pointerEvents="none">
+                    <line x1={-aHi} y1={-anchor[1]} x2={-aLo} y2={-anchor[1]} stroke="#f59e0b" strokeWidth={0.45} strokeOpacity={0.45} strokeLinecap="round" />
+                    <line x1={aLo} y1={-anchor[1]} x2={aHi} y2={-anchor[1]} stroke="#f59e0b" strokeWidth={0.45} strokeOpacity={0.45} strokeLinecap="round" />
+                    <circle cx={anchor[0]} cy={-anchor[1]} r={0.85} fill="#f59e0b" fillOpacity={0.2} stroke="#f59e0b" strokeWidth={0.14} />
+                  </g>
+                );
+              }
               const x1 = -bounds.anchor_distance[1];
               const x2 = -bounds.anchor_distance[0];
               return (

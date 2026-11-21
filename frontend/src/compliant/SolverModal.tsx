@@ -19,6 +19,7 @@ const CONSTRAINT_LABELS: Record<string, string> = {
   stress: 'Stress > material strength',
   seal_y0: 'Not sealed at Y = 0 (preload lost)',
   tube: 'Member L/R hits tube (< clearance)',
+  crossing: 'Members cross each other',
   shell: 'Shell housing clearance',
   pivot: 'Carriage pivot clearance',
   pinch: 'Pinch floor / ceiling margin',

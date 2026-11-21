@@ -376,3 +376,19 @@ test('Results accordion and Chamber chart display 0 -> 100% inflation time, pass
   expect(getByText('0.68 Hz / 0.48 Hz')).toBeTruthy();
   expect(getByText(/t100 735 ms · f 0\.68 Hz · BW 0\.48 Hz/)).toBeTruthy();
 });
+
+test('Spline bounds Anchor card enables Symmetric (±) by default and displays both mirrored intervals', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })));
+  const { getByText, getByLabelText } = render(<CompliantBars mode="finder" onOpenExplorer={() => {}} />);
+
+  fireEvent.click(getByText('Spline bounds'));
+  const minInput = getByLabelText('Anchor (A) min') as HTMLInputElement;
+  const maxInput = getByLabelText('Anchor (A) max') as HTMLInputElement;
+  const symToggle = getByLabelText('Symmetric anchor range around center') as HTMLInputElement;
+
+  expect(symToggle.checked).toBe(true);
+  fireEvent.change(minInput, { target: { value: '2.5' } });
+  fireEvent.change(maxInput, { target: { value: '5.8' } });
+
+  expect(getByText('[-5.8..-2.5] & [2.5..5.8]')).toBeTruthy();
+});

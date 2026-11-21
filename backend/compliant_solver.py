@@ -32,6 +32,9 @@ try:
         _params_from_mapping,
         _row_to_params,
         admission_score,
+        anchor_symmetric_range,
+        anchor_val_to_z,
+        anchor_z_to_val,
         compute_compliant,
         handle_point,
         normalize_goal_weights,
@@ -49,6 +52,9 @@ except ImportError:
         _params_from_mapping,
         _row_to_params,
         admission_score,
+        anchor_symmetric_range,
+        anchor_val_to_z,
+        anchor_z_to_val,
         compute_compliant,
         handle_point,
         normalize_goal_weights,
@@ -56,7 +62,7 @@ except ImportError:
     from .storage import CompliantExperimentStorage
 
 
-CONSTRAINT_KEYS = ("stress", "seal_y0", "tube", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
+CONSTRAINT_KEYS = ("stress", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
 
 SOLVER_METHODS = ("hybrid", "brute_force", "evolutionary", "local_refine")
 
@@ -76,6 +82,8 @@ def _classify_rejections(result: CompliantResult) -> List[str]:
         reasons.append("seal_y0")
     if not getattr(result, "tube_ok", True):
         reasons.append("tube")
+    if not getattr(result, "crossing_ok", True):
+        reasons.append("crossing")
     if not result.shell_ok:
         reasons.append("shell")
     if not result.pivot_ok:
@@ -243,14 +251,25 @@ def run_time_budgeted_solve(
     span = highs - lows
     free_mask = span > 1e-9
 
+    idx_anchor = keys.index("anchor_distance")
     idx_pinch = keys.index("pinch_y")
     idx_h0 = keys.index("closed_carriage_height")
     idx_jx = keys.index("junction_x")
     idx_jy = keys.index("junction_y")
+    anchor_sym = bool(c.anchor_symmetric)
+    a_lo, a_hi = anchor_symmetric_range(lows[idx_anchor], highs[idx_anchor])
+    anchor_sym_active = anchor_sym and a_hi > 1e-9
+    clip_lows = lows.copy()
+    clip_highs = highs.copy()
+    if anchor_sym_active:
+        free_mask[idx_anchor] = True
+        clip_lows[idx_anchor] = -a_hi
+        clip_highs[idx_anchor] = a_hi
     if c.target_pinch_from_top_mm is not None:
         free_mask[idx_pinch] = False
 
     free_idx = np.flatnonzero(free_mask)
+    local_anchor = int(np.where(free_idx == idx_anchor)[0][0]) if anchor_sym_active else -1
     d = len(free_idx)
     free_vars = [keys[i] for i in free_idx]
     fixed_vars = [keys[i] for i in range(len(keys)) if not free_mask[i]]
@@ -301,15 +320,22 @@ def run_time_budgeted_solve(
 
     def z_to_row(z: np.ndarray, side_base: CompliantParams) -> np.ndarray:
         row = np.array([getattr(side_base, k) for k in keys], dtype=float)
-        row = np.clip(row, lows, highs)
+        row = np.clip(row, clip_lows, clip_highs)
         if d > 0:
-            row[free_idx] = lows[free_idx] + np.clip(z, 0.0, 1.0) * span[free_idx]
+            zc = np.clip(z, 0.0, 1.0)
+            row[free_idx] = lows[free_idx] + zc * span[free_idx]
+            if anchor_sym_active:
+                row[idx_anchor] = anchor_z_to_val(float(zc[local_anchor]), a_lo, a_hi)
         return row
 
     def row_to_z(row: np.ndarray) -> np.ndarray:
         if d == 0:
             return np.zeros(0, dtype=float)
-        return np.clip((row[free_idx] - lows[free_idx]) / span[free_idx], 0.0, 1.0)
+        safe_span = np.where(span[free_idx] > 1e-9, span[free_idx], 1.0)
+        z = np.clip((row[free_idx] - lows[free_idx]) / safe_span, 0.0, 1.0)
+        if anchor_sym_active:
+            z[local_anchor] = anchor_val_to_z(float(row[idx_anchor]), a_lo, a_hi)
+        return z
 
     def _compute_bound_hits(params: Optional[CompliantParams]) -> List[dict]:
         if params is None:
@@ -318,6 +344,16 @@ def run_time_budgeted_solve(
         for i in free_idx:
             key = keys[i]
             val = float(getattr(params, key))
+            if i == idx_anchor and anchor_sym_active:
+                w = a_hi - a_lo
+                if w <= 1e-9:
+                    continue
+                frac = (abs(val) - a_lo) / w
+                if frac <= 0.03:
+                    hits.append({"key": key, "side": "min", "value": round(val, 4), "lo": round(-a_hi, 4), "hi": round(a_hi, 4)})
+                elif frac >= 0.97:
+                    hits.append({"key": key, "side": "max", "value": round(val, 4), "lo": round(-a_hi, 4), "hi": round(a_hi, 4)})
+                continue
             frac = (val - lows[i]) / span[i]
             if frac <= 0.03:
                 hits.append({"key": key, "side": "min", "value": round(val, 4), "lo": round(float(lows[i]), 4), "hi": round(float(highs[i]), 4)})
@@ -390,8 +426,8 @@ def run_time_budgeted_solve(
         coverage = [
             {
                 "key": k,
-                "lo": round(float(lows[keys.index(k)]), 4),
-                "hi": round(float(highs[keys.index(k)]), 4),
+                "lo": round(float(clip_lows[keys.index(k)]), 4),
+                "hi": round(float(clip_highs[keys.index(k)]), 4),
                 "tested_bins": tested_hist[k],
                 "feasible_bins": feasible_hist[k],
                 "best_val": round(float(getattr(best_p, k)), 4) if best_p is not None else None,
@@ -459,6 +495,7 @@ def run_time_budgeted_solve(
                 "max_rotation_deg": c.max_rotation_deg,
                 "stroke_fixed": "stroke" in fixed_vars,
                 "stroke_mm": base.stroke,
+                "anchor_symmetric": anchor_sym,
             },
             "coverage": coverage,
             "scatter": scatter[-250:],
@@ -475,7 +512,7 @@ def run_time_budgeted_solve(
         nonlocal tested, feasible_count, best_overall, best_feasible, last_emit
         nonlocal best_preview, last_live_invalid_t, last_live_valid_t
         row = z_to_row(z, side_base)
-        params = _apply_pinch_goal(_row_to_params(side_base, row, lows, highs, keys), c)
+        params = _apply_pinch_goal(_row_to_params(side_base, row, clip_lows, clip_highs, keys), c)
         result = compute_compliant(params, fast=True, constraints=c)
         score = admission_score(result, c, goal=goal, goal_weights=norm_weights)
         tested += 1

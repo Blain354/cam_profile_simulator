@@ -5,7 +5,7 @@ import { Accordion, ParameterSlider, StatRow } from '../components';
 import { TubeModelControls } from '../TubeModel';
 import {
   ALL_SOLVER_GOALS, CONTEXT_LIMITS, CONTEXT_VAR_KEYS, LIMITS, MEMBERS, SOLVER_GOAL_META,
-  TIME_BUDGET_PRESETS, allowableStressMpa, effectivePinchY, memberChords, mm, worldQuadrantsToUV,
+  TIME_BUDGET_PRESETS, allowableStressMpa, anchorSymmetricRange, effectivePinchY, memberChords, mm, worldQuadrantsToUV,
 } from './types';
 import type {
   CompliantParams, CompliantResult, ContextFixedMap, ContextToggleKey, ContextVarKey,
@@ -950,15 +950,60 @@ export function SplineBoundsList({
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <ScalarBoundCell
-            label="Anchor (A)"
-            accent="#f59e0b"
-            range={bounds.anchor_distance}
-            step={LIMITS.anchor_distance.step}
-            unit="mm"
-            onChange={(next) => onPatchBounds({ anchor_distance: next })}
-            onHover={(active) => onHover(active ? 'anchor' : null)}
-          />
+          {(() => {
+            const sym = constraints.anchor_symmetric === true;
+            const [aLo, aHi] = anchorSymmetricRange(bounds.anchor_distance);
+            const fmtN = (n: number) => Number(n.toFixed(2));
+            return (
+              <div
+                onMouseEnter={() => onHover('anchor')}
+                onMouseLeave={() => onHover(null)}
+                className="rounded-lg border border-neutral-700 bg-neutral-900/70 p-2 space-y-1 hover:border-amber-500/60 transition-colors"
+              >
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="font-semibold truncate" style={{ color: '#f59e0b' }}>
+                    Anchor (A)
+                  </span>
+                  <span className="text-neutral-500">mm</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <input
+                    aria-label="Anchor (A) min"
+                    type="number"
+                    value={bounds.anchor_distance[0]}
+                    step={LIMITS.anchor_distance.step}
+                    onChange={(e) => onPatchBounds({ anchor_distance: [Number(e.target.value), bounds.anchor_distance[1]] })}
+                    className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-[10px] text-neutral-100"
+                  />
+                  <input
+                    aria-label="Anchor (A) max"
+                    type="number"
+                    value={bounds.anchor_distance[1]}
+                    step={LIMITS.anchor_distance.step}
+                    onChange={(e) => onPatchBounds({ anchor_distance: [bounds.anchor_distance[0], Number(e.target.value)] })}
+                    className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-[10px] text-neutral-100"
+                  />
+                </div>
+                <label className="flex items-center gap-1 pt-0.5 text-[10px] text-neutral-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    aria-label="Symmetric anchor range around center"
+                    checked={sym}
+                    onChange={(e) => onConstraintsChange({ anchor_symmetric: e.target.checked })}
+                    className="accent-amber-500"
+                  />
+                  <span>Symmetric (±)</span>
+                </label>
+                {sym && aHi > 0 && (
+                  <div className="text-[9px] font-mono text-amber-300/80 leading-tight">
+                    {aLo > 0
+                      ? `[${fmtN(-aHi)}..${fmtN(-aLo)}] & [${fmtN(aLo)}..${fmtN(aHi)}]`
+                      : `[${fmtN(-aHi)}..${fmtN(aHi)}]`}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {constraints.target_pinch_from_top_mm != null ? (
             <div
               onMouseEnter={() => onHover('pinch')}
@@ -1377,6 +1422,9 @@ export function ResultsAccordion({
         />
         <StatRow label="Shell clearance" value={mm(result?.shell_clearance_mm)} highlight={result ? !result.shell_ok : false} />
         <StatRow label="Tube clearance (L/R)" value={mm(result?.tube_clearance_mm)} highlight={result?.tube_ok === false} />
+        {result?.crossing_ok === false && (
+          <StatRow label="Member crossing" value="Crossing detected" highlight={true} />
+        )}
         <StatRow
           label="Y=0 gap / flex"
           value={result?.gap_y0_mm == null ? '—' : `${result.gap_y0_mm.toFixed(3)} mm (+${(result.flex_y0_mm ?? 0).toFixed(3)})`}

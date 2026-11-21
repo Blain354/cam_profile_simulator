@@ -162,6 +162,7 @@ class CompliantConstraints:
     junction_exclude_y: Optional[Tuple[float, float]] = None
     target_pinch_from_top_mm: Optional[float] = None
     target_attack_angle_deg: float = 0.0
+    anchor_symmetric: bool = False
 
 
 def _params_from_mapping(data: dict) -> CompliantParams:
@@ -193,6 +194,8 @@ def _constraints_from_mapping(data: Optional[dict]) -> CompliantConstraints:
             lo, hi = float(pair[0]), float(pair[1])
             if hi > lo:
                 cleaned[k] = (lo, hi)
+    if "anchor_symmetric" in data and data["anchor_symmetric"] is not None:
+        cleaned["anchor_symmetric"] = bool(data["anchor_symmetric"])
     return CompliantConstraints(**cleaned)  # type: ignore[arg-type]
 
 
@@ -252,6 +255,7 @@ class CompliantResult:
     pinch_contact_x: float = 0.0
     junction_ok: bool = True
     tube_ok: bool = True
+    crossing_ok: bool = True
     tube_clearance_mm: Optional[float] = None
     kinematic_gain: Optional[float] = None
     attack_angle_deg: Optional[float] = None
@@ -292,7 +296,7 @@ def _empty(message: str, **kw) -> CompliantResult:
         feasible=False, message=message, Y_positions=[], flow_a=[], flow_b=[],
         gap_a=[], gap_b=[], gap_rigid_a=[], closed_gap=0.0, full_open_gap=0.0,
         flow_slope_mean=None, flow_slope_max=None, max_stress_mpa=None, stress_margin=None,
-        plastic_ok=False, shell_ok=False, pivot_ok=False, pinch_ok=False, rotation_ok=False,
+        plastic_ok=False, shell_ok=False, pivot_ok=False, pinch_ok=False, rotation_ok=False, crossing_ok=False,
         shell_clearance_mm=None, pivot_clearance_mm=None, pinch_ceiling_margin_mm=None,
         max_rotation_deg=None, wall_x=0.0, pivot_height_y0=0.0, anchor_x=0.0, pivot_x=0.0,
         pinch_x=0.0, travel_sign=1.0, force_a=[], force_b=[], stress_a=[], stress_b=[],
@@ -574,6 +578,113 @@ def _pivot_clearance(xy, radius, pivot, pin_r, exempt) -> float:
     return float(np.min(dist)) if dist.size else 0.0
 
 
+def _member_segment_pairs(member_indices: List[List[int]]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return index arrays (a1, a2, b1, b2) for all pairs of member segments that do not share a node."""
+    segs: List[Tuple[int, int]] = []
+    for idxs in member_indices:
+        for i in range(len(idxs) - 1):
+            segs.append((idxs[i], idxs[i + 1]))
+    a1, a2, b1, b2 = [], [], [], []
+    m = len(segs)
+    for i in range(m):
+        u1, v1 = segs[i]
+        for j in range(i + 1, m):
+            u2, v2 = segs[j]
+            if u1 == u2 or u1 == v2 or v1 == u2 or v1 == v2:
+                continue
+            a1.append(u1)
+            a2.append(v1)
+            b1.append(u2)
+            b2.append(v2)
+    return (
+        np.array(a1, dtype=int),
+        np.array(a2, dtype=int),
+        np.array(b1, dtype=int),
+        np.array(b2, dtype=int),
+    )
+
+
+def _has_member_crossing(
+    xy: np.ndarray,
+    a1: np.ndarray,
+    a2: np.ndarray,
+    b1: np.ndarray,
+    b2: np.ndarray,
+) -> bool:
+    """True if any two non-adjacent member segments intersect (cross or self-intersect)."""
+    if a1.size == 0:
+        return False
+    eps = 1e-9
+    p1 = xy[a1]
+    p2 = xy[a2]
+    q1 = xy[b1]
+    q2 = xy[b2]
+    ax0 = np.minimum(p1[:, 0], p2[:, 0])
+    ax1 = np.maximum(p1[:, 0], p2[:, 0])
+    cx0 = np.minimum(q1[:, 0], q2[:, 0])
+    cx1 = np.maximum(q1[:, 0], q2[:, 0])
+    ay0 = np.minimum(p1[:, 1], p2[:, 1])
+    ay1 = np.maximum(p1[:, 1], p2[:, 1])
+    cy0 = np.minimum(q1[:, 1], q2[:, 1])
+    cy1 = np.maximum(q1[:, 1], q2[:, 1])
+    ov = (ax1 >= cx0 - eps) & (cx1 >= ax0 - eps) & (ay1 >= cy0 - eps) & (cy1 >= ay0 - eps)
+    if not np.any(ov):
+        return False
+    p1, p2, q1, q2 = p1[ov], p2[ov], q1[ov], q2[ov]
+    ax0, ax1, ay0, ay1 = ax0[ov], ax1[ov], ay0[ov], ay1[ov]
+    cx0, cx1, cy0, cy1 = cx0[ov], cx1[ov], cy0[ov], cy1[ov]
+    ab = p2 - p1
+    cd = q2 - q1
+    ac = q1 - p1
+    ad = q2 - p1
+    ca = p1 - q1
+    cb = p2 - q1
+    d1 = ab[:, 0] * ac[:, 1] - ab[:, 1] * ac[:, 0]
+    d2 = ab[:, 0] * ad[:, 1] - ab[:, 1] * ad[:, 0]
+    d3 = cd[:, 0] * ca[:, 1] - cd[:, 1] * ca[:, 0]
+    d4 = cd[:, 0] * cb[:, 1] - cd[:, 1] * cb[:, 0]
+    if np.any((d1 * d2 < -eps) & (d3 * d4 < -eps)):
+        return True
+    on_c = (np.abs(d1) <= eps) & (q1[:, 0] >= ax0 - eps) & (q1[:, 0] <= ax1 + eps) & (q1[:, 1] >= ay0 - eps) & (q1[:, 1] <= ay1 + eps)
+    on_d = (np.abs(d2) <= eps) & (q2[:, 0] >= ax0 - eps) & (q2[:, 0] <= ax1 + eps) & (q2[:, 1] >= ay0 - eps) & (q2[:, 1] <= ay1 + eps)
+    on_a = (np.abs(d3) <= eps) & (p1[:, 0] >= cx0 - eps) & (p1[:, 0] <= cx1 + eps) & (p1[:, 1] >= cy0 - eps) & (p1[:, 1] <= cy1 + eps)
+    on_b = (np.abs(d4) <= eps) & (p2[:, 0] >= cx0 - eps) & (p2[:, 0] <= cx1 + eps) & (p2[:, 1] >= cy0 - eps) & (p2[:, 1] <= cy1 + eps)
+    return bool(np.any(on_c | on_d | on_a | on_b))
+
+
+def anchor_symmetric_range(lo: float, hi: float) -> Tuple[float, float]:
+    """Return (a_lo, a_hi) with 0 <= a_lo <= a_hi representing [-a_hi, -a_lo] U [a_lo, a_hi]."""
+    lo, hi = float(min(lo, hi)), float(max(lo, hi))
+    if lo >= 0.0:
+        return lo, hi
+    if hi <= 0.0:
+        return -hi, -lo
+    return 0.0, max(-lo, hi)
+
+
+def anchor_z_to_val(z: float, a_lo: float, a_hi: float) -> float:
+    """Map z in [0, 1] piecewise-linearly onto [-a_hi, -a_lo] (z < 0.5) and [a_lo, a_hi] (z >= 0.5)."""
+    zc = float(np.clip(z, 0.0, 1.0))
+    w = a_hi - a_lo
+    if zc < 0.5:
+        return -a_hi + (zc * 2.0) * w
+    return a_lo + ((zc - 0.5) * 2.0) * w
+
+
+def anchor_val_to_z(val: float, a_lo: float, a_hi: float) -> float:
+    """Inverse of anchor_z_to_val."""
+    w = a_hi - a_lo
+    if val < 0.0:
+        if w <= 1e-9:
+            return 0.25
+        vc = float(np.clip(val, -a_hi, -a_lo))
+        return min(0.5 - 1e-9, 0.5 * (vc + a_hi) / w) if a_lo > 0.0 else 0.5 * (vc + a_hi) / w
+    if w <= 1e-9:
+        return 0.75
+    vc = float(np.clip(val, a_lo, a_hi))
+    return 0.5 + 0.5 * (vc - a_lo) / w
+
+
 def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optional[CompliantConstraints] = None) -> CompliantResult:
     """Flow, stress and clearances for one shape. `passes` is the solver's hard constraints."""
     c = constraints or CompliantConstraints()
@@ -686,18 +797,28 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     i_open = int(np.argmin(np.abs(y - p.stroke)))
     i_rest = int(np.argmin(np.abs(y)))
     i_closed = int(np.argmin(np.abs(y + p.stroke)))
-    shell_open = _housing_clearance(pose(y[i_open], force[i_open]), radius, wall_x, ceiling, exempt_anchor)
-    shell_rest = _housing_clearance(pose(y[i_rest], force[i_rest]), radius, wall_x, ceiling, exempt_anchor)
-    shell_closed = _housing_clearance(pose(y[i_closed], force[i_closed]), radius, wall_x, ceiling, exempt_anchor)
+    pose_open = pose(y[i_open], force[i_open])
+    pose_rest = pose(y[i_rest], force[i_rest])
+    pose_closed = pose(y[i_closed], force[i_closed])
+    shell_open = _housing_clearance(pose_open, radius, wall_x, ceiling, exempt_anchor)
+    shell_rest = _housing_clearance(pose_rest, radius, wall_x, ceiling, exempt_anchor)
+    shell_closed = _housing_clearance(pose_closed, radius, wall_x, ceiling, exempt_anchor)
     shell_clearance = min(shell_open, shell_rest, shell_closed)
     shell_ok = bool(shell_clearance > c.min_shell_clearance_mm)
+    member_indices = [[node_of[(name, i)] for i in range(len(samples[name]))] for name in ("l", "r", "f")]
+    seg_a1, seg_a2, seg_b1, seg_b2 = _member_segment_pairs(member_indices)
+    crossing_ok = not (
+        _has_member_crossing(pose_rest, seg_a1, seg_a2, seg_b1, seg_b2)
+        or _has_member_crossing(pose_open, seg_a1, seg_a2, seg_b1, seg_b2)
+        or _has_member_crossing(pose_closed, seg_a1, seg_a2, seg_b1, seg_b2)
+    )
     lr_mask = np.zeros(n, dtype=bool)
     for name in ("l", "r"):
         for i in range(len(samples[name])):
             lr_mask[node_of[(name, i)]] = True
-    tube_open = _tube_clearance_lr(pose(y[i_open], force[i_open]), radius, wall_x, p.tube_od, lr_mask)
-    tube_rest = _tube_clearance_lr(pose(y[i_rest], force[i_rest]), radius, wall_x, p.tube_od, lr_mask)
-    tube_closed = _tube_clearance_lr(pose(y[i_closed], force[i_closed]), radius, wall_x, p.tube_od, lr_mask)
+    tube_open = _tube_clearance_lr(pose_open, radius, wall_x, p.tube_od, lr_mask)
+    tube_rest = _tube_clearance_lr(pose_rest, radius, wall_x, p.tube_od, lr_mask)
+    tube_closed = _tube_clearance_lr(pose_closed, radius, wall_x, p.tube_od, lr_mask)
     tube_clearance = min(tube_open, tube_rest, tube_closed)
     tube_ok = bool(c.min_tube_clearance_mm <= 0.0 or tube_clearance >= c.min_tube_clearance_mm - 1e-9)
     pivot_clear = min(
@@ -847,7 +968,9 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         notes.append(
             "Member L/R comes within %.2f mm of the tube (min %.2f mm)." % (tube_clearance, c.min_tube_clearance_mm)
         )
-    passes = bool(opens and plastic_ok and shell_ok and pivot_ok and pinch_ok and rotation_ok and junction_ok and sealed_at_y0 and tube_ok)
+    if not crossing_ok:
+        notes.append("Members cross each other.")
+    passes = bool(opens and plastic_ok and shell_ok and pivot_ok and pinch_ok and rotation_ok and junction_ok and sealed_at_y0 and tube_ok and crossing_ok)
     message = "ok" if passes else " ".join(notes) or "This shape does not pass."
 
     def line(name):
@@ -879,6 +1002,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         anchor=anchor.tolist(), junction=junction.tolist(), pinch=pinch.tolist(), pivot=pivot.tolist(),
         passes=passes,
         tube_ok=tube_ok,
+        crossing_ok=crossing_ok,
         tube_clearance_mm=tube_clearance,
         kinematic_gain=kinematic_gain,
         attack_angle_deg=attack_angle_deg,
@@ -979,6 +1103,8 @@ def admission_score(
             pen += 200.0
         if not result.tube_ok and result.tube_clearance_mm is not None:
             pen += max(0.0, c.min_tube_clearance_mm - result.tube_clearance_mm) * 200.0
+        if not getattr(result, "crossing_ok", True):
+            pen += 300.0
         if not result.sealed_at_y0:
             # Penalize smoothly by both leak past closed_gap and excess Y=0 flex past max_y0_flex_mm.
             leak = 0.0
@@ -1061,8 +1187,17 @@ def solve_compliant(
     lows, highs = np.array(lows), np.array(highs)
     span = highs - lows
     free = span > 1e-9
+    idx_anchor = keys.index("anchor_distance")
     idx_pinch = keys.index("pinch_y")
     idx_h0 = keys.index("closed_carriage_height")
+    anchor_sym = bool(c.anchor_symmetric)
+    a_lo, a_hi = anchor_symmetric_range(lows[idx_anchor], highs[idx_anchor])
+    clip_lows = lows.copy()
+    clip_highs = highs.copy()
+    if anchor_sym and a_hi > 1e-9:
+        free[idx_anchor] = True
+        clip_lows[idx_anchor] = -a_hi
+        clip_highs[idx_anchor] = a_hi
     if c.target_pinch_from_top_mm is not None:
         free[idx_pinch] = False
 
@@ -1082,9 +1217,15 @@ def solve_compliant(
     for inv in sides:
         side_base = replace(base, pivot_inverted=inv)
         current = np.array([getattr(side_base, key) for key in keys])
-        rows = [np.clip(current, lows, highs)]
+        cur_clamped = np.clip(current, clip_lows, clip_highs)
+        if anchor_sym and a_hi > 1e-9:
+            cur_clamped[idx_anchor] = anchor_z_to_val(anchor_val_to_z(current[idx_anchor], a_lo, a_hi), a_lo, a_hi)
+        rows = [cur_clamped]
         if np.any(free) and per_side_budget > 1:
             draw = rng.random((per_side_budget - 1, len(keys))) * span + lows
+            if anchor_sym and a_hi > 1e-9:
+                for r in draw:
+                    r[idx_anchor] = anchor_z_to_val(float(rng.random()), a_lo, a_hi)
             # Clamp free pinch_y draws into the allowed floor/ceiling margin window when possible.
             if free[idx_pinch] and (c.pinch_ceiling_margin_mm > 0 or c.pinch_floor_margin_mm > 0):
                 for r in draw:
@@ -1095,7 +1236,7 @@ def solve_compliant(
             rows.extend(list(draw))
         side_scored = []
         for row in rows:
-            params = _apply_pinch_goal(_row_to_params(side_base, row, lows, highs, keys), c)
+            params = _apply_pinch_goal(_row_to_params(side_base, row, clip_lows, clip_highs, keys), c)
             result = compute_compliant(params, fast=True, constraints=c)
             side_scored.append((admission_score(result, c), params, result))
         side_scored.sort(key=lambda item: item[0], reverse=True)
@@ -1107,8 +1248,12 @@ def solve_compliant(
                 continue
             for direction in (-1.0, 1.0):
                 trial = np.array([getattr(best_params, k) for k in keys])
-                trial[i] = np.clip(trial[i] + direction * step[i], lows[i], highs[i])
-                params = _apply_pinch_goal(_row_to_params(side_base, trial, lows, highs, keys), c)
+                if i == idx_anchor and anchor_sym and a_hi > 1e-9:
+                    z_a = anchor_val_to_z(trial[i], a_lo, a_hi)
+                    trial[i] = anchor_z_to_val(float(np.clip(z_a + direction * 0.15, 0.0, 1.0)), a_lo, a_hi)
+                else:
+                    trial[i] = np.clip(trial[i] + direction * step[i], lows[i], highs[i])
+                params = _apply_pinch_goal(_row_to_params(side_base, trial, clip_lows, clip_highs, keys), c)
                 result = compute_compliant(params, fast=True, constraints=c)
                 score = admission_score(result, c)
                 side_scored.append((score, params, result))

@@ -709,6 +709,12 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
           for (const key of SHAPE_KEYS) {
             if (key === 'pinch_y' && constraints.target_pinch_from_top_mm != null) {
               lockedCount += 1;
+            } else if (
+              key === 'anchor_distance'
+              && constraints.anchor_symmetric
+              && Math.max(Math.abs(bounds.anchor_distance[0]), Math.abs(bounds.anchor_distance[1])) > 1e-9
+            ) {
+              freeCount += 1;
             } else if (Math.abs(bounds[key][1] - bounds[key][0]) > 1e-9) {
               freeCount += 1;
             } else {
