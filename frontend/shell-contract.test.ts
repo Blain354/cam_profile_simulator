@@ -20,3 +20,11 @@ test('the workspace spaces its blocks with gap, not a top margin under the heade
   expect(app).not.toMatch(/flex-1 mt-4 grid/)
   expect(read('./src/ProfileBuilder.tsx')).not.toMatch(/flex-1 mt-4 grid/)
 })
+
+test('the page itself does not scroll and the site footer is gone', () => {
+  const app = read('./src/App.tsx')
+  const css = read('./src/index.css')
+  expect(app).not.toContain('SiteFooter')
+  expect(css).toMatch(/overflow:\s*clip/)
+  expect(css).not.toMatch(/\.cam-workspace\s*\{\s*overflow-y:\s*auto/)
+})

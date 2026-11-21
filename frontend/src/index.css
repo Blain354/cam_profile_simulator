@@ -15,17 +15,47 @@
   --color-neutral-950: var(--bui-bg-2);
 }
 :root { font-family: var(--bui-font-body); line-height: 1.5; color: var(--bui-text); }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: transparent; }
+/* The tool is the page: the window never scrolls, the shell fills it, panes scroll inside. */
+html { block-size: 100dvh; overflow: clip; }
+body { margin: 0; min-width: 320px; block-size: 100%; overflow: clip; background: transparent; }
+#root { display: flex; flex-direction: column; block-size: 100%; min-block-size: 0; overflow: clip; }
+.cam-workspace {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  block-size: 100%;
+  max-block-size: 100%;
+}
 .cam-kit-header { flex-wrap: wrap; }
-.cam-kit-header > div { min-width: 0; flex-wrap: wrap; }
+.cam-kit-header > div { min-width: 0; max-width: 100%; flex-wrap: wrap; }
 /* Wide screens keep the header on one row: the context pill truncates instead of wrapping. */
 @media (min-width: 1440px) {
-  .cam-kit-header, .cam-kit-header > div { flex-wrap: nowrap; }
+  .cam-kit-header, .cam-kit-header > div, .cam-tab-row, .cam-tab-row .bui-tablist { flex-wrap: nowrap; }
+  .cam-tab-row { flex-shrink: 0; }
+}
+@media (max-width: 1439px) {
+  .cam-tab-row .bui-tablist { flex-wrap: wrap; }
+}
+/* Below the desktop columns, panels stack at their own height and the area under
+   the header scrolls. The window itself stays fixed. */
+@media (max-width: 1023px) {
+  .cam-workspace > .flex-1,
+  .cam-workspace > .cam-keepalive > .flex-1 {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+    overscroll-behavior: contain;
+    min-block-size: 0;
+  }
+  .cam-workspace > .flex-1 > div,
+  .cam-workspace > .cam-keepalive > .flex-1 > div {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    min-block-size: min-content;
+  }
 }
 @media (max-width: 640px) {
-  .cam-workspace { overflow-y: auto; }
-  .cam-workspace > .flex-1, .cam-workspace > .cam-keepalive > .flex-1 { flex: none; flex-direction: column; overflow: visible; }
-  .cam-workspace > .flex-1 > div, .cam-workspace > .cam-keepalive > .flex-1 > div { width: 100%; min-width: 0; }
   .cam-kit-header { gap: 8px; }
   .cam-kit-header > div { gap: 8px; max-width: 100%; }
 }

@@ -1,7 +1,5 @@
 import { Textarea } from '@blain-projects/ui';
-import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input, SiteFooter } from '@blain-projects/ui';
-import { ageOf } from './lib/age';
-import { project } from './project';
+import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
@@ -547,7 +545,7 @@ export default function App() {
 
       <BlueprintBackground />
       {/* Shared chrome; simulation controls stay in the tool. */}
-      <Header variant="full-width" className="cam-kit-header">
+      <Header variant="full-width" blur={false} className="cam-kit-header">
         <div className="flex items-center gap-4">
           <div className="shrink-0">
             <h1 className="text-2xl font-bold text-neutral-100 leading-tight hidden lg:block">
@@ -557,9 +555,9 @@ export default function App() {
           </div>
 
           {/* Tab Bar */}
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="cam-tab-row flex min-w-0 max-w-full flex-wrap items-center gap-2">
             {/* Plain buttons with the kit's tab classes, as in SubTabs: a kit ghost Button paints over the selected state. */}
-            <div className="bui-tablist flex shrink-0 items-center">
+            <div className="bui-tablist flex min-w-0 max-w-full flex-wrap items-center">
               {([
                 ['cam', 'Cam', Disc3],
                 ['linkage', 'Bar Linkage', Waypoints],
@@ -825,12 +823,6 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
-    {/* The tool keeps the whole first screen; the site footer follows it in the page. */}
-    <SiteFooter
-      {...project}
-      version={__APP_VERSION__}
-      commit={__APP_COMMIT__ ? { sha: __APP_COMMIT__, age: ageOf(__APP_COMMIT_DATE__) } : undefined}
-    />
     </TooltipHintsProvider>
     </MotionConfig>
   );

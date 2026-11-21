@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 
@@ -11,13 +11,13 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-test('the site footer sits under the tool with the repo and the version', () => {
+test('the tool fills the viewport and has no site footer', () => {
   const { container } = render(<App />)
-  const footer = container.querySelector('.bui-site-footer') as HTMLElement
-  expect(footer).toBeTruthy()
-  expect(within(footer).getByRole('link', { name: 'cam_profile_simulator' }).getAttribute('href'))
-    .toBe('https://github.com/Blain354/cam_profile_simulator')
-  expect(within(footer).getByText(__APP_VERSION__)).toBeTruthy()
+  expect(container.querySelector('.bui-site-footer')).toBeNull()
+  const shell = container.querySelector('.cam-workspace') as HTMLElement
+  expect(shell).toBeTruthy()
+  expect(shell.className).toContain('overflow-hidden')
+  expect(container.querySelector('.bui-header-fx')).toBeNull()
 })
 
 test('labels are in sentence case and the private tool stays sober', () => {
