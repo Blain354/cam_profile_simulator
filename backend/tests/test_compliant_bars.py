@@ -124,6 +124,20 @@ class ComputeTests(unittest.TestCase):
         self.assertEqual(len(res.flow_in_l_min), len(res.time_ms))
         self.assertEqual(len(res.flow_out_l_min), len(res.time_ms))
         self.assertGreater(max(res.chamber_kpa), 0.0)
+        # 0 -> 100 % inflation time (99 % equalization convention) and derived pass frequency / -3 dB bandwidth
+        self.assertIsNotNone(res.chamber_t100_ms)
+        self.assertGreater(res.chamber_t100_ms, res.chamber_t90_ms)
+        self.assertIsNotNone(res.chamber_cycle_freq_hz)
+        self.assertIsNotNone(res.chamber_bandwidth_hz)
+        t_sec = res.chamber_t100_ms / 1000.0
+        self.assertAlmostEqual(res.chamber_cycle_freq_hz, 1.0 / (2.0 * t_sec), places=6)
+        self.assertAlmostEqual(res.chamber_bandwidth_hz, 0.35 / t_sec, places=6)
+
+        # Fast mode also computes the 0 -> 100 % inflation estimate and frequencies for solver runners
+        res_fast = compute_compliant(params, fast=True)
+        self.assertIsNotNone(res_fast.chamber_t100_ms)
+        self.assertIsNotNone(res_fast.chamber_cycle_freq_hz)
+        self.assertIsNotNone(res_fast.chamber_bandwidth_hz)
 
     def test_time_budgeted_solver_and_experiment_storage(self):
         import tempfile

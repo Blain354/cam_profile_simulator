@@ -1043,6 +1043,7 @@ export function SolverRunners({
           className="w-full text-left text-xs px-2.5 py-1.5 rounded-lg border border-neutral-700 bg-neutral-900/50 text-neutral-300 hover:border-amber-500/60 hover:text-neutral-100"
         >
           {`Slope ${runner.slope == null ? '—' : runner.slope.toFixed(2)} · stress ${runner.max_stress_mpa == null ? '—' : runner.max_stress_mpa.toFixed(0)} MPa`}
+          {runner.chamber_t100_ms != null ? ` · t100 ${runner.chamber_t100_ms.toFixed(0)} ms (${runner.chamber_cycle_freq_hz?.toFixed(2) ?? '—'} Hz)` : ''}
           {runner.pinch_ceiling_margin_mm != null ? ` · ceil ${runner.pinch_ceiling_margin_mm.toFixed(1)} mm` : ''}
         </button>
       ))}
@@ -1345,6 +1346,24 @@ export function ResultsAccordion({
             value={`${result.chamber_t50_ms != null ? result.chamber_t50_ms.toFixed(0) : '—'} / ${result.chamber_t90_ms != null ? result.chamber_t90_ms.toFixed(0) : '—'} ms`}
           />
         )}
+        <StatRow
+          label="Inflate 0 → 100%"
+          value={
+            result?.chamber_t100_ms != null
+              ? `${result.chamber_t100_ms.toFixed(0)} ms (${(result.chamber_t100_ms / 1000).toFixed(2)} s)`
+              : '—'
+          }
+          highlight={result?.chamber_t100_ms != null}
+        />
+        <StatRow
+          label="Pass freq / BW (-3 dB)"
+          value={
+            result?.chamber_cycle_freq_hz != null && result?.chamber_bandwidth_hz != null
+              ? `${result.chamber_cycle_freq_hz.toFixed(2)} Hz / ${result.chamber_bandwidth_hz.toFixed(2)} Hz`
+              : '—'
+          }
+          highlight={result?.chamber_cycle_freq_hz != null}
+        />
         <StatRow
           label="Worst stress"
           value={

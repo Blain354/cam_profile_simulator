@@ -383,6 +383,9 @@ export interface CompliantResult {
   volume_out_ml?: number;
   chamber_t50_ms?: number | null;
   chamber_t90_ms?: number | null;
+  chamber_t100_ms?: number | null;
+  chamber_cycle_freq_hz?: number | null;
+  chamber_bandwidth_hz?: number | null;
 }
 
 export interface Runner {
@@ -401,6 +404,11 @@ export interface Runner {
   shell_clearance_mm: number | null;
   pivot_clearance_mm: number | null;
   pinch_ceiling_margin_mm?: number | null;
+  chamber_t50_ms?: number | null;
+  chamber_t90_ms?: number | null;
+  chamber_t100_ms?: number | null;
+  chamber_cycle_freq_hz?: number | null;
+  chamber_bandwidth_hz?: number | null;
   stroke?: number;
   pivot_inverted?: boolean;
   params: Partial<CompliantParams>;
@@ -596,6 +604,9 @@ export interface SolveSummary {
   best_y_90_mm: number | null;
   best_attack_angle_deg?: number | null;
   best_stress_mpa: number | null;
+  best_chamber_t100_ms?: number | null;
+  best_chamber_cycle_freq_hz?: number | null;
+  best_chamber_bandwidth_hz?: number | null;
   rejection_stats: RejectionStat[];
   bound_hits: BoundHit[];
   free_vars: string[];

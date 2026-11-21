@@ -729,7 +729,7 @@ export function SolverModal({
               />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-1">
+            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 pt-1">
               <div className="rounded-lg bg-neutral-900/80 px-3 py-2 border border-neutral-800">
                 <div className="text-[10px] uppercase text-neutral-400">Tested</div>
                 <div className="text-base font-mono font-bold text-white">{tested}</div>
@@ -759,6 +759,17 @@ export function SolverModal({
                   {s?.best_y_90_mm != null ? `${s.best_y_90_mm.toFixed(2)} mm` : '—'}
                   <span className="text-neutral-500"> · </span>
                   {s?.best_stress_mpa != null ? `${s.best_stress_mpa.toFixed(0)} MPa` : '—'}
+                </div>
+              </div>
+              <div className="rounded-lg bg-neutral-900/80 px-3 py-2 border border-neutral-800">
+                <div className="text-[10px] uppercase text-neutral-400">0→100% / Freq · BW</div>
+                <div className="text-xs font-mono font-bold text-emerald-300">
+                  {s?.best_chamber_t100_ms != null ? `${s.best_chamber_t100_ms.toFixed(0)} ms` : '—'}
+                  {s?.best_chamber_cycle_freq_hz != null && s?.best_chamber_bandwidth_hz != null && (
+                    <span className="text-neutral-300">
+                      {` · ${s.best_chamber_cycle_freq_hz.toFixed(2)} / ${s.best_chamber_bandwidth_hz.toFixed(2)} Hz`}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -1142,6 +1153,20 @@ export function SolverModal({
                               {stressPct != null && (
                                 <span className="text-[9px] text-neutral-500"> ({stressPct}%)</span>
                               )}
+                            </div>
+                          </div>
+                          <div className="rounded bg-neutral-950/70 px-2 py-1 border border-neutral-800/80">
+                            <div className="text-[9px] uppercase tracking-wide text-neutral-500">Inflate 0→100%</div>
+                            <div className="font-mono font-semibold text-emerald-300">
+                              {r.chamber_t100_ms != null ? `${r.chamber_t100_ms.toFixed(0)} ms` : '—'}
+                            </div>
+                          </div>
+                          <div className="rounded bg-neutral-950/70 px-2 py-1 border border-neutral-800/80">
+                            <div className="text-[9px] uppercase tracking-wide text-neutral-500">Freq / BW (-3 dB)</div>
+                            <div className="font-mono font-semibold text-neutral-200">
+                              {r.chamber_cycle_freq_hz != null && r.chamber_bandwidth_hz != null
+                                ? `${r.chamber_cycle_freq_hz.toFixed(2)} / ${r.chamber_bandwidth_hz.toFixed(2)} Hz`
+                                : '—'}
                             </div>
                           </div>
                         </div>

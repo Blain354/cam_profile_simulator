@@ -135,9 +135,21 @@ export function CompliantCharts({
     return ['auto', 'auto'] as [string, string];
   };
 
-  const riseLabel = result?.chamber_t50_ms != null || result?.chamber_t90_ms != null
-    ? ` · t50 ${result?.chamber_t50_ms != null ? `${result.chamber_t50_ms.toFixed(0)} ms` : '—'} / t90 ${result?.chamber_t90_ms != null ? `${result.chamber_t90_ms.toFixed(0)} ms` : '—'}`
-    : '';
+  const riseLabel = (() => {
+    const parts: string[] = [];
+    if (result?.chamber_t50_ms != null || result?.chamber_t90_ms != null) {
+      parts.push(
+        `t50 ${result?.chamber_t50_ms != null ? `${result.chamber_t50_ms.toFixed(0)} ms` : '—'} / t90 ${result?.chamber_t90_ms != null ? `${result.chamber_t90_ms.toFixed(0)} ms` : '—'}`,
+      );
+    }
+    if (result?.chamber_t100_ms != null) {
+      parts.push(`t100 ${result.chamber_t100_ms.toFixed(0)} ms`);
+    }
+    if (result?.chamber_cycle_freq_hz != null && result?.chamber_bandwidth_hz != null) {
+      parts.push(`f ${result.chamber_cycle_freq_hz.toFixed(2)} Hz · BW ${result.chamber_bandwidth_hz.toFixed(2)} Hz`);
+    }
+    return parts.length > 0 ? ` · ${parts.join(' · ')}` : '';
+  })();
 
   return (
     <div className="lg:col-span-5 min-w-0 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">

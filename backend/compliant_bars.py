@@ -270,6 +270,9 @@ class CompliantResult:
     volume_out_ml: float = 0.0
     chamber_t50_ms: Optional[float] = None
     chamber_t90_ms: Optional[float] = None
+    chamber_t100_ms: Optional[float] = None
+    chamber_cycle_freq_hz: Optional[float] = None
+    chamber_bandwidth_hz: Optional[float] = None
 
     def __post_init__(self):
         if self.time_ms is None:
@@ -490,6 +493,81 @@ def _tube_clearance_lr(xy, radius, wall_x: float, tube_od: float, lr_mask: np.nd
     return float(np.min(np.minimum(gap_left, gap_right)))
 
 
+def _chamber_crossing_ms(t_ms: np.ndarray, p_g: np.ndarray, target_kpa: float) -> Optional[float]:
+    """Interpolated time (ms) from Y = 0 to target_kpa on the filling half-cycle."""
+    if target_kpa <= 0.0 or len(t_ms) < 2:
+        return None
+    half = max(len(t_ms) // 2, 2)
+    t_fill, p_fill = t_ms[:half], p_g[:half]
+    idx = np.flatnonzero(p_fill >= target_kpa)
+    if not idx.size:
+        return None
+    i = int(idx[0])
+    if i == 0:
+        return float(t_fill[0])
+    dp = p_fill[i] - p_fill[i - 1]
+    frac = (target_kpa - p_fill[i - 1]) / dp if dp > 1e-12 else 0.0
+    return float(t_fill[i - 1] + frac * (t_fill[i] - t_fill[i - 1]))
+
+
+def _chamber_bandwidth_from_t100(t100_ms: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+    """Return (cycle_freq_hz, bandwidth_3db_hz) from the 0 -> 100 % inflation time in ms.
+
+    - cycle_freq_hz = 1 / (2 * T_0->100): full inflation + deflation pass frequency (symmetric twin mechanism).
+    - bandwidth_3db_hz = 0.35 / T_0->100: equivalent first-order -3 dB bandwidth.
+    """
+    if t100_ms is None or not np.isfinite(t100_ms) or t100_ms <= 1e-6:
+        return None, None
+    t_sec = float(t100_ms) / 1000.0
+    return float(1.0 / (2.0 * t_sec)), float(0.35 / t_sec)
+
+
+def _fast_chamber_t100_ms(p: CompliantParams, tube: LinkageParams, y: np.ndarray, area_a: np.ndarray) -> Optional[float]:
+    """Fast implicit-Euler estimate of 0 -> 100 % (99 % equalization) chamber inflation time (ms)."""
+    vol = p.chamber_volume_ml if p.chamber_volume_ml > 0.0 else 10.0
+    speed = p.motor_speed * p.speed_factor * p.lead_screw_pitch / 60.0
+    if speed <= 0.0 or p.input_pressure_kpa <= 0.0 or p.stroke <= 0.0:
+        return None
+    pos = y >= 0.0
+    y_pos, area_pos = y[pos], area_a[pos]
+    if len(y_pos) < 2 or float(np.max(area_pos)) <= 1e-12:
+        return None
+    p_up = P_ATM + p.input_pressure_kpa * 1000.0
+    p_target = P_ATM + 0.99 * p.input_pressure_kpa * 1000.0
+    k = vol * 1e-6 / (R_AIR * T_AMB)
+    t_ramp = p.stroke / speed
+    t_hold = 2.0
+    n_ramp, n_hold = 80, 40
+    t_grid = np.concatenate([
+        np.linspace(0.0, t_ramp, n_ramp + 1),
+        np.linspace(t_ramp, t_ramp + t_hold, n_hold + 1)[1:],
+    ])
+    y_grid = np.minimum(t_grid * speed, p.stroke)
+    a_in = np.interp(y_grid, y_pos, area_pos)
+    pc = P_ATM
+    for i in range(1, len(t_grid)):
+        ai = float(a_in[i])
+        if ai <= 0.0:
+            continue
+        dt = float(t_grid[i] - t_grid[i - 1])
+        prev = pc
+        mass = pc * k
+        lo, hi = pc, p_up
+        for _ in range(18):
+            mid = 0.5 * (lo + hi)
+            net = _compute_orifice_mass_flow_rate(ai, p_up, mid)
+            if mid * k - mass - dt * net > 0.0:
+                hi = mid
+            else:
+                lo = mid
+        pc = 0.5 * (lo + hi)
+        if pc >= p_target:
+            dp = pc - prev
+            frac = (p_target - prev) / dp if dp > 1e-12 else 0.0
+            return float((t_grid[i - 1] + frac * dt) * 1000.0)
+    return None
+
+
 def _pivot_clearance(xy, radius, pivot, pin_r, exempt) -> float:
     dist = np.hypot(xy[:, 0] - pivot[0], xy[:, 1] - pivot[1]) - radius - pin_r
     dist = np.where(exempt, np.inf, dist)
@@ -690,7 +768,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     y_open_mm = _first_y_crossing(0.02 * q_max)
     y_90_mm = _first_y_crossing(0.90 * q_max)
 
-    # Chamber inflation / deflation cycle (only on full evaluation so solver stays fast).
+    # Chamber inflation / deflation cycle (full trace on full evaluation; fast t100 estimate during solver).
     time_ms: List[float] = []
     y_time: List[float] = []
     flow_in_l_min: List[float] = []
@@ -700,6 +778,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     volume_out_ml = 0.0
     chamber_t50_ms: Optional[float] = None
     chamber_t90_ms: Optional[float] = None
+    chamber_t100_ms: Optional[float] = None
     if not fast and p.chamber_volume_ml > 0:
         cyc = _chamber_cycle(tube, y, area_a, area_a[::-1])
         if cyc is not None:
@@ -712,6 +791,12 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
             volume_in_ml = vin
             volume_out_ml = vout
             chamber_t50_ms, chamber_t90_ms = _chamber_rise_times(t_arr, pg_arr, p.input_pressure_kpa)
+            chamber_t100_ms = _chamber_crossing_ms(t_arr, pg_arr, 0.99 * p.input_pressure_kpa)
+            if chamber_t100_ms is None:
+                chamber_t100_ms = _fast_chamber_t100_ms(p, tube, y, area_a)
+    elif p.chamber_volume_ml > 0:
+        chamber_t100_ms = _fast_chamber_t100_ms(p, tube, y, area_a)
+    chamber_cycle_freq_hz, chamber_bandwidth_hz = _chamber_bandwidth_from_t100(chamber_t100_ms)
 
     opens = bool(abs(gain) > 1e-4)
     notes = []
@@ -812,6 +897,9 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         volume_out_ml=volume_out_ml,
         chamber_t50_ms=chamber_t50_ms,
         chamber_t90_ms=chamber_t90_ms,
+        chamber_t100_ms=chamber_t100_ms,
+        chamber_cycle_freq_hz=chamber_cycle_freq_hz,
+        chamber_bandwidth_hz=chamber_bandwidth_hz,
     )
 
 
@@ -1054,6 +1142,11 @@ def solve_compliant(
             "shell_clearance_mm": result.shell_clearance_mm,
             "pivot_clearance_mm": result.pivot_clearance_mm,
             "pinch_ceiling_margin_mm": result.pinch_ceiling_margin_mm,
+            "chamber_t50_ms": result.chamber_t50_ms,
+            "chamber_t90_ms": result.chamber_t90_ms,
+            "chamber_t100_ms": result.chamber_t100_ms,
+            "chamber_cycle_freq_hz": result.chamber_cycle_freq_hz,
+            "chamber_bandwidth_hz": result.chamber_bandwidth_hz,
             "pivot_inverted": params.pivot_inverted,
             "params": {**{key: getattr(params, key) for key in keys}, "pivot_inverted": params.pivot_inverted},
         }

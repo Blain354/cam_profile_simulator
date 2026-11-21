@@ -199,6 +199,11 @@ def _runner_brief(params: CompliantParams, result: CompliantResult, score: float
         "shell_clearance_mm": result.shell_clearance_mm,
         "pivot_clearance_mm": result.pivot_clearance_mm,
         "pinch_ceiling_margin_mm": result.pinch_ceiling_margin_mm,
+        "chamber_t50_ms": result.chamber_t50_ms,
+        "chamber_t90_ms": result.chamber_t90_ms,
+        "chamber_t100_ms": result.chamber_t100_ms,
+        "chamber_cycle_freq_hz": result.chamber_cycle_freq_hz,
+        "chamber_bandwidth_hz": result.chamber_bandwidth_hz,
         "stroke": params.stroke,
         "pivot_inverted": params.pivot_inverted,
         "params": {**{key: getattr(params, key) for key in keys}, "pivot_inverted": params.pivot_inverted},
@@ -434,6 +439,9 @@ def run_time_budgeted_solve(
             "best_y_90_mm": round(float(best_r.y_90_mm), 3) if (best_r and best_r.y_90_mm is not None) else None,
             "best_attack_angle_deg": round(float(best_r.attack_angle_deg), 1) if (best_r and best_r.attack_angle_deg is not None) else None,
             "best_stress_mpa": round(float(best_r.max_stress_mpa), 1) if (best_r and best_r.max_stress_mpa is not None) else None,
+            "best_chamber_t100_ms": round(float(best_r.chamber_t100_ms), 1) if (best_r and best_r.chamber_t100_ms is not None) else None,
+            "best_chamber_cycle_freq_hz": round(float(best_r.chamber_cycle_freq_hz), 3) if (best_r and best_r.chamber_cycle_freq_hz is not None) else None,
+            "best_chamber_bandwidth_hz": round(float(best_r.chamber_bandwidth_hz), 3) if (best_r and best_r.chamber_bandwidth_hz is not None) else None,
             "rejection_stats": rejection_stats,
             "bound_hits": _compute_bound_hits(best_p),
             "free_vars": all_free_vars,
@@ -963,9 +971,25 @@ def run_time_budgeted_solve(
     # ── Final full-resolution verification ──────────────────────────────────
     phase = "Final verification"
     runners = _extract_runners()
-    winner = runners[0] if runners else None
-    full = compute_compliant(winner[1], fast=False, constraints=c) if winner else None
+    full_runners: List[Tuple[float, CompliantParams, CompliantResult]] = []
+    for idx_r, (sc_r, prm_r, res_r) in enumerate(runners):
+        if idx_r < 8:
+            full_r = compute_compliant(prm_r, fast=False, constraints=c)
+            full_runners.append((sc_r, prm_r, full_r))
+        else:
+            full_runners.append((sc_r, prm_r, res_r))
+    winner = full_runners[0] if full_runners else None
+    full = winner[2] if winner else None
     snapshot = build_snapshot(final=True)
+    if full_runners:
+        snapshot["runners"] = [_runner_brief(p, r, s, keys) for s, p, r in full_runners]
+        best_r0 = full_runners[0][2]
+        if best_r0.chamber_t100_ms is not None:
+            snapshot["best_chamber_t100_ms"] = round(float(best_r0.chamber_t100_ms), 1)
+        if best_r0.chamber_cycle_freq_hz is not None:
+            snapshot["best_chamber_cycle_freq_hz"] = round(float(best_r0.chamber_cycle_freq_hz), 3)
+        if best_r0.chamber_bandwidth_hz is not None:
+            snapshot["best_chamber_bandwidth_hz"] = round(float(best_r0.chamber_bandwidth_hz), 3)
     if on_progress is not None:
         on_progress(snapshot)
 

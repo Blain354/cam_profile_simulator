@@ -332,3 +332,47 @@ test('allowableStressMpa scales material strength by stress_limit_factor (defaul
   expect(allowableStressMpa(100, DEFAULT_CONSTRAINTS)).toBeCloseTo(85, 6);
   expect(allowableStressMpa(75, { ...DEFAULT_CONSTRAINTS, stress_limit_factor: 0.8 })).toBeCloseTo(60, 6);
 });
+
+test('Results accordion and Chamber chart display 0 -> 100% inflation time, pass frequency, and -3 dB bandwidth', async () => {
+  const line = {
+    x: [-8, -6], y: [10, 10.5],
+    x_per_y: [0, 0], y_per_y: [0, 0],
+    x_per_n: [0, 0], y_per_n: [0, 0],
+    thickness: 1,
+  };
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/simulate')) {
+      return new Response(JSON.stringify({
+        feasible: true, passes: true, message: 'ok',
+        Y_positions: [-1.5, 0, 1.5],
+        flow_a: [0, 0, 10], flow_b: [10, 0, 0],
+        gap_a: [0.4, 0.85, 2.1], gap_b: [2.1, 0.92, 0.4],
+        gap_rigid_a: [0.4, 0.85, 2.1],
+        closed_gap: 0.9, full_open_gap: 2.0,
+        flow_slope_mean: 5, flow_slope_max: 7,
+        max_stress_mpa: 20, stress_margin: 2,
+        plastic_ok: true, shell_ok: true, pivot_ok: true, pinch_ok: true, rotation_ok: true,
+        shell_clearance_mm: 1, pivot_clearance_mm: 1, pinch_ceiling_margin_mm: 5.5, max_rotation_deg: 5,
+        wall_x: 9.5, pivot_height_y0: 8, pinch_x: -8.1, travel_sign: 1,
+        force_a: [12.3, 4.56, 0.2], force_b: [0.2, 6.78, 12.3],
+        stress_a: [20, 10, 5], stress_b: [5, 10, 20],
+        lines: { l: line, r: line, f: line },
+        anchor: [-4.8, 0], junction: [-5.5, 12], pinch: [-8.1, 10.5], pivot: [4, 8],
+        chamber_t50_ms: 578,
+        chamber_t90_ms: 685,
+        chamber_t100_ms: 735,
+        chamber_cycle_freq_hz: 0.68,
+        chamber_bandwidth_hz: 0.48,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { findByText, getByText } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
+
+  expect(await findByText('735 ms (0.73 s)')).toBeTruthy();
+  expect(getByText('Inflate 0 → 100%')).toBeTruthy();
+  expect(getByText('Pass freq / BW (-3 dB)')).toBeTruthy();
+  expect(getByText('0.68 Hz / 0.48 Hz')).toBeTruthy();
+  expect(getByText(/t100 735 ms · f 0\.68 Hz · BW 0\.48 Hz/)).toBeTruthy();
+});
