@@ -11,7 +11,7 @@ import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import type { SimulationParams, SimulationResult } from './components';
 import {
-  ParameterSlider, StatRow, Accordion, TooltipHintsProvider, ClosureRampToggle, CamProfilePreview,
+  ParameterSlider, StatRow, Accordion, AccordionScope, TooltipHintsProvider, ClosureRampToggle, CamProfilePreview,
   apiFetch, defaultParams, mergeConfigParams,
 } from './components';
 import { ProfileImportModal, ProfilePill, ProfileSaveDialog } from './ProfileControls';
@@ -642,6 +642,7 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin scrollbar-thumb-neutral-600 scrollbar-track-transparent">
+            <AccordionScope id="cam:explorer">
               <div className="space-y-2 pb-2 border-b border-neutral-700/50">
                 <label className={`text-sm font-medium tracking-tight flex items-center gap-2 ${isModified('note') ? 'text-amber-400' : 'text-neutral-300'}`}>
                   Note
@@ -735,6 +736,7 @@ export default function App() {
                   </div>
                 </Accordion>
               )}
+            </AccordionScope>
             </div>
           </div>
 

@@ -14,6 +14,7 @@ import {
   ClosureRampToggle,
   StatRow,
   Accordion,
+  AccordionScope,
   VerticalSystemView,
   apiFetch,
   defaultParams,
@@ -1854,6 +1855,7 @@ export default function ProfileBuilder({
           <h2 className="text-lg font-bold text-white tracking-tight truncate">Profile Builder</h2>
         </div>
         <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin scrollbar-thumb-neutral-600 scrollbar-track-transparent">
+        <AccordionScope id="cam:finder">
           <DelayedHoverHint content={builderExperienceNote}>
             <div className="space-y-2 pb-2 border-b border-neutral-700/50">
               <label className="text-sm font-medium tracking-tight text-neutral-300">Experience note</label>
@@ -2095,6 +2097,7 @@ export default function ProfileBuilder({
               </DelayedHoverHint>
             )}
           </div>
+        </AccordionScope>
         </div>
 
         <div className="shrink-0 mt-4 pt-4 border-t border-neutral-700 space-y-4">

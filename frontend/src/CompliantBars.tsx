@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Settings } from 'lucide-react';
-import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
+import { FlowParticles } from './FlowParticles';
+import { sideBore, tubeProfile } from './lib/tubeSide';
+import { useTubeSweep } from './lib/tubeSweep';
+import type { TubeSweep } from './lib/tubeSweep';
+import { Accordion, AccordionScope, ParameterSlider, StatRow, apiFetch } from './components';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
 import { chartDomain } from './lib/chartDomain';
@@ -206,6 +210,41 @@ function deflected(line: Line, y: number, force: number): Pt[] {
 
 const mm = (v: number | null | undefined, digits = 2) => (v == null || !Number.isFinite(v) ? '—' : `${v.toFixed(digits)} mm`);
 
+/** The foot sample nearest that wall. A constant thickness makes the nearest centre the contact. */
+function nearestToWall(pts: Pt[], sign: 1 | -1): Pt {
+  return pts.reduce((best, p) => (sign * p[0] > sign * best[0] ? p : best));
+}
+
+/** Same side-view tube as the pendulum: the foot is a round pin, the silicone climbs back to its diameter beside it. */
+function pinchedTube({
+  sign, name, contact, rPin, wall, od, id, top, flow, maxFlow, sweep, stale,
+}: {
+  sign: 1 | -1; name: string; contact: Pt; rPin: number; wall: number; od: number; id: number;
+  top: number; flow: number; maxFlow: number; sweep: TubeSweep | null; stale: boolean;
+}) {
+  const frac = maxFlow > 0 ? Math.min(Math.max(flow, 0) / maxFlow, 1) : 0;
+  const fromWall = wall - sign * contact[0];
+  const ends: [Pt, Pt] = [[fromWall, contact[1]], [fromWall, contact[1]]];
+  const profile = tubeProfile(ends, rPin, od, -1, top + 1, sweep ? od : undefined);
+  const bore = sideBore(profile, od, id, sweep);
+  const xy = (u: number, v: number) => `${(sign * (wall - u)).toFixed(3)},${(-v).toFixed(3)}`;
+  const ring = (inner: number[], outer: number[]) =>
+    [...profile.map(([, v], i) => xy(outer[i], v)), ...profile.map(([, v], i) => xy(inner[i], v)).reverse()].join(' ');
+  const cx = sign * (wall - od / 2);
+  return (
+    <g>
+      {sweep && <title>{`Tube ${name.trim()[0]}, side view: the wall follows the foot, and the open bore at each station is the FEM section's at the local foot-to-wall distance, so it shuts before the wall stops moving. The shoulders on each side of the foot (about one OD) are schematic.${stale ? ' The previous tube, shown while the new one solves.' : ''}`}</title>}
+      <polygon points={ring(profile.map(() => 0), profile.map(([h]) => h))} fill="var(--bui-text)" fillOpacity={0.16} stroke="var(--bui-text)" strokeWidth={0.05} strokeLinejoin="round" />
+      <polygon points={ring(bore.map((b) => b[1]), bore.map((b) => b[2]))} fill={frac > 0 ? '#10b981' : '#ef4444'} fillOpacity={0.25 + 0.45 * frac} />
+      <FlowParticles view="side" frac={frac} bore={bore} direction={sign < 0 ? -1 : 1}
+        radius={Math.min(0.16, id / 6)} color="var(--bui-text)" transform={`matrix(${-sign} 0 0 -1 ${sign * wall} 0)`} />
+      <line x1={cx} y1={-top - 1} x2={cx} y2={1} stroke="var(--bui-text)" strokeOpacity={0.5} strokeWidth={0.04} strokeDasharray="0.5 0.12 0.1 0.12" />
+      <text x={cx} y={-(top + 1.1)} fill="var(--bui-text)" fontSize={0.62} fontWeight="bold" textAnchor="middle"
+        stroke="var(--bui-surface)" strokeWidth={0.18} paintOrder="stroke">{name}</text>
+    </g>
+  );
+}
+
 function shapeLabel(key: ShapeKey): string {
   const who = key.startsWith('l_') ? 'L' : key.startsWith('r_') ? 'R' : key.startsWith('f_') ? 'foot' : '';
   return who ? `${LIMITS[key].label}, ${who}` : LIMITS[key].label;
@@ -221,6 +260,7 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
   const [runners, setRunners] = useState<Runner[]>([]);
   const [solveNote, setSolveNote] = useState<string | null>(null);
   const [y, setY] = useState(0);
+  const { drawn: tubeSweep, stale: tubeStale } = useTubeSweep(params);
   const [domain, setDomain] = useState<ChartDomainSettings>({ autoX: true, autoY: true, xMin: 0, xMax: 2, yMin: 0, yMax: 12 });
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<null | { kind: 'anchor' } | { kind: 'junction' } | { kind: 'pinch' } | { kind: 'handle'; member: Member; index: 0 | 1 }>(null);
@@ -371,6 +411,7 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
           <h2 className="text-lg font-bold text-white tracking-tight">{mode === 'finder' ? 'Solver' : 'Splines'}</h2>
         </div>
         {mode === 'explorer' ? (
+          <AccordionScope id="compliant:explorer">
           <div className="space-y-1">
             <Accordion title="Skeleton">
               <div className="space-y-4 pt-2">
@@ -420,6 +461,7 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
               </div>
             </Accordion>
           </div>
+          </AccordionScope>
         ) : (
           <div className="space-y-3">
             <p className="text-xs text-neutral-400 leading-snug">The solver varies the splines inside these ranges. It keeps a shape only when the stress stays under the material limit, and the part clears the pivot and the shell. The winner is the steepest static-flow slope.</p>
@@ -461,6 +503,20 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
           {[-1, 1].map((side) => (
             <rect key={side} x={side < 0 ? -wall - 0.7 : wall} y={-ceiling - 1} width={0.7} height={ceiling + 2} fill="var(--bui-text)" fillOpacity={0.35} />
           ))}
+          {(() => {
+            const rPin = Math.max(params.f_thickness / 2, 0.18);
+            const maxFlow = result ? Math.max(0, ...result.flow_a.map((f) => f ?? 0)) : 0;
+            const footB = result
+              ? mirror(deflected(result.lines.f, -y, interp(-y, result.Y_positions, result.force_a)))
+              : mirror(lines.f);
+            const tubeArgs = { rPin, wall, od: params.tube_od, id: params.tube_id, top: ceiling, maxFlow, sweep: tubeSweep, stale: tubeStale };
+            return (
+              <>
+                {pinchedTube({ ...tubeArgs, sign: -1, name: 'A  supply', contact: nearestToWall(lines.f, -1), flow: result ? interp(y, result.Y_positions, result.flow_a) : 0 })}
+                {pinchedTube({ ...tubeArgs, sign: 1, name: 'B  exhaust', contact: nearestToWall(footB, 1), flow: result ? interp(-y, result.Y_positions, result.flow_a) : 0 })}
+              </>
+            );
+          })()}
           <rect x={-0.45} y={-ceiling - 0.4} width={0.9} height={ceiling + 0.8} rx={0.2} fill="#d4a94a" fillOpacity={0.85} />
           <circle cx={pivot[0]} cy={-carriageY} r={Math.max(params.carriage_pin_diameter / 2, 0.2)} fill="#60a5fa" />
           {MEMBERS.map((member) => (

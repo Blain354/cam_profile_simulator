@@ -231,22 +231,65 @@ export function ChartDomainSettingsModal({
 
 // ─── Accordion ───────────────────────────────────────────────────
 
+const ACCORDION_STORE = 'cam-sim.accordions.v1';
+const AccordionScopeContext = createContext('app');
+
+/** Groups accordions so the same title on two tabs keeps two session states. */
+export function AccordionScope({ id, children }: { id: string; children: React.ReactNode }) {
+  return <AccordionScopeContext.Provider value={id}>{children}</AccordionScopeContext.Provider>;
+}
+
+function accordionMap(): Record<string, boolean> {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(ACCORDION_STORE) ?? 'null');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, boolean>;
+  } catch { /* private mode, or a value this page did not write */ }
+  return {};
+}
+
+function storedOpen(key: string): boolean | undefined {
+  const value = accordionMap()[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function storeOpen(key: string, open: boolean) {
+  try {
+    sessionStorage.setItem(ACCORDION_STORE, JSON.stringify({ ...accordionMap(), [key]: open }));
+  } catch { /* storage blocked: the choice lasts until this panel unmounts */ }
+}
+
 export function Accordion({
   title,
   children,
-  defaultOpen = true,
+  defaultOpen = false,
   showBottomBorder = true,
+  id,
 }: {
   title: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
   showBottomBorder?: boolean;
+  id?: string;
 }) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const scope = useContext(AccordionScopeContext);
+  const storageKey = `${scope}:${id ?? title}`;
+  const [isOpen, setIsOpen] = useState(() => storedOpen(storageKey) ?? defaultOpen);
+  const [seenKey, setSeenKey] = useState(storageKey);
+  if (storageKey !== seenKey) {
+    setSeenKey(storageKey);
+    setIsOpen(storedOpen(storageKey) ?? defaultOpen);
+  }
+  const toggle = () => {
+    setIsOpen((prev) => {
+      const next = !prev;
+      storeOpen(storageKey, next);
+      return next;
+    });
+  };
   return (
-    <div className={showBottomBorder ? 'border-b border-neutral-700/50 pb-2' : 'pb-2'}>
+    <div key={storageKey} className={showBottomBorder ? 'border-b border-neutral-700/50 pb-2' : 'pb-2'}>
       <Button variant="ghost"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggle}
         aria-expanded={isOpen}
         className="w-full flex cursor-pointer items-center justify-between rounded-lg border border-transparent px-2 py-2 text-sm font-semibold text-neutral-400 transition-all hover:border-neutral-700 hover:bg-neutral-700/30 hover:text-neutral-100"
       >

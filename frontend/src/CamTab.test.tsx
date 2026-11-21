@@ -11,6 +11,7 @@ const params = { ...defaultParams, input_pressure_kpa: 15 * PSI_TO_KPA }
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
@@ -73,7 +74,11 @@ test('the drawn bore is the model slot: flow area over (pi/2) x tube ID', () => 
 })
 
 test('the Cam Explorer menu lists every control once, most important first, then the results', async () => {
-  const { findByText, getByText, getByLabelText, getByRole } = render(<App />)
+  const { findByText, findByRole, getByText, getByLabelText, getByRole } = render(<App />)
+  for (const name of ['Geometry', 'Pneumatic system', 'Motor and screw']) {
+    fireEvent.click(getByRole('button', { name }))
+  }
+  fireEvent.click(await findByRole('button', { name: 'Results' }))
   await findByText('Open Latency')
   const panel = getByText('Configuration').closest('.lg\\:col-span-3') as HTMLElement
   const text = panel.textContent ?? ''
@@ -114,7 +119,9 @@ test('the active top-level tab carries the selected tab look', () => {
 
 test('the Cam Finder menu reads target, imposed inputs, search, ranking, Solve, then context', () => {
   localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'cam', sub: { cam: 'finder' } }))
-  const { getByText } = render(<App />)
+  const { getByText, getByRole } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Target' }))
+  fireEvent.click(getByRole('button', { name: 'System parameters' }))
   const panel = getByText('Profile Builder').closest('.lg\\:col-span-3') as HTMLElement
   const text = panel.textContent ?? ''
   const order = ['Experience note', 'Target', 'Chamber Volume (mL)', 'System parameters', 'Motor Speed (RPM)', 'Closure ramp', 'Search grid', 'Candidate ranking', 'Solve', 'Context & Metrics']

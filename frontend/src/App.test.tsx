@@ -4,6 +4,7 @@ import App from './App'
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
@@ -26,6 +27,23 @@ test('labels are in sentence case and the private tool stays sober', () => {
   expect(container.querySelector('.bui-bp--currents')).toBeNull()
 })
 
+test('an accordion starts closed and stays as the session left it across tabs', () => {
+  const { getByRole, getByText, queryByText } = render(<App />)
+  expect(queryByText('Height (mm)')).toBeNull()
+  fireEvent.click(getByRole('button', { name: 'Geometry' }))
+  expect(getByText('Height (mm)')).toBeTruthy()
+
+  fireEvent.click(getByRole('button', { name: 'Bar Linkage' }))
+  expect(queryByText('Bar 2, L2 (mm)')).toBeNull()
+  fireEvent.click(getByRole('button', { name: 'Cam' }))
+  expect(getByText('Height (mm)')).toBeTruthy()
+
+  fireEvent.click(getByRole('tab', { name: 'Finder' }))
+  fireEvent.click(getByRole('tab', { name: 'Explorer' }))
+  expect(getByText('Height (mm)')).toBeTruthy()
+  expect(JSON.parse(sessionStorage.getItem('cam-sim.accordions.v1')!)).toEqual({ 'cam:explorer:Geometry': true })
+})
+
 test('each tab has an Explorer and a Finder sub-tab, and the choice is kept', () => {
   const { getByRole, unmount } = render(<App />)
   const finder = getByRole('tab', { name: 'Finder' })
@@ -43,6 +61,9 @@ test('Compliant Bars names its search sub-tab Solver', () => {
   const { getByRole } = render(<App />)
   expect(getByRole('button', { name: 'Compliant Bars' }).getAttribute('aria-pressed')).toBe('true')
   expect(getByRole('heading', { name: 'Splines' })).toBeTruthy()
+  const tubes = document.querySelectorAll('svg[aria-label="Compliant bars"] polygon')
+  expect(tubes.length).toBe(4)
+  expect((tubes[0].getAttribute('points') ?? '').split(' ').length).toBeGreaterThan(20)
   fireEvent.click(getByRole('tab', { name: 'Solver' }))
   expect(getByRole('button', { name: 'Solve' })).toBeTruthy()
 })
@@ -69,6 +90,7 @@ const minimalResult = {
 test('a fixed row is sent as min = max and its stored range is kept', async () => {
   const bodies = stubLinkage({ found: true, feasible: 3, tested: 30, params: { bar2_length: 12, bar1_length: 11, anchor_distance: 4, foot_length: 2, foot_angle_deg: 90, stroke: 1.5 }, result: minimalResult })
   const { getByRole, getAllByRole, findByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Geometry to search' }))
   // The first row is the arm, L (bar2_length, 14.43 by default).
   fireEvent.click(getAllByRole('checkbox', { name: 'Fixed' })[0])
   fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
@@ -137,6 +159,7 @@ test('selecting a goal and min flow sends them, and clicking Top candidates + Re
     candidates,
   })
   const { getByRole, getByText, findByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Goal' }))
   fireEvent.click(getByRole('button', { name: 'Min deadband' }))
   const minFlowInput = getByText('Min flow reached (%)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
   fireEvent.change(minFlowInput, { target: { value: '40' } })
@@ -187,6 +210,7 @@ test('pendulum link shape controls toggle straight, tangent flip, and custom rad
     candidates,
   })
   const { getByRole, findByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Geometry to search' }))
   // In Finder, select Search all link shapes and run search.
   fireEvent.click(getByRole('button', { name: 'Search all' }))
   fireEvent.click(getByRole('button', { name: /Find dimensions/ }))
@@ -205,6 +229,7 @@ test('pendulum link shape controls toggle straight, tangent flip, and custom rad
   })
   // Switch to Explorer and test toggling Tangent -> Opposite and Custom radius -> Outward.
   fireEvent.click(getByRole('button', { name: 'Open in Explorer' }))
+  fireEvent.click(getByRole('button', { name: 'Geometry' }))
   fireEvent.click(getByRole('button', { name: 'Tangent' }))
   fireEvent.click(getByRole('button', { name: 'Opposite' }))
   await waitFor(() => {

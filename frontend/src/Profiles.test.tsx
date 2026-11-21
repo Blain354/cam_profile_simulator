@@ -84,6 +84,7 @@ const allProfiles = [...camProfiles, finderProfile, pendulumProfile,
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
@@ -223,6 +224,7 @@ test('a linkage profile round-trips its params, ranges and chart settings, and i
   const first = render(<App />)
   expect(first.queryByLabelText('Profile name')).toBeNull()
   expect(first.getByRole('button', { name: /Write to Onshape variables/ })).toBeTruthy()
+  fireEvent.click(first.getByRole('button', { name: 'Geometry' }))
   fireEvent.click(first.getByRole('button', { name: 'Import profile' }))
   fireEvent.doubleClick(await first.findByText('custom-interessant'))
   await waitFor(() => expect(first.getByTestId('profile-name').textContent).toBe('custom-interessant'))

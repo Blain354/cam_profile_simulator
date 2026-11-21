@@ -11,7 +11,7 @@ import {
 import { Pause, Play, RefreshCw, RotateCcw, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
 import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
 import type { ProfileHandle, ProfileState } from './lib/profiles';
-import { Accordion, ParameterSlider, StatRow, apiFetch } from './components';
+import { Accordion, AccordionScope, ParameterSlider, StatRow, apiFetch } from './components';
 import type { SubTab } from './SubTabs';
 import type { ChartDomainSettings } from './components';
 import { ChartCard } from './ChartCard';
@@ -2388,7 +2388,9 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-          {mode === 'finder' ? finderMenu : explorerMenu}
+          <AccordionScope id={`${kind}:${mode}`}>
+            {mode === 'finder' ? finderMenu : explorerMenu}
+          </AccordionScope>
         </div>
       </div>
 
