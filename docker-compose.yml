@@ -14,6 +14,7 @@ services:
         APP_COMMIT: ${APP_COMMIT:-}
         APP_COMMIT_DATE: ${APP_COMMIT_DATE:-}
         VITE_BLAIN_SHOWOFF: ${VITE_BLAIN_SHOWOFF:-}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.cam-profile-sim.blain-projects.ca}
     container_name: ${PROJECT_NAME}-front
     restart: unless-stopped
     networks:
