@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Settings } from 'lucide-react';
-import { FlowParticles } from './FlowParticles';
+import { Line, LineChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Button } from '@blain-projects/ui';
+import { Pause, Play, Settings } from 'lucide-react';
+import { FlowParticles, FlowParticlesSwitch } from './FlowParticles';
 import { sideBore, tubeProfile } from './lib/tubeSide';
 import { useTubeSweep } from './lib/tubeSweep';
 import type { TubeSweep } from './lib/tubeSweep';
@@ -82,6 +83,10 @@ const MEMBERS: { id: Member; title: string; color: string }[] = [
 ];
 
 const STORE = 'cam-sim.compliant.v1';
+/** Same motor the other tabs start from, so Oscillate runs at the same carriage speed. */
+const MOTOR_RPM = 100;
+const SCREW_PITCH_MM = 0.5;
+const LOAD_FACTOR = 0.85;
 
 interface Line {
   x: number[]; y: number[];
@@ -260,7 +265,12 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
   const [runners, setRunners] = useState<Runner[]>([]);
   const [solveNote, setSolveNote] = useState<string | null>(null);
   const [y, setY] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const motion = useRef({ d: 0, speed: 0, stroke: COMPLIANT_DEFAULTS.stroke });
   const { drawn: tubeSweep, stale: tubeStale } = useTubeSweep(params);
+  const yPose = Math.min(params.stroke, Math.max(-params.stroke, y));
+  const loadedRpm = MOTOR_RPM * LOAD_FACTOR;
+  const carriageSpeed = loadedRpm * SCREW_PITCH_MM / 60;
   const [domain, setDomain] = useState<ChartDomainSettings>({ autoX: true, autoY: true, xMin: 0, xMax: 2, yMin: 0, yMax: 12 });
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<null | { kind: 'anchor' } | { kind: 'junction' } | { kind: 'pinch' } | { kind: 'handle'; member: Member; index: 0 | 1 }>(null);
@@ -292,6 +302,37 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
     setParams((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  useEffect(() => {
+    motion.current.speed = carriageSpeed;
+    motion.current.stroke = params.stroke;
+  }, [carriageSpeed, params.stroke]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last: number | null = null;
+    let shown = 0;
+    const step = (now: number) => {
+      const m = motion.current;
+      if (m.speed <= 0) { setPlaying(false); return; }
+      if (last != null) m.d = (m.d + (now - last) / 1000 * m.speed) % (4 * m.stroke);
+      last = now;
+      if (now - shown > 30) {
+        shown = now;
+        const s = m.stroke;
+        setY(m.d <= s ? m.d : m.d <= 3 * s ? 2 * s - m.d : m.d - 4 * s);
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
+
+  const togglePlay = () => {
+    if (!playing) motion.current.d = yPose >= 0 ? yPose : 2 * params.stroke - yPose;
+    setPlaying(!playing);
+  };
+
   const anchor: Pt = [-params.anchor_distance, 0];
   const junction: Pt = [params.junction_x, params.junction_y];
   const pivot: Pt = [params.pivot_inverted ? -params.pivot_offset : params.pivot_offset, params.closed_carriage_height];
@@ -299,7 +340,7 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
   const wall = result?.wall_x ?? params.tube_center_x + params.tube_od / 2;
   const h0 = result?.pivot_height_y0 ?? params.closed_carriage_height;
   const ceiling = 2 * h0;
-  const force = result ? interp(y, result.Y_positions, result.force_a) : 0;
+  const force = result ? interp(yPose, result.Y_positions, result.force_a) : 0;
   const restLines = useMemo(() => ({
     l: bezier(anchor, junction, params.l_u1, params.l_v1, params.l_u2, params.l_v2),
     r: bezier(junction, pivot, params.r_u1, params.r_v1, params.r_u2, params.r_v2),
@@ -308,11 +349,11 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
   const lines = useMemo(() => {
     if (!result?.lines) return restLines;
     return {
-      l: deflected(result.lines.l, y, force),
-      r: deflected(result.lines.r, y, force),
-      f: deflected(result.lines.f, y, force),
+      l: deflected(result.lines.l, yPose, force),
+      r: deflected(result.lines.r, yPose, force),
+      f: deflected(result.lines.f, yPose, force),
     };
-  }, [result, y, force, restLines]);
+  }, [result, yPose, force, restLines]);
 
   const chords: Record<Member, [Pt, Pt]> = { l: [anchor, junction], r: [junction, pivot], f: [junction, pinch] };
   const handleOf = (member: Member, index: 0 | 1): Pt => {
@@ -400,7 +441,8 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
     </g>
   );
 
-  const carriageY = h0 + (result?.travel_sign ?? 1) * y;
+  const carriageY = h0 + (result?.travel_sign ?? 1) * yPose;
+  const hw = params.pivot_offset + 1;
   const mirror = (pts: Pt[]): Pt[] => pts.map(([x, yy]) => [-x, ceiling - yy]);
 
   return (
@@ -495,9 +537,40 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
         )}
       </div>
 
-      <div className="lg:col-span-5 min-w-0 bg-neutral-800 rounded-xl border border-neutral-700 flex flex-col min-h-0 p-3">
+      <div className="lg:col-span-5 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
+        <h3 className="mb-3 shrink-0 text-sm font-semibold text-neutral-300">Schematic</h3>
+        <div className="mb-3 flex shrink-0 flex-col gap-1">
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <label htmlFor="compliant-y" className="font-medium text-neutral-300">Carriage Y</label>
+            {result != null && result.travel_sign < 0 && (
+              <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the chart. This part pulls, so its carriage moves the other way from a part that pushes for the same Y: the motor turns the other way.">
+                link pulls: carriage runs the other way
+              </span>
+            )}
+            <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
+          </div>
+          <div className="order-last flex items-center justify-between gap-2 pt-1">
+            <Button variant="ghost" type="button" onClick={togglePlay} disabled={carriageSpeed <= 0} aria-pressed={playing}
+              title="Run the carriage back and forth over the full stroke at the loaded motor speed"
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
+              {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {playing ? 'Stop' : 'Oscillate'}
+            </Button>
+            <Button variant="ghost" type="button" onClick={() => { setPlaying(false); setY(0); }} disabled={!playing && yPose === 0}
+              title="Bring the carriage back to Y = 0"
+              className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
+              Center
+            </Button>
+            <FlowParticlesSwitch note="Full density and speed at the flow through the full bore. The chamber is not drawn: it is taken as below the drawing, so the air runs down tube A (supply) and up tube B (exhaust)." />
+            <span className="text-right text-xs text-neutral-400">
+              {loadedRpm.toFixed(0)} RPM under load ({MOTOR_RPM} × {Math.round(LOAD_FACTOR * 100)} %), {carriageSpeed.toFixed(2)} mm/s
+            </span>
+          </div>
+          <input id="compliant-y" type="range" min={-params.stroke} max={params.stroke} step={0.01} value={yPose}
+            onChange={(e) => { setPlaying(false); setY(parseFloat(e.target.value)); }} className="w-full accent-amber-500 cursor-pointer" />
+        </div>
+        <div className="min-h-[180px] w-full flex-1 overflow-hidden rounded-lg border border-neutral-800/80 bg-neutral-900/60">
         <svg ref={svgRef} viewBox={`${-(wall + margin)} ${-ceiling - margin} ${2 * (wall + margin)} ${ceiling + 2 * margin}`}
-          className="w-full flex-1 min-h-[240px] select-none touch-none" role="img" aria-label="Compliant bars"
+          className="h-full w-full select-none touch-none" role="img" aria-label="Compliant bars"
           onPointerMove={onPointerMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }}>
           <rect x={-wall} y={-ceiling} width={2 * wall} height={ceiling} fill="var(--bui-muted)" fillOpacity={0.08} stroke="var(--bui-text)" strokeWidth={0.14} />
           {[-1, 1].map((side) => (
@@ -507,17 +580,20 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
             const rPin = Math.max(params.f_thickness / 2, 0.18);
             const maxFlow = result ? Math.max(0, ...result.flow_a.map((f) => f ?? 0)) : 0;
             const footB = result
-              ? mirror(deflected(result.lines.f, -y, interp(-y, result.Y_positions, result.force_a)))
+              ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a)))
               : mirror(lines.f);
             const tubeArgs = { rPin, wall, od: params.tube_od, id: params.tube_id, top: ceiling, maxFlow, sweep: tubeSweep, stale: tubeStale };
             return (
               <>
-                {pinchedTube({ ...tubeArgs, sign: -1, name: 'A  supply', contact: nearestToWall(lines.f, -1), flow: result ? interp(y, result.Y_positions, result.flow_a) : 0 })}
-                {pinchedTube({ ...tubeArgs, sign: 1, name: 'B  exhaust', contact: nearestToWall(footB, 1), flow: result ? interp(-y, result.Y_positions, result.flow_a) : 0 })}
+                {pinchedTube({ ...tubeArgs, sign: -1, name: 'A  supply', contact: nearestToWall(lines.f, -1), flow: result ? interp(yPose, result.Y_positions, result.flow_a) : 0 })}
+                {pinchedTube({ ...tubeArgs, sign: 1, name: 'B  exhaust', contact: nearestToWall(footB, 1), flow: result ? interp(-yPose, result.Y_positions, result.flow_a) : 0 })}
               </>
             );
           })()}
           <rect x={-0.45} y={-ceiling - 0.4} width={0.9} height={ceiling + 0.8} rx={0.2} fill="#d4a94a" fillOpacity={0.85} />
+          <polygon points={[[-hw, carriageY + 0.9], [-hw + 0.9, carriageY + 1.5], [hw - 0.9, carriageY + 1.5], [hw, carriageY + 0.9], [hw, carriageY - 0.9], [hw - 0.9, carriageY - 1.5], [-hw + 0.9, carriageY - 1.5], [-hw, carriageY - 0.9]].map(([px, py]) => `${px},${-py}`).join(' ')}
+            fill="var(--bui-muted)" fillOpacity={0.75} stroke="var(--bui-text)" strokeWidth={0.06} />
+          <line x1={-wall} y1={-h0} x2={wall} y2={-h0} stroke="#60a5fa" strokeWidth={0.04} strokeDasharray="0.2 0.2" />
           <circle cx={pivot[0]} cy={-carriageY} r={Math.max(params.carriage_pin_diameter / 2, 0.2)} fill="#60a5fa" />
           {MEMBERS.map((member) => (
             <g key={member.id}>
@@ -538,7 +614,7 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
           {result && (
             <g opacity={0.35}>
               {MEMBERS.map((member) => (
-                <polyline key={member.id} points={poly(mirror(deflected(result.lines[member.id], -y, interp(-y, result.Y_positions, result.force_a))))}
+                <polyline key={member.id} points={poly(mirror(deflected(result.lines[member.id], -yPose, interp(-yPose, result.Y_positions, result.force_a))))}
                   fill="none" stroke={member.color} strokeWidth={params[`${member.id}_thickness`]} strokeLinecap="round" />
               ))}
             </g>
@@ -547,14 +623,9 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
           {dot(junction, '#e5e5e5', 'junction', 'J')}
           {dot(pinch, '#34d399', 'pinch', 'P')}
         </svg>
-        <label className="mt-2 flex items-center gap-3 text-xs text-neutral-400">
-          Carriage Y
-          <input type="range" min={-params.stroke} max={params.stroke} step={0.01} value={Math.min(params.stroke, Math.max(-params.stroke, y))}
-            onChange={(e) => setY(Number(e.target.value))} className="flex-1 accent-blue-500" aria-label="Carriage Y" />
-          <span className="font-mono text-neutral-200 w-14 text-right">{y.toFixed(2)}</span>
-        </label>
-        {error && <p className="text-xs text-red-300 mt-1">{error}</p>}
-        {result && !result.passes && <p className="text-xs text-amber-300 mt-1">{result.message}</p>}
+        </div>
+        {error && <p className="mt-2 shrink-0 text-xs text-red-300" role="alert">{error}</p>}
+        {result && !result.passes && <p className="mt-2 shrink-0 text-xs text-amber-300">{result.message}</p>}
       </div>
 
       <div className="lg:col-span-4 min-w-0 flex flex-col gap-4 min-h-0 overflow-y-auto">
@@ -569,6 +640,7 @@ export default function CompliantBars({ mode, onOpenExplorer }: { mode: SubTab; 
                   label={{ value: 'L/min', angle: -90, position: 'insideLeft', fill: '#a3a3a3', fontSize: 11 }} />
                 <Tooltip formatter={(value) => [`${Number(value).toFixed(3)} L/min`, 'Flow']} labelFormatter={(label) => `Y ${Number(label).toFixed(2)} mm`} />
                 <Line type="monotone" dataKey="flow" name="Static flow" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           )}
