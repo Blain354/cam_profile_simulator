@@ -480,7 +480,7 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
       {/* Panel 1: parameters & solver */}
-      <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+      <div data-pane="controls" className="lg:col-span-3 min-w-0 bg-neutral-800 p-3 sm:p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
         <div className="flex items-center gap-2 mb-3 min-w-0 shrink-0">
           <Settings className="w-5 h-5 text-amber-500 shrink-0" />
           <h2 className="text-lg font-bold text-white tracking-tight truncate">

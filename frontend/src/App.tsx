@@ -1,11 +1,12 @@
 import { Textarea } from '@blain-projects/ui';
-import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input } from '@blain-projects/ui';
+import { Header, BlueprintBackground, ThemeToggle, useTheme, Button, Input, Drawer } from '@blain-projects/ui';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import {
-  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor, PenLine
+  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor, PenLine,
+  SlidersHorizontal, Eye, ChartLine, MoreHorizontal
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -49,7 +50,13 @@ type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime' | 'section';
 const KeptProfileBuilder = React.memo(ProfileBuilder);
 
 type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum' | 'compliant';
+type MobilePane = 'controls' | 'schematic' | 'charts';
 const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum', 'compliant'];
+const MOBILE_PANES: { id: MobilePane; label: string; Icon: typeof SlidersHorizontal }[] = [
+  { id: 'controls', label: 'Controls', Icon: SlidersHorizontal },
+  { id: 'schematic', label: 'Schematic', Icon: Eye },
+  { id: 'charts', label: 'Charts', Icon: ChartLine },
+];
 const TABS_KEY = 'cam-sim.tabs.v1';
 const SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Finder' }];
 const SOLVER_SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Solver' }];
@@ -143,6 +150,8 @@ export default function App() {
   const [detailsView, setDetailsView] = useState(false);
   const travel = useCamTravel(data);
   const [showStlExport, setShowStlExport] = useState(false);
+  const [mobilePane, setMobilePane] = useState<MobilePane>('controls');
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
 
   const getExplorerChartSettings = useCallback((key: ExplorerChartKey): ChartDomainSettings => {
     const root = (params.chart_settings ?? {}) as Record<string, unknown>;
@@ -205,6 +214,7 @@ export default function App() {
     setActiveConfigName(null);
     setActiveTab('cam');
     setSubTab('cam', 'explorer');
+    setMobilePane('schematic');
     setToast({ message: 'Profile applied from Builder', visible: true });
     setTimeout(() => setToast({ message: '', visible: false }), 3000);
   }, [setSubTab]);
@@ -551,44 +561,62 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user" transition={{ duration: 0.25, ease: 'easeOut' }}>
     <TooltipHintsProvider enabled={guidanceMode}>
-    <div className="bui-workspace-shell cam-workspace w-full text-neutral-100 px-4 pb-4 overflow-hidden flex flex-col gap-4">
+    <div data-mobile-pane={mobilePane} className="bui-workspace-shell cam-workspace w-full text-neutral-100 px-2.5 sm:px-4 pb-0 lg:pb-4 overflow-hidden flex flex-col gap-2.5 lg:gap-4">
 
       <BlueprintBackground />
       {/* Shared chrome; simulation controls stay in the tool. */}
       <Header variant="full-width" blur={false} className="cam-kit-header">
-        <div className="flex items-center gap-4">
-          <div className="shrink-0">
-            <h1 className="text-2xl font-bold text-neutral-100 leading-tight hidden lg:block">
+        <div className="flex w-full sm:w-auto flex-1 min-w-0 items-center gap-2 lg:gap-4">
+          <div className="hidden lg:block shrink-0">
+            <h1 className="text-2xl font-bold text-neutral-100 leading-tight">
               Cam Profile Simulator
             </h1>
             <p className="text-xs text-neutral-400 mt-0.5">Pneumatic valve opening simulation</p>
           </div>
 
           {/* Tab Bar */}
-          <div className="cam-tab-row flex min-w-0 max-w-full flex-wrap items-center gap-2">
-            {/* Plain buttons with the kit's tab classes, as in SubTabs: a kit ghost Button paints over the selected state. */}
-            <div className="bui-tablist flex min-w-0 max-w-full flex-wrap items-center">
-              {([
-                ['cam', 'Cam', Disc3],
-                ['linkage', 'Bar Linkage', Waypoints],
-                ['lever', 'Lever Linkage', Spline],
-                ['pendulum', 'Pendulum Linkage', Anchor],
-                ['compliant', 'Compliant Bars', PenLine],
-              ] as const).map(([tab, label, Icon]) => (
-                <button key={tab} type="button" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}
-                  className={`bui-tab flex items-center gap-2 px-2.5 py-1 text-xs${activeTab === tab ? ' bui-tab--active' : ''}`}>
-                  <Icon className="w-3.5 h-3.5" /> {label}
-                </button>
-              ))}
+          <div className="cam-tab-row flex w-full sm:w-auto min-w-0 max-w-full flex-wrap items-center gap-1.5 sm:gap-2">
+            {/* Row 1 on phones: horizontally scrollable tabs + compact Tools drawer trigger. */}
+            <div className="flex w-full sm:w-auto min-w-0 items-center gap-1.5">
+              {/* Plain buttons with the kit's tab classes, as in SubTabs: a kit ghost Button paints over the selected state. */}
+              <div className="bui-tablist cam-tab-strip flex flex-1 sm:flex-initial min-w-0 max-w-full flex-wrap items-center">
+                {([
+                  ['cam', 'Cam', Disc3],
+                  ['linkage', 'Bar Linkage', Waypoints],
+                  ['lever', 'Lever Linkage', Spline],
+                  ['pendulum', 'Pendulum Linkage', Anchor],
+                  ['compliant', 'Compliant Bars', PenLine],
+                ] as const).map(([tab, label, Icon]) => (
+                  <button key={tab} type="button" onClick={(e) => {
+                    setActiveTab(tab);
+                    e.currentTarget.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                  }} aria-pressed={activeTab === tab}
+                    className={`bui-tab flex shrink-0 items-center gap-1.5 sm:gap-2 whitespace-nowrap px-2.5 py-1 text-xs${activeTab === tab ? ' bui-tab--active' : ''}`}>
+                    <Icon className="w-3.5 h-3.5 shrink-0" /> {label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex sm:hidden shrink-0 items-center gap-1.5">
+                <span className={`flex h-2.5 w-2.5 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} title={data ? 'Connected' : 'Disconnected'} />
+                <Button variant="ghost" type="button" onClick={() => setMobileToolsOpen(true)}
+                  className="flex items-center justify-center rounded-lg border border-neutral-700 px-2.5 py-1.5 text-neutral-200"
+                  aria-label="Tools and settings" aria-haspopup="dialog" aria-expanded={mobileToolsOpen}>
+                  <MoreHorizontal className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
-            <SubTabs label="Mode" value={subTab} options={activeTab === 'compliant' ? SOLVER_SUB_TABS : SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
-          </div>
 
-          {/* The open tab's profile: one pill for every tab and sub-tab */}
-          <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
-            onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }} />
+            {/* Row 2 on phones: Mode switcher + Profile pill cleanly side-by-side. */}
+            <div className="flex w-full sm:w-auto min-w-0 items-center justify-between sm:justify-start gap-2">
+              <SubTabs label="Mode" value={subTab} options={activeTab === 'compliant' ? SOLVER_SUB_TABS : SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
+              <div className="min-w-0 flex-1 sm:flex-initial flex justify-end sm:justify-start">
+                <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
+                  onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }} />
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="hidden sm:flex shrink-0 items-center gap-2">
           <Button variant="ghost"
             type="button"
             onClick={() => setShowStlExport(true)}
@@ -597,7 +625,7 @@ export default function App() {
             aria-label="Export STL via Onshape"
           >
             <Box className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Export STL</span>
+            <span className="hidden md:inline">Export STL</span>
           </Button>
           <Button variant="ghost"
             type="button"
@@ -608,16 +636,17 @@ export default function App() {
  : 'border-neutral-700 bg-neutral-800/50 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/60'
  }`}
             title={guidanceMode ? 'Guidance mode on: tooltips enabled' : 'Guidance mode off: tooltips disabled'}
+            aria-label="Guidance tooltips"
             aria-pressed={guidanceMode}
           >
             <CircleHelp className="w-3.5 h-3.5" />
-            Guidance
+            <span className="hidden md:inline">Guidance</span>
           </Button>
           <span className={`flex h-3 w-3 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} title={data ? 'Connected' : 'Disconnected'} />
           {/* Spelled out on very wide screens only, so the header keeps one row; the dot carries it otherwise. */}
           <span className="sr-only min-[1700px]:not-sr-only text-sm text-neutral-400">{data ? 'Connected' : 'Disconnected'}</span>
+          <ThemeToggle theme={theme} onThemeChange={setTheme} />
         </div>
-      <ThemeToggle theme={theme} onThemeChange={setTheme} />
       </Header>
 
       {error && (
@@ -629,7 +658,7 @@ export default function App() {
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
 
           {/* Panel 1: Parameters */}
-          <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+          <div data-pane="controls" className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
             <div className="flex items-center gap-3 mb-6 min-w-0">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Settings className="w-5 h-5 text-blue-500 shrink-0" />
@@ -752,7 +781,7 @@ export default function App() {
             speedNote={`${params.motor_speed} RPM × ${params.lead_screw_pitch} mm pitch`} />
 
           {/* Panel 3: charts */}
-          <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
+          <div data-pane="charts" className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
             <ChartCard title="Pneumatic Flow vs Y" {...explorerCard('pneumatic')}>
               {renderPneumatic}
             </ChartCard>
@@ -807,6 +836,63 @@ export default function App() {
         </div>
       )}
 
+      {/* Mobile & tablet bottom pane switcher (below lg) */}
+      <nav aria-label="Workspace view" className="cam-mobile-nav -mx-2.5 sm:-mx-4 shrink-0 px-2 pt-1.5 lg:hidden">
+        <div role="tablist" aria-label="Workspace panels" className="grid grid-cols-3 gap-1">
+          {MOBILE_PANES.map(({ id, label, Icon }) => {
+            const selected = mobilePane === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setMobilePane(id)}
+                className="cam-mobile-nav__btn flex min-h-[44px] flex-col items-center justify-center gap-0.5 px-2 py-1 text-xs font-medium"
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* Mobile Tools bottom drawer */}
+      <Drawer open={mobileToolsOpen} onClose={() => setMobileToolsOpen(false)} side="bottom" label="Tools">
+        {mobileToolsOpen && (
+          <div className="space-y-3 p-4">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-700/70 bg-neutral-900/40 px-3 py-2.5 text-sm">
+              <span className="text-neutral-300">Simulation server</span>
+              <span className="inline-flex items-center gap-2 text-xs font-medium text-neutral-200">
+                <span className={`h-2.5 w-2.5 rounded-full ${data ? 'bg-emerald-500' : 'bg-red-500'} ${loading ? 'animate-pulse' : ''}`} />
+                {data ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+            <Button variant="ghost" type="button"
+              onClick={() => { setMobileToolsOpen(false); setShowStlExport(true); }}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-600/50 bg-emerald-600/20 px-3 py-2.5 text-sm font-semibold text-emerald-300">
+              <Box className="w-4 h-4" />
+              Export STL via Onshape
+            </Button>
+            <Button variant="ghost" type="button"
+              onClick={() => setGuidanceMode((v) => !v)}
+              aria-pressed={guidanceMode}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-700 px-3 py-2.5 text-sm text-neutral-200">
+              <span className="inline-flex items-center gap-2">
+                <CircleHelp className="w-4 h-4" />
+                Guidance hints
+              </span>
+              <span className="text-xs font-mono text-neutral-400">{guidanceMode ? 'On' : 'Off'}</span>
+            </Button>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200">
+              <span>Appearance</span>
+              <ThemeToggle theme={theme} onThemeChange={setTheme} />
+            </div>
+          </div>
+        )}
+      </Drawer>
+
       {/* Modals & Overlays */}
       <StlExportModal
         isOpen={showStlExport}
@@ -840,9 +926,9 @@ export default function App() {
       <AnimatePresence>
         {toast.visible && (
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] bg-neutral-800 border-2 border-blue-500/50 text-white px-6 py-3 rounded-2xl flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="text-sm font-bold tracking-tight">{toast.message}</span>
+            className="fixed bottom-20 lg:bottom-8 left-1/2 -translate-x-1/2 z-[200] max-w-[calc(100vw-2rem)] bg-neutral-800 border-2 border-blue-500/50 text-white px-4 sm:px-6 py-2.5 sm:py-3 rounded-2xl flex items-center gap-3">
+            <div className="w-2 h-2 shrink-0 rounded-full bg-blue-500" />
+            <span className="text-sm font-bold tracking-tight truncate">{toast.message}</span>
           </motion.div>
         )}
       </AnimatePresence>

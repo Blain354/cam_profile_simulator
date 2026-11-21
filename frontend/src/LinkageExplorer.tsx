@@ -901,9 +901,9 @@ function RangeRow({ label, min, max, onMin, onMax }: { label: string; min: numbe
       className="w-16 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-right text-neutral-100 font-mono" />
   );
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="text-sm text-neutral-300">{label}</span>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 ml-auto">
         {field(min, onMin, `${label} min`)}
         <span className="text-xs text-neutral-500">to</span>
         {field(max, onMax, `${label} max`)}
@@ -1150,8 +1150,8 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
                 )}
               </div>
             )}
-            <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-neutral-700">
-              <table className="w-full text-xs">
+            <div className="max-h-[50vh] overflow-auto rounded-lg border border-neutral-700">
+              <table className="w-full min-w-[460px] text-xs">
                 <thead className="sticky top-0 bg-neutral-900 text-left text-neutral-400">
                   <tr><th className="p-2" /><th className="p-2">Onshape variable</th><th className="p-2">In the table now</th><th className="p-2">From the simulator</th>{cad?.configured && <th className="p-2">Part Studio uses</th>}<th className="p-2">Status</th></tr>
                 </thead>
@@ -1179,7 +1179,7 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
               {table.table_url
                 ? <a href={table.table_url} target="_blank" rel="noopener noreferrer" className="text-xs text-amber-300 underline">Open the table in Onshape</a>
                 : <span />}
@@ -2373,7 +2373,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
       {/* Panel 1: parameters */}
-      <div className="lg:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+      <div data-pane="controls" className="lg:col-span-3 min-w-0 bg-neutral-800 p-3 sm:p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
         <div className="flex items-center gap-2 mb-4 min-w-0">
           <Settings className="w-5 h-5 text-amber-500 shrink-0" />
           <h2 className="text-lg font-bold text-white tracking-tight truncate">{pendulum ? 'Pendulum linkage' : lever ? 'Lever linkage' : 'Bar linkage'}</h2>
@@ -2397,21 +2397,21 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       </div>
 
       {/* Panel 2: schematic */}
-      <div className="lg:col-span-4 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
-        <div className="flex items-center gap-3 mb-3 shrink-0 min-w-0">
+      <div data-pane="schematic" className="lg:col-span-4 min-w-0 bg-neutral-800 p-3 sm:p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 shrink-0 min-w-0">
           <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Schematic</h3>
           <Button variant="ghost" type="button" onClick={() => setDetails(!details)}
             className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}>
             {details ? 'Hide details' : 'Details'}
           </Button>
         </div>
-        <div className="order-2 flex-1 min-h-[180px] w-full bg-neutral-900/60 rounded-lg border border-neutral-800/80 overflow-hidden">
+        <div className="order-2 flex-1 min-h-[240px] lg:min-h-[180px] w-full bg-neutral-900/60 rounded-lg border border-neutral-800/80 overflow-hidden">
           {data && data.Y_positions.length > 0
             ? <LinkageDiagram params={params} data={data} y={yPose} details={details} />
             : <div className="flex h-full items-center justify-center p-4 text-center text-sm text-neutral-400">{data ? data.message : 'Loading…'}</div>}
         </div>
         <div className="order-1 shrink-0 mb-3 flex flex-col gap-1">
-          <div className="flex items-center justify-between gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <label htmlFor={`linkage-y-${kind}`} className="font-medium text-neutral-300">Carriage Y</label>
             {data?.travel_sign != null && data.travel_sign * (data.anchor_on_top ? -1 : 1) < 0 && (
               <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the charts. This link pulls, so its carriage moves the other way from a link that pushes for the same Y: the motor turns the other way.">
@@ -2420,19 +2420,19 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
             )}
             <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
           </div>
-          <div className="order-last flex items-center justify-between gap-2 pt-1">
+          <div className="order-last flex flex-wrap items-center gap-2 pt-1">
             <Button variant="ghost" type="button" onClick={togglePlay} disabled={speed <= 0} aria-pressed={playing}
               title="Run the carriage back and forth over the full stroke at the loaded motor speed"
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
+              className={`flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}>
               {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {playing ? 'Stop' : 'Oscillate'}
             </Button>
             <Button variant="ghost" type="button" onClick={() => { setPlaying(false); setCycleT(null); setY(0); }} disabled={!playing && yPose === 0}
               title="Bring the carriage back to Y = 0"
-              className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
+              className="shrink-0 whitespace-nowrap rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50">
               Center
             </Button>
             <FlowParticlesSwitch note="Full density and speed at the flow through the full bore. The chamber is not drawn: it is taken as below the drawing, so the air runs down tube A (supply) and up tube B (exhaust)." />
-            <span className="text-xs text-neutral-400 text-right">
+            <span className="w-full sm:w-auto sm:ml-auto text-xs text-neutral-400 text-left sm:text-right">
               {loadedRpm.toFixed(0)} RPM under load ({params.motor_speed} × {Math.round(params.speed_factor * 100)} %), {speed.toFixed(2)} mm/s
             </span>
           </div>
@@ -2446,7 +2446,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
       </div>
 
       {/* Panel 3: charts */}
-      <div className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
+      <div data-pane="charts" className="lg:col-span-5 min-w-0 grid auto-rows-[minmax(210px,1fr)] gap-4 min-h-0 overflow-y-auto pr-1">
         <ChartCard title="Static flow vs carriage Y" {...cardProps('flow')}>
           {({ settings: c }) => (<FitChart>
           <LineChart data={chartData} margin={margin}>
@@ -2545,7 +2545,7 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
           <LineChart data={cycleData} margin={margin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
             <XAxis dataKey="t" type="number" domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])} allowDataOverflow={!c.autoX} stroke="#888"
-              label={{ value: 'Time (s): Y goes 0, +stroke, 0, -stroke, 0', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(v) => Number(v).toFixed(1)} />
+              label={{ value: 'Time (s) · ±stroke cycle', position: 'bottom', fill: '#888', offset: 0 }} tickFormatter={(v) => Number(v).toFixed(1)} />
             <YAxis yAxisId="q" type="number" stroke="#888" domain={chartDomain(c, 'y')} allowDataOverflow={!c.autoY} tickFormatter={(v) => Number(v).toFixed(1)}
               label={{ value: 'Free air (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }} />
             <YAxis yAxisId="p" orientation="right" type="number" stroke="#a78bfa" tickFormatter={(v) => Number(v).toFixed(0)}

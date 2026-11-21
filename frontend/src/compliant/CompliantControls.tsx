@@ -164,6 +164,7 @@ function AttackAngleArcSlider({
   onChange: (nextDeg: number) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const draggingRef = useRef(false);
   const cx = 24;
   const cy = 54;
   const r = 40;
@@ -196,12 +197,15 @@ function AttackAngleArcSlider({
         aria-valuemax={90}
         aria-valuenow={angleDeg}
         onPointerDown={(e) => {
+          draggingRef.current = true;
           e.currentTarget.setPointerCapture(e.pointerId);
           angleFromPointer(e.clientX, e.clientY);
         }}
         onPointerMove={(e) => {
-          if (e.buttons & 1) angleFromPointer(e.clientX, e.clientY);
+          if (draggingRef.current || (e.buttons & 1)) angleFromPointer(e.clientX, e.clientY);
         }}
+        onPointerUp={() => { draggingRef.current = false; }}
+        onPointerCancel={() => { draggingRef.current = false; }}
       >
         {/* Vertical tube wall reference on the left */}
         <rect x={10} y={8} width={10} height={92} rx={2} fill="#ef4444" fillOpacity={0.18} stroke="#ef4444" strokeOpacity={0.45} strokeWidth={1} />
@@ -1046,7 +1050,7 @@ export function SplineBoundsList({
       {/* Thicknesses grid */}
       <div className="space-y-1.5">
         <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Thicknesses</div>
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-3 gap-1.5">
           {MEMBERS.map((member) => {
             const key = `${member.id}_thickness` as ShapeKey;
             const target = `${member.id}_thickness` as HoveredBoundTarget;
@@ -1269,7 +1273,7 @@ export function SolverGoalBudgetControls({
             </button>
           )}
         </div>
-        <div className={`grid gap-1 ${budgetOptions.length > 5 ? 'grid-cols-6' : 'grid-cols-5'}`}>
+        <div className={`grid gap-1.5 ${budgetOptions.length > 5 ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
           {budgetOptions.map((preset) => {
             const active = timeBudgetS === preset.seconds;
             return (

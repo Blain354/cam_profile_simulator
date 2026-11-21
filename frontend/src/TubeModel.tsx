@@ -102,13 +102,13 @@ export function TubeSectionCard({ tube, h, where, settings, onSettingsChange, mo
           ) : (
             <>
               <div className="min-h-0 flex-1"><SectionDrawing s={section} frame={frame} settings={settings} big={maximized} /></div>
-              <div className={`grid shrink-0 grid-cols-2 gap-x-3 gap-y-0.5 font-mono leading-tight text-neutral-300 ${maximized ? 'text-sm' : 'text-[11px]'}`}>
+              <div className={`grid shrink-0 grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5 font-mono leading-tight text-neutral-300 ${maximized ? 'text-sm' : 'text-[11px]'}`}>
                 <span className="truncate" title={where}>h {section.h.toFixed(3)} mm <span className="text-neutral-500">({where})</span></span>
                 <span className="truncate">{section.force_per_mm.toFixed(3)} N/mm <span className="text-neutral-500">({section.pressure_share_per_mm.toFixed(3)} from air)</span></span>
                 <span className="truncate">{section.open_area_mm2 > 0 ? `bore ${section.open_area_mm2.toFixed(3)} / ${sweep.bore_area_mm2.toFixed(2)} mm²` : 'bore shut'}</span>
                 <span className="truncate">shuts at {sweep.h_sealed.toFixed(3)} mm <span className="text-neutral-500">({sweep.h_closed.toFixed(3)} at 0 kPa)</span></span>
                 {section.extrapolated && (
-                  <span className="col-span-2 truncate text-amber-400" title={`The FEM is solved down to h = ${sweep.h_min_solved.toFixed(3)} mm. Below, the shape is its deepest one flattened to h and the force follows a nearly incompressible strip (F ~ 1/h³).`}>
+                  <span className="sm:col-span-2 truncate text-amber-400" title={`The FEM is solved down to h = ${sweep.h_min_solved.toFixed(3)} mm. Below, the shape is its deepest one flattened to h and the force follows a nearly incompressible strip (F ~ 1/h³).`}>
                     extrapolated below {sweep.h_min_solved.toFixed(3)} mm
                   </span>
                 )}

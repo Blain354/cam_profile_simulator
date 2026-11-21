@@ -457,19 +457,19 @@ export function SolverModal({
   if (modalMode === 'setup' || !job) {
     return (
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-0 sm:p-4 backdrop-blur-sm"
         role="dialog"
         aria-modal="true"
         aria-label="Configure Compliant Bars Solver"
       >
-        <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl">
+        <div className="flex h-full max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-none border-0 sm:h-auto sm:max-h-[92vh] sm:rounded-2xl sm:border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl">
           {/* Header */}
-          <div className="flex items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950/60 px-5 py-3.5">
-            <div className="flex items-center gap-2.5">
-              <Sliders className="w-5 h-5 text-amber-400" />
-              <div>
-                <h3 className="text-sm font-bold text-white">Configure Solve</h3>
-                <p className="text-[11px] text-neutral-400">
+          <div className="flex items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950/60 px-3.5 py-3 sm:px-5 sm:py-3.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Sliders className="w-5 h-5 shrink-0 text-amber-400" />
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white truncate">Configure Solve</h3>
+                <p className="text-[11px] text-neutral-400 truncate">
                   {spaceSummary.freeCount} varied · {spaceSummary.lockedCount} locked
                   {spaceSummary.pivotBoth ? ' · Pivot: Far & Tube' : ' · Pivot: locked'}
                 </p>
@@ -478,7 +478,7 @@ export function SolverModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-500 hover:text-white"
+              className="shrink-0 rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:border-neutral-500 hover:text-white"
               aria-label="Close solver setup modal"
             >
               <X className="w-4 h-4" />
@@ -486,7 +486,7 @@ export function SolverModal({
           </div>
 
           {/* Body: 2-column setup */}
-          <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="flex-1 overflow-y-auto p-3.5 sm:p-5 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
             {/* Left column: Search Method + Method-specific params */}
             <div className="space-y-4">
               <div className="space-y-2">
@@ -568,25 +568,25 @@ export function SolverModal({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between gap-3 border-t border-neutral-800 bg-neutral-950/60 px-5 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-neutral-800 bg-neutral-950/60 px-3.5 py-3 sm:px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             <span className="text-[11px] text-neutral-400">
               Method: <strong className="text-neutral-200">{SOLVER_METHOD_META[methodConfig.method].short}</strong> ·
               Budget: <strong className="text-amber-300 font-mono">{fmtDuration(timeBudgetS)}</strong>
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 ml-auto">
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:bg-neutral-800"
+                className="whitespace-nowrap rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-800"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => onLaunch(setupName, setupNote)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500 bg-amber-500/25 px-4 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/35"
+                className="inline-flex whitespace-nowrap items-center gap-1.5 rounded-lg border border-amber-500 bg-amber-500/25 px-4 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/35"
               >
-                <Play className="w-3.5 h-3.5" />
+                <Play className="w-3.5 h-3.5 shrink-0" />
                 Launch Solve
               </button>
             </div>
@@ -627,79 +627,89 @@ export function SolverModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-0 sm:p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Compliant Bars Solver"
     >
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl">
+      <div className="flex h-full max-h-[100dvh] w-full max-w-5xl flex-col overflow-hidden rounded-none border-0 sm:h-auto sm:max-h-[92vh] sm:rounded-2xl sm:border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-neutral-800 bg-neutral-950/60 px-5 py-3.5">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <Sparkles className={`w-5 h-5 shrink-0 ${running ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`} />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white truncate">{job.name}</h3>
-                <span className="rounded-full bg-neutral-800 border border-neutral-600 px-2 py-0.5 text-[10px] font-semibold text-neutral-200">
-                  {SOLVER_METHOD_META[activeMethod]?.short ?? activeMethod}
-                </span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                    running
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : job.status === 'completed'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                        : job.status === 'cancelled'
-                          ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                          : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                  }`}
-                >
-                  {job.status}
-                </span>
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between border-b border-neutral-800 bg-neutral-950/60 px-3.5 py-3 sm:px-5 sm:py-3.5">
+          <div className="flex items-start sm:items-center justify-between gap-2 min-w-0 flex-1">
+            <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+              <Sparkles className={`w-5 h-5 mt-0.5 sm:mt-0 shrink-0 ${running ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+                  <h3 className="text-sm font-bold text-white truncate max-w-full">{job.name}</h3>
+                  <span className="shrink-0 rounded-full bg-neutral-800 border border-neutral-600 px-2 py-0.5 text-[10px] font-semibold text-neutral-200">
+                    {SOLVER_METHOD_META[activeMethod]?.short ?? activeMethod}
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                      running
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : job.status === 'completed'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : job.status === 'cancelled'
+                            ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                            : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}
+                  >
+                    {job.status}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-neutral-400 truncate">
+                  Goal:{' '}
+                  <span className="text-neutral-200">
+                    {(() => {
+                      const gw = s?.goal_weights ?? job.goal_weights;
+                      const entries = gw ? Object.entries(gw).filter(([, w]) => w > 0) : [];
+                      if (entries.length > 1) {
+                        return entries
+                          .map(([k, w]) => `${Math.round(w * 100)}% ${SOLVER_GOAL_META[k as keyof typeof SOLVER_GOAL_META]?.short ?? k}`)
+                          .join(' + ');
+                      }
+                      return SOLVER_GOAL_META[job.goal]?.label ?? job.goal;
+                    })()}
+                  </span>
+                  {s ? ` · ${s.phase}` : ''}
+                </p>
               </div>
-              <p className="text-[11px] text-neutral-400 truncate">
-                Goal:{' '}
-                <span className="text-neutral-200">
-                  {(() => {
-                    const gw = s?.goal_weights ?? job.goal_weights;
-                    const entries = gw ? Object.entries(gw).filter(([, w]) => w > 0) : [];
-                    if (entries.length > 1) {
-                      return entries
-                        .map(([k, w]) => `${Math.round(w * 100)}% ${SOLVER_GOAL_META[k as keyof typeof SOLVER_GOAL_META]?.short ?? k}`)
-                        .join(' + ');
-                    }
-                    return SOLVER_GOAL_META[job.goal]?.label ?? job.goal;
-                  })()}
-                </span>
-                {s ? ` · ${s.phase}` : ''}
-              </p>
             </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="sm:hidden shrink-0 rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:border-neutral-500 hover:text-white"
+              aria-label="Close solver modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center justify-end gap-2 shrink-0">
             {running ? (
               <button
                 type="button"
                 onClick={onCancel}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/30"
+                className="inline-flex w-full sm:w-auto justify-center whitespace-nowrap items-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/30"
               >
-                <PauseCircle className="w-3.5 h-3.5" />
+                <PauseCircle className="w-3.5 h-3.5 shrink-0" />
                 Stop &amp; keep best
               </button>
             ) : (
               <button
                 type="button"
                 onClick={onSwitchToSetup}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/25"
+                className="inline-flex w-full sm:w-auto justify-center whitespace-nowrap items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/25"
               >
-                <Sliders className="w-3.5 h-3.5" />
+                <Sliders className="w-3.5 h-3.5 shrink-0" />
                 New solve
               </button>
             )}
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-500 hover:text-white"
+              className="hidden sm:inline-flex shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-500 hover:text-white"
               aria-label="Close solver modal"
             >
               <X className="w-4 h-4" />
@@ -708,9 +718,9 @@ export function SolverModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-3.5 sm:p-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
           {/* Progress bar + KPI strip */}
-          <div className="rounded-xl border border-neutral-800 bg-neutral-800/50 p-4 space-y-3">
+          <div className="rounded-xl border border-neutral-800 bg-neutral-800/50 p-3 sm:p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 text-neutral-300">
                 <Clock className="w-3.5 h-3.5 text-amber-400" />
@@ -730,7 +740,7 @@ export function SolverModal({
               />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 pt-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5 pt-1">
               <div className="rounded-lg bg-neutral-900/80 px-3 py-2 border border-neutral-800">
                 <div className="text-[10px] uppercase text-neutral-400">Tested</div>
                 <div className="text-base font-mono font-bold text-white">{tested}</div>
@@ -782,8 +792,8 @@ export function SolverModal({
           {/* 2-column analytics: Rejection Breakdown + Design Space Scatter */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Constraint Rejection Breakdown */}
-            <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
+            <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-3.5 sm:p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-300">
                   Constraints &amp; Rejection Breakdown
                 </h4>
@@ -825,9 +835,9 @@ export function SolverModal({
               <div className="space-y-2 pt-1">
                 {(s?.rejection_stats ?? []).map((item) => (
                   <div key={item.key} className="space-y-0.5">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-neutral-300">{CONSTRAINT_LABELS[item.key] ?? item.key}</span>
-                      <span className="font-mono text-neutral-400">
+                    <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                      <span className="min-w-0 text-neutral-300">{CONSTRAINT_LABELS[item.key] ?? item.key}</span>
+                      <span className="shrink-0 font-mono text-neutral-400">
                         {item.count} ({item.pct_of_tested}%)
                         {item.sole_blocker > 0 && (
                           <span className="text-amber-400/90"> · {item.sole_blocker} sole</span>
@@ -849,8 +859,8 @@ export function SolverModal({
             </div>
 
             {/* Design Space Map (ΔX @ 0.25 mm vs Max Stress) */}
-            <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-4 space-y-2">
-              <div className="flex items-center justify-between">
+            <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-3.5 sm:p-4 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-300">
                   Explored Space: ΔX @ 0.25 mm vs Stress
                 </h4>
