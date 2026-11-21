@@ -364,12 +364,14 @@ measured input. With the id set, an elbow or a lever is checked the same way.
 ### Inputs the CAD decides
 
 Some inputs are set by the CAD, not by the simulator. The Part Studio measures them, and the
-simulator reads them back. The only default is the pendulum tube centre (`tube_center_x`, the
-tube-axis distance from the screw axis), from the variable `#pend_CALC_tube_center`
-(`DEFAULT_MEASURED` in `backend/onshape_variables.py`). The Part Studio is the element id in
+simulator reads them back. The defaults live in `DEFAULT_MEASURED` (`backend/onshape_variables.py`).
+The pendulum reads its tube centre (`tube_center_x`, the tube-axis distance from the screw axis)
+from `#pend_CALC_tube_center`. Compliant Bars reads that same variable, and its out-of-plane depth
+(`member_depth`) from `#pend_bar_thickness`. The pendulum table still writes that second name as
+bar thickness (`member_thickness`); this tab only reads it. The Part Studio is the element id in
 `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`, on the table's document and branch. It is not chosen by name.
 A measured input is never written to the table: the pendulum export has no `pend_tube_center`, so the
-CAD places the tube itself and the simulator follows its measure.
+CAD places the tube itself and the simulator follows its measure. Compliant Bars has no write route.
 
 | Env | Meaning |
 |-----|---------|
@@ -379,6 +381,13 @@ CAD places the tube itself and the simulator follows its measure.
 - **Sync from Onshape** (under Tube centre, on the pendulum) calls `POST /api/linkage/onshape/measured`:
   one read-only FeatureScript evaluation per variable (`getVariable`), and each value returned overwrites
   that input on the design.
+- **Load CAD values from Onshape** (the button above the Compliant Bars controls) and **Sync from Onshape**
+  (on the tube centre and on the out-of-plane depth) call `POST /api/compliant/onshape/measured`: the same
+  read-only evaluation, one call per variable. Load CAD values copies every value returned;
+  a per-field Sync from Onshape copies only that field.
+  It does not gate a table write, because this tab does not write one. If `ONSHAPE_LINKAGE_MEASURED`
+  is set, has no `compliant` object, and does have a `pendulum` object, that pendulum map is what
+  this read uses (`measured_for`). An object under `compliant` replaces the defaults for this tab only.
 - **Export check.** Opening the write window, and **Look up**, also reads the measured values and says
   whether the export is valid: every measured input must equal the simulator's within 0.001 in that
   value's unit (millimetres for the tube centre). If one differs, the write button is disabled and reads
