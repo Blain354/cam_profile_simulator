@@ -32,10 +32,19 @@ test('each tab has an Explorer and a Finder sub-tab, and the choice is kept', ()
   expect(getByRole('tab', { name: 'Explorer' }).getAttribute('aria-selected')).toBe('true')
   fireEvent.click(finder)
   expect(JSON.parse(localStorage.getItem('cam-sim.tabs.v1')!)).toEqual(
-    { tab: 'cam', sub: { cam: 'finder', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer' } })
+    { tab: 'cam', sub: { cam: 'finder', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer', compliant: 'explorer' } })
   unmount()
   const again = render(<App />)
   expect(again.getByRole('tab', { name: 'Finder' }).getAttribute('aria-selected')).toBe('true')
+})
+
+test('Compliant Bars names its search sub-tab Solver', () => {
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'compliant', sub: { compliant: 'explorer' } }))
+  const { getByRole } = render(<App />)
+  expect(getByRole('button', { name: 'Compliant Bars' }).getAttribute('aria-pressed')).toBe('true')
+  expect(getByRole('heading', { name: 'Splines' })).toBeTruthy()
+  fireEvent.click(getByRole('tab', { name: 'Solver' }))
+  expect(getByRole('button', { name: 'Solve' })).toBeTruthy()
 })
 
 function stubLinkage(optimize: unknown) {

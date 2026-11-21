@@ -13,7 +13,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
@@ -24,6 +24,8 @@ import onshape_export
 import onshape_variables
 from legacy_units import legacy_psi_to_kpa
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
+from compliant_bars import compute_compliant, solve_compliant
+from compliant_bars import _params_from_mapping as _compliant_params
 import tube_model as tube_law
 
 
@@ -46,6 +48,7 @@ app.add_middleware(
     allow_origins=[
         "https://cam-profile-sim.blain-projects.ca",
         "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -895,6 +898,29 @@ def _linkage_params(req: LinkageRequest) -> LinkageParams:
 @app.post("/api/linkage/simulate")
 def linkage_simulate(req: LinkageRequest):
     return dataclasses.asdict(compute_linkage(_linkage_params(req)))
+
+
+@app.post("/api/compliant/simulate")
+def compliant_simulate(payload: dict = Body(...)):
+    return dataclasses.asdict(compute_compliant(_compliant_params(payload)))
+
+
+class CompliantSolveBody(BaseModel):
+    params: dict
+    bounds: dict = Field(default_factory=dict)
+    budget: int = Field(36, ge=1, le=80)
+
+
+@app.post("/api/compliant/solve")
+def compliant_solve(body: CompliantSolveBody):
+    bounds = {}
+    for key, pair in body.bounds.items():
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            bounds[key] = (float(pair[0]), float(pair[1]))
+    try:
+        return solve_compliant(_compliant_params(body.params), bounds, budget=body.budget)
+    except tube_law.TubeModelError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @app.post("/api/linkage/optimize")

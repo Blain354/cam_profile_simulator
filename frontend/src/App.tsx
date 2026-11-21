@@ -5,7 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import {
-  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor
+  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor, PenLine
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -26,6 +26,7 @@ import { chartDomain } from './lib/chartDomain';
 import type { ChartCardView } from './ChartCard';
 import ProfileBuilder, { FinderProfilePreview } from './ProfileBuilder';
 import LinkageExplorer, { LinkageProfilePreview } from './LinkageExplorer';
+import CompliantBars from './CompliantBars';
 import { SubTabs } from './SubTabs';
 import type { SubTab } from './SubTabs';
 import {
@@ -47,11 +48,12 @@ type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime' | 'section';
 // Memoised: it stays mounted behind the other tabs and should not follow every App render.
 const KeptProfileBuilder = React.memo(ProfileBuilder);
 
-type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum';
-const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum'];
+type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum' | 'compliant';
+const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum', 'compliant'];
 const TABS_KEY = 'cam-sim.tabs.v1';
 const SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Finder' }];
-const DEFAULT_SUB_TABS: Record<TopTab, SubTab> = { cam: 'explorer', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer' };
+const SOLVER_SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Solver' }];
+const DEFAULT_SUB_TABS: Record<TopTab, SubTab> = { cam: 'explorer', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer', compliant: 'explorer' };
 
 /** A stored cam profile's parameters, its note column over the payload's note as the old route served it. */
 function camParamsFromProfile(payload: Record<string, unknown>, note: string): SimulationParams {
@@ -297,7 +299,7 @@ export default function App() {
   const hasChanges = useMemo(() => savedParams ? JSON.stringify(params) !== JSON.stringify(savedParams) : false, [params, savedParams]);
 
   // ─── Saved profiles: one pill, one import window, one save dialog for every tab ───
-  const profileType = profileTypeOf(activeTab, subTab);
+  const profileType = activeTab === 'compliant' ? 'cam' : profileTypeOf(activeTab, subTab);
   const camProfile: ProfileState = { name: activeConfigName, dirty: hasChanges, canSave: true, note: params.note };
   const camHandle: ProfileHandle = {
     type: 'cam',
@@ -310,7 +312,8 @@ export default function App() {
     },
     detach: () => { setActiveConfigName(null); setSavedParams(null); },
   };
-  const profileState = camExplorer ? camProfile : camFinder ? finderProfile
+  const profileState = activeTab === 'compliant' ? { name: null, dirty: false, canSave: false }
+    : camExplorer ? camProfile : camFinder ? finderProfile
     : linkageProfile?.type === profileType ? linkageProfile.state : UNSAVED_PROFILE;
   /** The open feature's handle, only when it saves the open context's type. */
   const profileHandle = (): ProfileHandle | null => {
@@ -563,6 +566,7 @@ export default function App() {
                 ['linkage', 'Bar Linkage', Waypoints],
                 ['lever', 'Lever Linkage', Spline],
                 ['pendulum', 'Pendulum Linkage', Anchor],
+                ['compliant', 'Compliant Bars', PenLine],
               ] as const).map(([tab, label, Icon]) => (
                 <button key={tab} type="button" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}
                   className={`bui-tab flex items-center gap-2 px-2.5 py-1 text-xs${activeTab === tab ? ' bui-tab--active' : ''}`}>
@@ -570,11 +574,11 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <SubTabs label="Mode" value={subTab} options={SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
+            <SubTabs label="Mode" value={subTab} options={activeTab === 'compliant' ? SOLVER_SUB_TABS : SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
           </div>
 
           {/* The open tab's profile: one pill for every tab and sub-tab */}
-          <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
+          <ProfilePill state={profileState} onImport={() => { if (activeTab !== 'compliant') setImportType(profileType); }}
             onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -753,6 +757,8 @@ export default function App() {
               where={`cam gap at Y = ${travel.y.toFixed(2)} mm`} {...explorerCard('section')} />
           </div>
         </div>
+      ) : activeTab === 'compliant' ? (
+        <CompliantBars mode={subTab} onOpenExplorer={() => setSubTab('compliant', 'explorer')} />
       ) : activeTab !== 'cam' ? (
         <LinkageExplorer
           key={activeTab}
