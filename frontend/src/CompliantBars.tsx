@@ -624,7 +624,14 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
                 <div className="pt-2 space-y-2">
                   <div className="flex items-center justify-between text-[10px] text-neutral-400 px-0.5">
                     <span>Method: <strong className="text-neutral-200">{SOLVER_METHOD_META[methodConfig.method].short}</strong></span>
-                    <span className="font-mono text-amber-300">{timeBudgetS < 60 ? `${timeBudgetS}s` : `${Math.round(timeBudgetS / 60)}m`} · {goalConfig.selected.length} goal{goalConfig.selected.length > 1 ? 's' : ''}</span>
+                    <span className="font-mono text-amber-300">
+                      {timeBudgetS < 60
+                        ? `${timeBudgetS}s`
+                        : timeBudgetS < 3600
+                          ? (timeBudgetS % 60 === 0 ? `${timeBudgetS / 60}m` : `${Math.floor(timeBudgetS / 60)}m${timeBudgetS % 60}s`)
+                          : (timeBudgetS % 3600 === 0 ? `${timeBudgetS / 3600}h` : `${Math.floor(timeBudgetS / 3600)}h${Math.round((timeBudgetS % 3600) / 60)}m`)}
+                      {' '}· {goalConfig.selected.length} goal{goalConfig.selected.length > 1 ? 's' : ''}
+                    </span>
                   </div>
                   <Button
                     variant="ghost"

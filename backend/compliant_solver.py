@@ -238,7 +238,7 @@ def run_time_budgeted_solve(
     method = method if method in SOLVER_METHODS else "hybrid"
     mp: Dict[str, Any] = dict(method_params or {})
     norm_weights = normalize_goal_weights(goal, goal_weights)
-    time_budget_s = float(np.clip(time_budget_s, 0.5, 3600.0))
+    time_budget_s = float(max(0.5, time_budget_s))
     keys = ALL_SOLVER_KEYS
     lows_l, highs_l = [], []
     for key in keys:

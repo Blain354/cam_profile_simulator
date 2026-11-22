@@ -909,7 +909,7 @@ export function loadStore(): StoredCompliantState {
         quadrantMap: parsed.quadrantMap ?? defaultQuadrantMap(parsed.params, parsed.bounds),
         goalConfig: resolveGoalConfig(obj.goalConfig),
         methodConfig: resolveMethodConfig(obj.methodConfig),
-        timeBudgetS: typeof obj.timeBudgetS === 'number' && obj.timeBudgetS >= 1 ? obj.timeBudgetS : 60,
+        timeBudgetS: typeof obj.timeBudgetS === 'number' && Number.isFinite(obj.timeBudgetS) && obj.timeBudgetS >= 1 ? obj.timeBudgetS : 60,
         profile: typeof obj.profile === 'string' ? obj.profile : null,
       };
     }

@@ -955,7 +955,7 @@ class CompliantSolveJobBody(BaseModel):
     goal_weights: Optional[dict] = None
     method: str = Field("hybrid", pattern="^(hybrid|brute_force|evolutionary|local_refine)$")
     method_params: Optional[dict] = None
-    time_budget_s: float = Field(30.0, ge=1.0, le=3600.0)
+    time_budget_s: float = Field(30.0, ge=1.0)
     name: Optional[str] = None
     note: str = ""
 

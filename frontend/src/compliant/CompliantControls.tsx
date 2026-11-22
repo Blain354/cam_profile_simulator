@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@blain-projects/ui';
 import { Clock, Eye, RefreshCw, Target, Trash2 } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow } from '../components';
@@ -1100,6 +1100,20 @@ export function SolverRunners({
   );
 }
 
+type TimeBudgetUnit = 's' | 'min' | 'h';
+const TIME_BUDGET_UNITS: TimeBudgetUnit[] = ['s', 'min', 'h'];
+const TIME_BUDGET_UNIT_SECONDS: Record<TimeBudgetUnit, number> = {
+  s: 1,
+  min: 60,
+  h: 3600,
+};
+
+function decomposeTimeBudget(sec: number): { value: string; unit: TimeBudgetUnit } {
+  if (sec >= 3600 && sec % 3600 === 0) return { value: String(sec / 3600), unit: 'h' };
+  if (sec >= 60 && sec % 60 === 0) return { value: String(sec / 60), unit: 'min' };
+  return { value: String(sec), unit: 's' };
+}
+
 /** Multi-goal & optional weight-distribution + time-budget selector for the compliant solver. */
 export function SolverGoalBudgetControls({
   goalConfig,
@@ -1112,11 +1126,22 @@ export function SolverGoalBudgetControls({
   onGoalConfigChange: (next: SolverGoalConfig) => void;
   onTimeBudgetChange: (seconds: number) => void;
 }) {
-  const [editingBudget, setEditingBudget] = useState(false);
-  const [draftSec, setDraftSec] = useState(String(timeBudgetS));
+  const initialDraft = decomposeTimeBudget(timeBudgetS);
+  const [budgetUnit, setBudgetUnit] = useState<TimeBudgetUnit>(initialDraft.unit);
+  const [draftValue, setDraftValue] = useState<string>(initialDraft.value);
+  const lastEmittedRef = useRef<number>(timeBudgetS);
   const { selected, useWeights, weights } = goalConfig;
   const multi = selected.length > 1;
   const rawSum = selected.reduce((acc, g) => acc + (useWeights ? Math.max(0, weights[g]) : 1), 0) || 1;
+
+  useEffect(() => {
+    if (timeBudgetS !== lastEmittedRef.current) {
+      const next = decomposeTimeBudget(timeBudgetS);
+      setBudgetUnit(next.unit);
+      setDraftValue(next.value);
+      lastEmittedRef.current = timeBudgetS;
+    }
+  }, [timeBudgetS]);
 
   const fmtBudget = (sec: number) => {
     if (sec < 60) return `${sec} s`;
@@ -1125,17 +1150,47 @@ export function SolverGoalBudgetControls({
       const r = sec % 60;
       return r === 0 ? `${m} min` : `${m}m${r}s`;
     }
-    const h = Math.floor(sec / 3600);
-    const m = Math.round((sec % 3600) / 60);
+    const totalMin = Math.round(sec / 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
     return m === 0 ? `${h} h` : `${h}h${m}m`;
   };
 
-  const commitDraft = () => {
-    const v = parseFloat(draftSec);
-    if (Number.isFinite(v) && v >= 1) {
-      onTimeBudgetChange(Math.min(3600, Math.round(v)));
+  const emitFromDraft = (raw: string, unit: TimeBudgetUnit) => {
+    const v = parseFloat(raw);
+    if (Number.isFinite(v) && v > 0) {
+      const secs = Math.max(1, Math.round(v * TIME_BUDGET_UNIT_SECONDS[unit]));
+      lastEmittedRef.current = secs;
+      onTimeBudgetChange(secs);
     }
-    setEditingBudget(false);
+  };
+
+  const handleDraftChange = (raw: string) => {
+    setDraftValue(raw);
+    emitFromDraft(raw, budgetUnit);
+  };
+
+  const handleDraftBlur = () => {
+    const v = parseFloat(draftValue);
+    if (!Number.isFinite(v) || v <= 0) {
+      const next = decomposeTimeBudget(timeBudgetS);
+      setBudgetUnit(next.unit);
+      setDraftValue(next.value);
+    }
+  };
+
+  const cycleUnit = () => {
+    const nextUnit = TIME_BUDGET_UNITS[(TIME_BUDGET_UNITS.indexOf(budgetUnit) + 1) % TIME_BUDGET_UNITS.length];
+    setBudgetUnit(nextUnit);
+    emitFromDraft(draftValue, nextUnit);
+  };
+
+  const selectPreset = (seconds: number) => {
+    const next = decomposeTimeBudget(seconds);
+    setBudgetUnit(next.unit);
+    setDraftValue(next.value);
+    lastEmittedRef.current = seconds;
+    onTimeBudgetChange(seconds);
   };
 
   const isCustomBudget = !TIME_BUDGET_PRESETS.some((p) => p.seconds === timeBudgetS);
@@ -1242,36 +1297,30 @@ export function SolverGoalBudgetControls({
           <span className="font-semibold text-neutral-300 flex items-center gap-1">
             <Clock className="w-3.5 h-3.5 text-amber-400" /> Time budget
           </span>
-          {editingBudget ? (
-            <div className="flex items-center gap-1">
-              <input
-                aria-label="Custom time budget in seconds"
-                type="number"
-                min={1}
-                max={3600}
-                step={5}
-                autoFocus
-                value={draftSec}
-                onChange={(e) => setDraftSec(e.target.value)}
-                onBlur={commitDraft}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitDraft();
-                  if (e.key === 'Escape') setEditingBudget(false);
-                }}
-                className="w-16 rounded border border-amber-500/70 bg-neutral-950 px-1.5 py-0.5 text-right font-mono text-[11px] text-amber-200 focus:outline-none"
-              />
-              <span className="font-mono text-[10px] text-neutral-400">s</span>
-            </div>
-          ) : (
+          <div className="flex items-center gap-1">
+            <input
+              aria-label={`Time budget (${budgetUnit})`}
+              type="number"
+              min={0}
+              step="any"
+              value={draftValue}
+              onChange={(e) => handleDraftChange(e.target.value)}
+              onBlur={handleDraftBlur}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+              }}
+              className="w-16 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-right font-mono text-[11px] text-amber-200 focus:border-amber-500/70 focus:outline-none"
+            />
             <button
               type="button"
-              title="Click to enter a custom duration in seconds"
-              onClick={() => { setDraftSec(String(timeBudgetS)); setEditingBudget(true); }}
-              className="rounded border border-dashed border-neutral-700 px-1.5 py-0.5 font-mono text-[11px] text-amber-300 hover:border-amber-500/70 hover:bg-amber-500/10 transition"
+              aria-label="Change time budget unit"
+              title={`Unit: ${budgetUnit} (click to switch s / min / h)`}
+              onClick={cycleUnit}
+              className="min-w-[2.25rem] rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center font-mono text-[11px] font-semibold text-amber-300 hover:border-amber-500/70 hover:bg-amber-500/10 transition"
             >
-              {fmtBudget(timeBudgetS)}
+              {budgetUnit}
             </button>
-          )}
+          </div>
         </div>
         <div className={`grid gap-1.5 ${budgetOptions.length > 5 ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
           {budgetOptions.map((preset) => {
@@ -1281,7 +1330,7 @@ export function SolverGoalBudgetControls({
                 key={`${preset.custom ? 'custom-' : ''}${preset.seconds}`}
                 type="button"
                 title={preset.hint}
-                onClick={() => onTimeBudgetChange(preset.seconds)}
+                onClick={() => selectPreset(preset.seconds)}
                 className={`rounded border px-1 py-1 text-[11px] font-semibold transition truncate ${
                   preset.custom ? 'border-dashed ' : ''
                 }${

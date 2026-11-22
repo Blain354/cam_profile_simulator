@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import CompliantBars from './CompliantBars';
 import { SolverModal } from './compliant/SolverModal';
+import { SolverGoalBudgetControls } from './compliant/CompliantControls';
 import {
   COMPLIANT_DEFAULTS, DEFAULT_CONSTRAINTS, DEFAULT_SOLVER_GOAL_CONFIG, DEFAULT_SOLVER_METHOD_CONFIG,
   allowableStressMpa, anchorPoint, memberChords,
@@ -391,4 +392,51 @@ test('Spline bounds Anchor card enables Symmetric (±) by default and displays b
   fireEvent.change(maxInput, { target: { value: '5.8' } });
 
   expect(getByText('[-5.8..-2.5] & [2.5..5.8]')).toBeTruthy();
+});
+
+test('SolverGoalBudgetControls has no max budget cap and cycles s / min / h via adjacent unit button', () => {
+  const onChange = vi.fn();
+  const { getByLabelText, getByText, rerender } = render(
+    <SolverGoalBudgetControls
+      goalConfig={DEFAULT_SOLVER_GOAL_CONFIG}
+      timeBudgetS={60}
+      onGoalConfigChange={() => {}}
+      onTimeBudgetChange={onChange}
+    />,
+  );
+
+  // Initial 60s decomposes to "1" with unit "min" and has no max attribute.
+  const input = getByLabelText('Time budget (min)') as HTMLInputElement;
+  const unitBtn = getByLabelText('Change time budget unit');
+  expect(input.value).toBe('1');
+  expect(input.getAttribute('max')).toBeNull();
+  expect(unitBtn.textContent).toBe('min');
+
+  // Cycling unit from min -> h keeps value 1 and emits 3600s.
+  fireEvent.click(unitBtn);
+  expect(unitBtn.textContent).toBe('h');
+  expect(onChange).toHaveBeenLastCalledWith(3600);
+
+  // Entering 12 h emits 43200s without clamping to 3600s.
+  fireEvent.change(getByLabelText('Time budget (h)'), { target: { value: '12' } });
+  expect(onChange).toHaveBeenLastCalledWith(43200);
+
+  // Cycling h -> s emits 12s.
+  fireEvent.click(unitBtn);
+  expect(unitBtn.textContent).toBe('s');
+  expect(onChange).toHaveBeenLastCalledWith(12);
+
+  // Clicking a preset syncs input value and unit.
+  fireEvent.click(getByText('5 min'));
+  expect(onChange).toHaveBeenLastCalledWith(300);
+  rerender(
+    <SolverGoalBudgetControls
+      goalConfig={DEFAULT_SOLVER_GOAL_CONFIG}
+      timeBudgetS={300}
+      onGoalConfigChange={() => {}}
+      onTimeBudgetChange={onChange}
+    />,
+  );
+  expect((getByLabelText('Time budget (min)') as HTMLInputElement).value).toBe('5');
+  expect(unitBtn.textContent).toBe('min');
 });
