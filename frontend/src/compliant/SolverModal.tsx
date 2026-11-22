@@ -16,7 +16,8 @@ import { RunnerMiniSchematic } from './RunnerMiniSchematic';
 import { SolvePreviewPanel } from './SolvePreviewPanel';
 
 const CONSTRAINT_LABELS: Record<string, string> = {
-  stress: 'Stress > material strength',
+  stress: 'Stress > limit (before motor stall)',
+  motor_stall: 'Motor stalls inside ±stroke',
   seal_y0: 'Not sealed at Y = 0 (preload lost)',
   tube: 'Member L/R hits tube (< clearance)',
   crossing: 'Members cross each other',
@@ -49,6 +50,8 @@ type RankWeights = Record<RankMetricKey, number>;
 
 const RANK_METRICS: { key: RankMetricKey; label: string; hint: string }[] = [
   { key: 'dx_at_025', label: 'ΔX @ 0.25', hint: 'Larger horizontal pinch opening at Y = 0.25 mm' },
+  { key: 'pass_freq_bw', label: 'Pass freq / BW', hint: 'Higher chamber cycle frequency & -3 dB bandwidth (faster 0→100% inflation)' },
+  { key: 'min_energy', label: 'Low energy', hint: 'Lower actuation energy per full valve cycle (mJ)' },
   { key: 'trajectory_target', label: 'Target P & α', hint: 'Closer to target pinch depth and attack angle' },
   { key: 'min_open_stroke', label: 'Min Y₉₀', hint: 'Smaller carriage stroke to reach 90% full-bore flow' },
   { key: 'flow_slope', label: 'Flow slope', hint: 'Steeper static flow slope (L/m/mm)' },
@@ -58,6 +61,8 @@ const RANK_METRICS: { key: RankMetricKey; label: string; hint: string }[] = [
 function initialRankWeights(job: SolveJobState | null): RankWeights {
   const base: RankWeights = {
     dx_at_025: 0,
+    pass_freq_bw: 0,
+    min_energy: 0,
     trajectory_target: 0,
     min_open_stroke: 0,
     flow_slope: 0,
@@ -70,7 +75,7 @@ function initialRankWeights(job: SolveJobState | null): RankWeights {
   const gw = job.summary?.goal_weights ?? job.goal_weights;
   let assigned = false;
   if (gw) {
-    for (const k of ['dx_at_025', 'trajectory_target', 'min_open_stroke', 'flow_slope'] as const) {
+    for (const k of ['dx_at_025', 'pass_freq_bw', 'min_energy', 'trajectory_target', 'min_open_stroke', 'flow_slope'] as const) {
       const w = gw[k];
       if (typeof w === 'number' && Number.isFinite(w) && w > 0) {
         base[k] = Math.max(5, Math.round(w * 20) * 5);
@@ -95,6 +100,25 @@ function runnerUtility(
     if (r.dx_at_025_mm == null || !Number.isFinite(r.dx_at_025_mm)) return -1;
     const openPen = 0.05 * (r.y_open_mm != null && Number.isFinite(r.y_open_mm) ? r.y_open_mm : 1.0);
     return r.dx_at_025_mm / 0.25 - openPen;
+  }
+  if (metric === 'pass_freq_bw') {
+    if (r.chamber_cycle_freq_hz != null && Number.isFinite(r.chamber_cycle_freq_hz)) {
+      return r.chamber_cycle_freq_hz;
+    }
+    const dx = r.dx_at_025_mm != null && Number.isFinite(r.dx_at_025_mm) ? r.dx_at_025_mm : 0;
+    return 0.05 * (dx / 0.25);
+  }
+  if (metric === 'min_energy') {
+    if (r.energy_cycle_mj != null && Number.isFinite(r.energy_cycle_mj)) {
+      const stallsInOp = r.motor_ok === false || (
+        r.thrust_available_n != null
+        && r.peak_thrust_op_n != null
+        && r.peak_thrust_op_n > r.thrust_available_n + 1e-9
+      );
+      const stallPen = stallsInOp ? 0.5 : 0;
+      return 100.0 / (50.0 + Math.max(0, r.energy_cycle_mj)) - stallPen;
+    }
+    return 0;
   }
   if (metric === 'flow_slope') {
     if (r.slope == null || !Number.isFinite(r.slope)) return -1;
@@ -731,7 +755,7 @@ export function SolverModal({
               />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-2.5 pt-1">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-2.5 pt-1">
               <div className="rounded-lg bg-neutral-900/80 px-3 py-2 border border-neutral-800">
                 <div className="text-[10px] uppercase text-neutral-400">Tested</div>
                 <div className="text-base font-mono font-bold text-white">{tested}</div>
@@ -774,6 +798,15 @@ export function SolverModal({
                   )}
                 </div>
               </div>
+              <div className="rounded-lg bg-neutral-900/80 px-3 py-2 border border-neutral-800">
+                <div className="text-[10px] uppercase text-neutral-400">Energy / Thrust</div>
+                <div className="text-xs font-mono font-bold text-violet-300">
+                  {s?.best_energy_cycle_mj != null ? `${s.best_energy_cycle_mj.toFixed(0)} mJ` : '—'}
+                  {s?.best_peak_thrust_op_n != null && (
+                    <span className="text-neutral-300">{` · ${s.best_peak_thrust_op_n.toFixed(1)} N`}</span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -802,7 +835,15 @@ export function SolverModal({
                     {(s.active_constraints.stress_limit_factor ?? 1) < 0.999
                       ? ` (${Math.round((s.active_constraints.stress_limit_factor ?? 1) * 100)}% of ${s.active_constraints.member_strength_mpa})`
                       : ''}
+                    {s.active_constraints.motor_limited_stress !== false ? ' · stall before yield' : ''}
                   </span>
+                  {s.active_constraints.motor_torque_mnm != null && (
+                    <span className="rounded bg-neutral-900 px-2 py-0.5 text-neutral-300 border border-neutral-700">
+                      Motor {s.active_constraints.motor_torque_mnm} mN·m
+                      {s.active_constraints.thrust_available_n != null ? ` (${s.active_constraints.thrust_available_n.toFixed(1)} N)` : ''}
+                      {s.active_constraints.require_no_stall_in_stroke !== false ? ' · no stall in ±stroke' : ''}
+                    </span>
+                  )}
                   <span className="rounded bg-neutral-900 px-2 py-0.5 text-neutral-300 border border-neutral-700">
                     Shell ≥ {s.active_constraints.min_shell_clearance_mm} mm
                   </span>
@@ -1019,7 +1060,7 @@ export function SolverModal({
             </div>
 
             {runners.length > 1 && (
-              <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
                 {RANK_METRICS.map((m) => {
                   const val = rankWeights[m.key];
                   const sharePct = rankWeightSum > 0 ? Math.round((val / rankWeightSum) * 100) : 0;
@@ -1032,6 +1073,8 @@ export function SolverModal({
                           onClick={() =>
                             setRankWeights({
                               dx_at_025: 0,
+                              pass_freq_bw: 0,
+                              min_energy: 0,
                               trajectory_target: 0,
                               min_open_stroke: 0,
                               flow_slope: 0,
@@ -1169,6 +1212,21 @@ export function SolverModal({
                               {r.chamber_cycle_freq_hz != null && r.chamber_bandwidth_hz != null
                                 ? `${r.chamber_cycle_freq_hz.toFixed(2)} / ${r.chamber_bandwidth_hz.toFixed(2)} Hz`
                                 : '—'}
+                            </div>
+                          </div>
+                          <div className="rounded bg-neutral-950/70 px-2 py-1 border border-neutral-800/80">
+                            <div className="text-[9px] uppercase tracking-wide text-neutral-500">Cycle energy</div>
+                            <div className="font-mono font-semibold text-violet-300">
+                              {r.energy_cycle_mj != null ? `${r.energy_cycle_mj.toFixed(0)} mJ` : '—'}
+                            </div>
+                          </div>
+                          <div className="rounded bg-neutral-950/70 px-2 py-1 border border-neutral-800/80">
+                            <div className="text-[9px] uppercase tracking-wide text-neutral-500">Peak thrust / stall</div>
+                            <div className="font-mono font-semibold text-neutral-200">
+                              {r.peak_thrust_op_n != null ? `${r.peak_thrust_op_n.toFixed(1)} N` : '—'}
+                              {r.stall_y_mm != null && (
+                                <span className="text-[9px] text-neutral-400">{` · ±${r.stall_y_mm.toFixed(2)}`}</span>
+                              )}
                             </div>
                           </div>
                         </div>

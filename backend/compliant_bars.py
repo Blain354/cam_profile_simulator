@@ -15,12 +15,14 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 try:  # uvicorn from backend/, or `python -m` from the repo root
+    import tube_model as tube_law
     from linkage import (
         LinkageParams, _area_mm2, _chamber_cycle, _chamber_rise_times, _closure,
         _flow_derivatives, _nan_to_none, _pinch_force, _solve_contact_flex,
     )
     from simulation import P_ATM, R_AIR, T_AMB, _compute_orifice_mass_flow_rate
 except ImportError:
+    from . import tube_model as tube_law
     from .linkage import (
         LinkageParams, _area_mm2, _chamber_cycle, _chamber_rise_times, _closure,
         _flow_derivatives, _nan_to_none, _pinch_force, _solve_contact_flex,
@@ -121,12 +123,15 @@ class CompliantParams:
     tube_od: float = 3.0
     input_pressure_kpa: float = 100.0
     compliance: float = 0.7
-    tube_model: str = "simple"
+    tube_model: str = tube_law.DEFAULT_TUBE_MODEL
     tube_shore_a: float = 50.0
     chamber_volume_ml: float = 10.0
     motor_speed: float = 100.0
     speed_factor: float = 0.85
     lead_screw_pitch: float = 0.5
+    motor_torque_mnm: float = 30.0     # mN·m at the motor shaft (current-limited / max torque)
+    screw_diameter: float = 3.0        # mm, lead screw major diameter (M3)
+    screw_friction: float = 0.3        # thread friction coefficient
 
 
 SHAPE_KEYS = (
@@ -163,6 +168,8 @@ class CompliantConstraints:
     target_pinch_from_top_mm: Optional[float] = None
     target_attack_angle_deg: float = 0.0
     anchor_symmetric: bool = False
+    motor_limited_stress: bool = True
+    require_no_stall_in_stroke: bool = True
 
 
 def _params_from_mapping(data: dict) -> CompliantParams:
@@ -194,8 +201,9 @@ def _constraints_from_mapping(data: Optional[dict]) -> CompliantConstraints:
             lo, hi = float(pair[0]), float(pair[1])
             if hi > lo:
                 cleaned[k] = (lo, hi)
-    if "anchor_symmetric" in data and data["anchor_symmetric"] is not None:
-        cleaned["anchor_symmetric"] = bool(data["anchor_symmetric"])
+    for k in ("anchor_symmetric", "motor_limited_stress", "require_no_stall_in_stroke"):
+        if k in data and data[k] is not None:
+            cleaned[k] = bool(data[k])
     return CompliantConstraints(**cleaned)  # type: ignore[arg-type]
 
 
@@ -277,6 +285,28 @@ class CompliantResult:
     chamber_t100_ms: Optional[float] = None
     chamber_cycle_freq_hz: Optional[float] = None
     chamber_bandwidth_hz: Optional[float] = None
+    motor_ok: bool = True
+    thrust: List[Optional[float]] = None
+    thrust_available_n: Optional[float] = None
+    peak_thrust_op_n: Optional[float] = None
+    mean_thrust_op_n: Optional[float] = None
+    peak_torque_op_mnm: Optional[float] = None
+    motor_margin: Optional[float] = None
+    screw_self_locking: Optional[bool] = None
+    stall_y_mm: Optional[float] = None
+    yield_y_mm: Optional[float] = None
+    thrust_to_yield_n: Optional[float] = None
+    torque_to_yield_mnm: Optional[float] = None
+    max_stress_op_mpa: Optional[float] = None
+    max_stress_to_stall_mpa: Optional[float] = None
+    energy_stroke_mj: Optional[float] = None
+    energy_cycle_mj: Optional[float] = None
+    overtravel_y: List[float] = None
+    overtravel_thrust: List[Optional[float]] = None
+    overtravel_force_a: List[Optional[float]] = None
+    overtravel_force_b: List[Optional[float]] = None
+    overtravel_stress_a: List[Optional[float]] = None
+    overtravel_stress_b: List[Optional[float]] = None
 
     def __post_init__(self):
         if self.time_ms is None:
@@ -289,6 +319,20 @@ class CompliantResult:
             self.flow_out_l_min = []
         if self.chamber_kpa is None:
             self.chamber_kpa = []
+        if self.thrust is None:
+            self.thrust = []
+        if self.overtravel_y is None:
+            self.overtravel_y = []
+        if self.overtravel_thrust is None:
+            self.overtravel_thrust = []
+        if self.overtravel_force_a is None:
+            self.overtravel_force_a = []
+        if self.overtravel_force_b is None:
+            self.overtravel_force_b = []
+        if self.overtravel_stress_a is None:
+            self.overtravel_stress_a = []
+        if self.overtravel_stress_b is None:
+            self.overtravel_stress_b = []
 
 
 def _empty(message: str, **kw) -> CompliantResult:
@@ -296,7 +340,7 @@ def _empty(message: str, **kw) -> CompliantResult:
         feasible=False, message=message, Y_positions=[], flow_a=[], flow_b=[],
         gap_a=[], gap_b=[], gap_rigid_a=[], closed_gap=0.0, full_open_gap=0.0,
         flow_slope_mean=None, flow_slope_max=None, max_stress_mpa=None, stress_margin=None,
-        plastic_ok=False, shell_ok=False, pivot_ok=False, pinch_ok=False, rotation_ok=False, crossing_ok=False,
+        plastic_ok=False, motor_ok=False, shell_ok=False, pivot_ok=False, pinch_ok=False, rotation_ok=False, crossing_ok=False,
         shell_clearance_mm=None, pivot_clearance_mm=None, pinch_ceiling_margin_mm=None,
         max_rotation_deg=None, wall_x=0.0, pivot_height_y0=0.0, anchor_x=0.0, pivot_x=0.0,
         pinch_x=0.0, travel_sign=1.0, force_a=[], force_b=[], stress_a=[], stress_b=[],
@@ -361,8 +405,8 @@ def _overlap_nodes(samples: Dict[str, np.ndarray], thickness: Dict[str, float], 
     return flags
 
 
-def _frame_solve(xy, elems, ea, ei, held, loads):
-    """Plane frame. ea and ei are one value per element. Same layout as linkage._frame_solve."""
+def _frame_solve_cases(xy, elems, ea, ei, cases):
+    """Solve one or more load cases sharing the same fixed DOF indices in a single matrix factorization."""
     n = len(xy)
     k = np.zeros((3 * n, 3 * n))
     local = []
@@ -388,16 +432,28 @@ def _frame_solve(xy, elems, ea, ei, held, loads):
         idx = np.r_[3 * a:3 * a + 3, 3 * b:3 * b + 3]
         k[np.ix_(idx, idx)] += t.T @ kl @ t
         local.append((idx, kl @ t))
-    u = np.zeros(3 * n)
-    fixed = np.array(sorted(held), dtype=int)
+    m = len(cases)
+    fixed = np.array(sorted(cases[0][0]), dtype=int)
     free = np.setdiff1d(np.arange(3 * n), fixed)
-    u[fixed] = [held[i] for i in fixed]
-    rhs = np.zeros(3 * n)
-    for i, v in loads.items():
-        rhs[i] += v
-    u[free] = np.linalg.solve(k[np.ix_(free, free)], rhs[free] - k[np.ix_(free, fixed)] @ u[fixed])
-    ends = np.array([klt @ u[idx] for idx, klt in local])
-    return u.reshape(n, 3), np.stack([ends[:, 3], ends[:, 2], ends[:, 5]], axis=1)
+    u_mat = np.zeros((3 * n, m))
+    rhs_mat = np.zeros((3 * n, m))
+    for col, (held, loads) in enumerate(cases):
+        u_mat[fixed, col] = [held[i] for i in fixed]
+        for i, v in loads.items():
+            rhs_mat[i, col] += v
+    u_mat[free, :] = np.linalg.solve(k[np.ix_(free, free)], rhs_mat[free, :] - k[np.ix_(free, fixed)] @ u_mat[fixed, :])
+    r_mat = k @ u_mat - rhs_mat
+    out = []
+    for col in range(m):
+        u = u_mat[:, col]
+        ends = np.array([klt @ u[idx] for idx, klt in local])
+        out.append((u.reshape(n, 3), r_mat[:, col].reshape(n, 3), np.stack([ends[:, 3], ends[:, 2], ends[:, 5]], axis=1)))
+    return out
+
+
+def _frame_solve(xy, elems, ea, ei, held, loads):
+    """Plane frame. ea and ei are one value per element. Same layout as linkage._frame_solve."""
+    return _frame_solve_cases(xy, elems, ea, ei, [(held, loads)])[0]
 
 
 def _section(width: float, depth: float, modulus: float) -> Tuple[float, float, float, float]:
@@ -685,6 +741,42 @@ def anchor_val_to_z(val: float, a_lo: float, a_hi: float) -> float:
     return 0.5 + 0.5 * (vc - a_lo) / w
 
 
+def _screw_factors(p: CompliantParams) -> Tuple[float, float, Optional[float], bool]:
+    """Return (k_raise_mnm_per_n, k_lower_mnm_per_n, thrust_available_n, self_locking).
+
+    Standard 60-degree ISO metric power-screw torque law matching linkage._screw:
+      T_raise = F * (d_m / 2) * tan(lambda + phi')   [mN·m = N·mm]
+      T_lower = F * (d_m / 2) * tan(phi' - lambda)   [>= 0 when self-locking]
+    """
+    d_m = p.screw_diameter - 0.6495 * p.lead_screw_pitch
+    if d_m <= 0.0 or p.lead_screw_pitch <= 0.0:
+        return 0.0, 0.0, None, False
+    helix = float(np.arctan(p.lead_screw_pitch / (np.pi * d_m)))
+    friction = float(np.arctan(max(p.screw_friction, 0.0) / np.cos(np.radians(30.0))))
+    angle_raise = min(helix + friction, np.pi / 2.0 - 1e-4)
+    k_raise = float((d_m / 2.0) * np.tan(angle_raise))
+    k_lower = float(max(0.0, (d_m / 2.0) * np.tan(max(0.0, friction - helix))))
+    self_locking = bool(friction > helix)
+    thrust_avail = float(p.motor_torque_mnm / k_raise) if (k_raise > 1e-12 and p.motor_torque_mnm >= 0.0) else None
+    return k_raise, k_lower, thrust_avail, self_locking
+
+
+def _first_crossing(xs: np.ndarray, ys: np.ndarray, threshold: float) -> Tuple[Optional[float], Optional[int], float]:
+    """First x along monotonic xs where ys >= threshold via linear interpolation.
+
+    Returns (x_cross, index, frac) where x_cross = xs[index - 1] + frac * (xs[index] - xs[index - 1]).
+    """
+    idx = np.flatnonzero(ys >= threshold)
+    if not idx.size:
+        return None, None, 0.0
+    i = int(idx[0])
+    if i == 0:
+        return float(xs[0]), 0, 0.0
+    dy = float(ys[i] - ys[i - 1])
+    frac = float(np.clip((threshold - float(ys[i - 1])) / dy, 0.0, 1.0)) if dy > 1e-12 else 0.0
+    return float(xs[i - 1]) + frac * float(xs[i] - xs[i - 1]), i, frac
+
+
 def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optional[CompliantConstraints] = None) -> CompliantResult:
     """Flow, stress and clearances for one shape. `passes` is the solver's hard constraints."""
     c = constraints or CompliantConstraints()
@@ -701,6 +793,9 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         stroke=p.stroke, chamber_volume_ml=p.chamber_volume_ml,
         motor_speed=p.motor_speed, speed_factor=p.speed_factor,
         lead_screw_pitch=p.lead_screw_pitch,
+        motor_torque_mnm=p.motor_torque_mnm,
+        screw_diameter=p.screw_diameter,
+        screw_friction=p.screw_friction,
     )
     try:
         wall_x, closed_gap, full_open_gap, pinch_contact_x, pinch_x, anchor, junction, pinch, pivot, samples, handles = _geometry(p, tube)
@@ -736,8 +831,13 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
             radius[node_of[(name, i)]] = thickness[name] / 2.0
     held_base = {3 * i_anchor: 0.0, 3 * i_anchor + 1: 0.0, 3 * i_anchor + 2: 0.0, 3 * i_pivot: 0.0}
     try:
-        u_up, s_up = _frame_solve(xy, elems, ea, ei, {**held_base, 3 * i_pivot + 1: 1.0}, {})
-        u_n, s_n = _frame_solve(xy, elems, ea, ei, {**held_base, 3 * i_pivot + 1: 0.0}, {3 * i_contact: 1.0})
+        (u_up, r_up, s_up), (u_n, r_n, s_n) = _frame_solve_cases(
+            xy, elems, ea, ei,
+            [
+                ({**held_base, 3 * i_pivot + 1: 1.0}, {}),
+                ({**held_base, 3 * i_pivot + 1: 0.0}, {3 * i_contact: 1.0}),
+            ],
+        )
     except np.linalg.LinAlgError:
         return _empty("This shape cannot be solved as a beam.", wall_x=wall_x,
                       pivot_height_y0=float(pivot[1]), anchor_x=float(anchor[0]), pivot_x=float(pivot[0]),
@@ -750,32 +850,127 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     u_y = u_up * sign
     s_y = s_up * sign
     compliance = float(u_n[i_contact, 0])
+    # Fixed Y = 0 pinch constraint: under tube load at Y = 0, the contact face always sits at gap0
+    # (= closed_gap - preload when the foot tip is the contact point), independent of beam geometry.
+    # The unloaded rest gap is pre-biased inward by pre_flex_y0 = compliance * F_tube(gap0) so the
+    # loaded equilibrium at Y = 0 lands exactly on gap0 regardless of how the nodes are configured.
+    parts_y0 = _pinch_force(tube, np.array([gap0]), np.ones(1), np.ones(1), fast=True)
+    f_y0 = float(sum(parts_y0)[0])
+    pre_flex_y0 = float(compliance * f_y0) if (p.member_modulus_mpa > 0 and compliance > 1e-9) else 0.0
+    # Vertical force the carriage applies to Part A along +Y:
+    # pull_a(Y) = r_up_y * Y + (sign * r_n_y) * F_A(Y).
+    # Part B is the 180-deg mirror at -Y, so total screw thrust = pull_a(Y) - pull_a(-Y).
+    ky_pivot = float(r_up[i_pivot, 1])
+    rn_pivot_y = float(sign * r_n[i_pivot, 1])
+    k_raise, k_lower, thrust_avail, screw_self_locking = _screw_factors(p)
+
     n_y = N_Y_FAST if fast else N_Y
     y = np.linspace(-p.stroke, p.stroke, n_y)
-    gap_rigid = gap0 + u_y[i_contact, 0] * y
-    ones = np.ones_like(y)
-    parts0 = _pinch_force(tube, gap_rigid, ones, ones, fast=True)
-    if p.member_modulus_mpa > 0 and compliance > 1e-9:
-        c_safe = np.full_like(y, compliance)
-        pushed, parts = _solve_contact_flex(tube, gap_rigid, ones, ones, c_safe, parts0, fast=True)
-        force = sum(parts)
+    y_phys = max(float(p.stroke), float(pivot[1]))
+    if y_phys > p.stroke + 1e-6:
+        n_ext = 20 if fast else 40
+        t_ext = np.linspace(0.0, 1.0, n_ext + 1)[1:]
+        y_ext_pos = p.stroke + (y_phys - p.stroke) * (t_ext ** 1.8)
+        y_full = np.concatenate([-y_ext_pos[::-1], y, y_ext_pos])
     else:
-        pushed = np.zeros_like(y)
-        force = sum(parts0)
-    gap_air = gap_rigid + pushed
-    # Stress along the real elements, over the whole stroke.
+        n_ext = 0
+        y_full = y
+    op_sl = slice(n_ext, n_ext + n_y)
+    gap_rigid_full = (gap0 - pre_flex_y0) + u_y[i_contact, 0] * y_full
+    ones_full = np.ones_like(y_full)
+    parts0_full = _pinch_force(tube, gap_rigid_full, ones_full, ones_full, fast=True)
+    if p.member_modulus_mpa > 0 and compliance > 1e-9:
+        c_safe = np.full_like(y_full, compliance)
+        pushed_full, parts_full = _solve_contact_flex(tube, gap_rigid_full, ones_full, ones_full, c_safe, parts0_full, fast=True)
+        force_full = sum(parts_full)
+    else:
+        pushed_full = np.zeros_like(y_full)
+        force_full = sum(parts0_full)
+    gap_air_full = gap_rigid_full + pushed_full
+
+    pull_full = ky_pivot * y_full + rn_pivot_y * force_full
+    thrust_full = pull_full - pull_full[::-1]
+    thrust_mag_full = np.abs(thrust_full)
+
+    # Stress along the real elements, over the operating stroke and over-travel sweep.
     real = np.array([o != "weld" for o in owner])
-    axial = s_y[:, 0:1] * y[None, :] + s_n[:, 0:1] * force[None, :]
-    m1 = s_y[:, 1:2] * y[None, :] + s_n[:, 1:2] * force[None, :]
-    m2 = s_y[:, 2:3] * y[None, :] + s_n[:, 2:3] * force[None, :]
-    stress = np.maximum(np.abs(m1), np.abs(m2)) / section[:, None] + np.abs(axial) / area[:, None]
-    stress = np.where(real[:, None], stress, 0.0)
-    stress_y = np.nanmax(stress, axis=0) if stress.size else np.zeros_like(y)
-    max_stress = float(np.nanmax(stress_y)) if stress_y.size else 0.0
+    axial_full = s_y[:, 0:1] * y_full[None, :] + s_n[:, 0:1] * force_full[None, :]
+    m1_full = s_y[:, 1:2] * y_full[None, :] + s_n[:, 1:2] * force_full[None, :]
+    m2_full = s_y[:, 2:3] * y_full[None, :] + s_n[:, 2:3] * force_full[None, :]
+    stress_full = np.maximum(np.abs(m1_full), np.abs(m2_full)) / section[:, None] + np.abs(axial_full) / area[:, None]
+    stress_full = np.where(real[:, None], stress_full, 0.0)
+    stress_y_full = np.nanmax(stress_full, axis=0) if stress_full.size else np.zeros_like(y_full)
+    stress_pair_full = np.maximum(stress_y_full, stress_y_full[::-1])
+
+    gap_rigid = gap_rigid_full[op_sl]
+    gap_air = gap_air_full[op_sl]
+    force = force_full[op_sl]
+    thrust_op = thrust_mag_full[op_sl]
+    stress_y = stress_y_full[op_sl]
+
     stress_factor = float(np.clip(c.stress_limit_factor, 0.05, 1.0))
     allowable_stress = p.member_strength_mpa * stress_factor
+
+    # Analyze monotonic envelope over Y >= 0 (symmetric twin mechanism: +Y opens A and squeezes B simultaneously).
+    mid = len(y_full) // 2
+    yp_full = y_full[mid:]
+    tp_full = thrust_mag_full[mid:]
+    sp_full = stress_pair_full[mid:]
+    t_cummax = np.maximum.accumulate(tp_full)
+    s_cummax = np.maximum.accumulate(sp_full)
+
+    yield_y_mm, yi, y_frac = _first_crossing(yp_full, s_cummax, allowable_stress)
+    if yield_y_mm is not None and yi is not None:
+        if yi == 0:
+            thrust_to_yield_n: Optional[float] = float(t_cummax[0])
+        else:
+            thrust_to_yield_n = float(t_cummax[yi - 1] + y_frac * (t_cummax[yi] - t_cummax[yi - 1]))
+        torque_to_yield_mnm: Optional[float] = float(thrust_to_yield_n * k_raise) if k_raise > 0.0 else None
+    else:
+        thrust_to_yield_n = None
+        torque_to_yield_mnm = None
+
+    if thrust_avail is not None:
+        stall_y_mm, si, s_frac = _first_crossing(yp_full, t_cummax, thrust_avail)
+        if stall_y_mm is not None and si is not None:
+            if si == 0:
+                max_stress_to_stall = float(s_cummax[0])
+            else:
+                max_stress_to_stall = float(s_cummax[si - 1] + s_frac * (s_cummax[si] - s_cummax[si - 1]))
+        else:
+            max_stress_to_stall = float(s_cummax[-1]) if s_cummax.size else 0.0
+    else:
+        stall_y_mm = None
+        max_stress_to_stall = float(s_cummax[-1]) if s_cummax.size else 0.0
+
+    op_pos_end = mid + (n_y // 2) + 1
+    y_op_pos = y_full[mid:op_pos_end]
+    t_op_pos = thrust_mag_full[mid:op_pos_end]
+    s_op_pos = stress_pair_full[mid:op_pos_end]
+    max_stress_op = float(np.nanmax(s_op_pos)) if s_op_pos.size else 0.0
+    peak_thrust_op_n = float(np.nanmax(t_op_pos)) if t_op_pos.size else 0.0
+    peak_torque_op_mnm = float(peak_thrust_op_n * k_raise) if k_raise > 0.0 else None
+    motor_margin = (
+        float(thrust_avail / peak_thrust_op_n)
+        if (thrust_avail is not None and peak_thrust_op_n > 1e-9)
+        else None
+    )
+    work_linear_mj = float(np.sum(0.5 * (t_op_pos[:-1] + t_op_pos[1:]) * np.diff(y_op_pos))) if len(y_op_pos) >= 2 else 0.0
+    mean_thrust_op_n = float(work_linear_mj / p.stroke) if p.stroke > 1e-9 else 0.0
+    rad_per_mm = (2.0 * np.pi / p.lead_screw_pitch) if p.lead_screw_pitch > 1e-9 else 0.0
+    energy_stroke_mj = float(work_linear_mj * rad_per_mm * k_raise)
+    energy_cycle_mj = float(2.0 * work_linear_mj * rad_per_mm * (k_raise + k_lower))
+
+    if c.motor_limited_stress and thrust_avail is not None:
+        max_stress = max_stress_to_stall
+        plastic_ok = bool(max_stress_to_stall <= allowable_stress + 1e-9)
+    else:
+        max_stress = max_stress_op
+        plastic_ok = bool(max_stress_op <= allowable_stress + 1e-9)
+
+    stalls_in_op = bool(thrust_avail is not None and peak_thrust_op_n > thrust_avail + 1e-9)
+    motor_ok = bool((not c.require_no_stall_in_stroke) or (not stalls_in_op))
     margin = (p.member_strength_mpa / max_stress) if max_stress > 1e-9 else None
-    plastic_ok = bool(max_stress <= allowable_stress + 1e-9)
     rotation = np.max(np.abs(u_y[:, 2:3] * y[None, :] + u_n[:, 2:3] * force[None, :]))
     max_rot = float(np.degrees(rotation))
 
@@ -792,7 +987,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     pin_r = p.carriage_pin_diameter / 2.0
 
     def pose(at_y, at_force):
-        return xy + u_y[:, :2] * at_y + u_n[:, :2] * at_force
+        return xy + u_y[:, :2] * at_y + u_n[:, :2] * (at_force - f_y0)
 
     i_open = int(np.argmin(np.abs(y - p.stroke)))
     i_rest = int(np.argmin(np.abs(y)))
@@ -846,7 +1041,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
 
     # Effective horizontal displacement ΔX of the pinch point from Y = 0 to Y = 0.25 mm (stroke-independent).
     y_probe = np.array([0.0, 0.25])
-    gap_rigid_probe = gap0 + u_y[i_contact, 0] * y_probe
+    gap_rigid_probe = (gap0 - pre_flex_y0) + u_y[i_contact, 0] * y_probe
     ones_p = np.ones_like(y_probe)
     parts_p0 = _pinch_force(tube, gap_rigid_probe, ones_p, ones_p, fast=True)
     if p.member_modulus_mpa > 0 and compliance > 1e-9:
@@ -924,13 +1119,24 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     if not opens:
         notes.append("The carriage motion does not open the tube.")
     if not plastic_ok:
-        if stress_factor < 1.0 - 1e-9:
+        limit_desc = (
+            "%.1f MPa limit (%.0f%% of %g MPa)" % (allowable_stress, stress_factor * 100.0, p.member_strength_mpa)
+            if stress_factor < 1.0 - 1e-9
+            else "%g MPa limit" % p.member_strength_mpa
+        )
+        if c.motor_limited_stress and thrust_avail is not None and yield_y_mm is not None and thrust_to_yield_n is not None:
             notes.append(
-                "Stress reaches %.1f MPa, above the %.1f MPa limit (%.0f%% of %g MPa)."
-                % (max_stress, allowable_stress, stress_factor * 100.0, p.member_strength_mpa)
+                "Part reaches %s at Y = ±%.2f mm (%.1f N / %.1f mN·m) before motor stalls (%.1f N / %.1f mN·m)."
+                % (limit_desc, yield_y_mm, thrust_to_yield_n, torque_to_yield_mnm or 0.0, thrust_avail, p.motor_torque_mnm)
             )
         else:
-            notes.append("Stress reaches %.0f MPa, above the %g MPa limit." % (max_stress, p.member_strength_mpa))
+            notes.append("Stress reaches %.1f MPa, above the %s." % (max_stress, limit_desc))
+    if not motor_ok:
+        stall_desc = (" at Y = ±%.2f mm" % stall_y_mm) if stall_y_mm is not None else ""
+        notes.append(
+            "Motor stalls inside ±%.2f mm operating stroke%s (needs %.1f N / %.1f mN·m vs %.1f N / %.1f mN·m available)."
+            % (p.stroke, stall_desc, peak_thrust_op_n, peak_torque_op_mnm or 0.0, thrust_avail or 0.0, p.motor_torque_mnm)
+        )
     if not shell_ok:
         where = (
             "closed (-stroke)"
@@ -970,8 +1176,32 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         )
     if not crossing_ok:
         notes.append("Members cross each other.")
-    passes = bool(opens and plastic_ok and shell_ok and pivot_ok and pinch_ok and rotation_ok and junction_ok and sealed_at_y0 and tube_ok and crossing_ok)
+    passes = bool(
+        opens and plastic_ok and motor_ok and shell_ok and pivot_ok and pinch_ok
+        and rotation_ok and junction_ok and sealed_at_y0 and tube_ok and crossing_ok
+    )
     message = "ok" if passes else " ".join(notes) or "This shape does not pass."
+
+    overtravel_y: List[float] = []
+    overtravel_thrust: List[Optional[float]] = []
+    overtravel_force_a: List[Optional[float]] = []
+    overtravel_force_b: List[Optional[float]] = []
+    overtravel_stress_a: List[Optional[float]] = []
+    overtravel_stress_b: List[Optional[float]] = []
+    if not fast:
+        events = [v for v in (stall_y_mm, yield_y_mm) if v is not None]
+        first_event = min(events) if events else 0.0
+        both_events = max(events) if events else 0.0
+        cap_wide = max(p.stroke * 4.0, 5.0)
+        event_span = (both_events * 1.2) if both_events <= cap_wide else min(first_event * 1.25, cap_wide)
+        y_plot_max = max(p.stroke, min(y_phys, max(p.stroke * 1.8, event_span)))
+        pmask = np.abs(y_full) <= y_plot_max + 1e-9
+        overtravel_y = y_full[pmask].tolist()
+        overtravel_thrust = _nan_to_none(thrust_mag_full[pmask])
+        overtravel_force_a = _nan_to_none(force_full[pmask])
+        overtravel_force_b = _nan_to_none(force_full[::-1][pmask])
+        overtravel_stress_a = _nan_to_none(stress_y_full[pmask])
+        overtravel_stress_b = _nan_to_none(stress_y_full[::-1][pmask])
 
     def line(name):
         idx = [node_of[(name, i)] for i in range(len(samples[name]))]
@@ -979,6 +1209,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
             "x": xy[idx, 0].tolist(), "y": xy[idx, 1].tolist(),
             "x_per_y": u_y[idx, 0].tolist(), "y_per_y": u_y[idx, 1].tolist(),
             "x_per_n": u_n[idx, 0].tolist(), "y_per_n": u_n[idx, 1].tolist(),
+            "force_y0": f_y0,
             "thickness": thickness[name],
         }
 
@@ -1024,10 +1255,32 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         chamber_t100_ms=chamber_t100_ms,
         chamber_cycle_freq_hz=chamber_cycle_freq_hz,
         chamber_bandwidth_hz=chamber_bandwidth_hz,
+        motor_ok=motor_ok,
+        thrust=_nan_to_none(thrust_op),
+        thrust_available_n=thrust_avail,
+        peak_thrust_op_n=peak_thrust_op_n,
+        mean_thrust_op_n=mean_thrust_op_n,
+        peak_torque_op_mnm=peak_torque_op_mnm,
+        motor_margin=motor_margin,
+        screw_self_locking=screw_self_locking,
+        stall_y_mm=stall_y_mm,
+        yield_y_mm=yield_y_mm,
+        thrust_to_yield_n=thrust_to_yield_n,
+        torque_to_yield_mnm=torque_to_yield_mnm,
+        max_stress_op_mpa=max_stress_op,
+        max_stress_to_stall_mpa=max_stress_to_stall,
+        energy_stroke_mj=energy_stroke_mj,
+        energy_cycle_mj=energy_cycle_mj,
+        overtravel_y=overtravel_y,
+        overtravel_thrust=overtravel_thrust,
+        overtravel_force_a=overtravel_force_a,
+        overtravel_force_b=overtravel_force_b,
+        overtravel_stress_a=overtravel_stress_a,
+        overtravel_stress_b=overtravel_stress_b,
     )
 
 
-SOLVER_GOALS = ("dx_at_025", "min_open_stroke", "flow_slope", "trajectory_target")
+SOLVER_GOALS = ("dx_at_025", "pass_freq_bw", "min_energy", "min_open_stroke", "flow_slope", "trajectory_target")
 
 
 def _goal_utility(result: CompliantResult, c: CompliantConstraints, goal: str) -> float:
@@ -1038,6 +1291,18 @@ def _goal_utility(result: CompliantResult, c: CompliantConstraints, goal: str) -
             return -1.0
         open_pen = 0.05 * (result.y_open_mm if result.y_open_mm is not None else 1.0)
         return float(dx) / 0.25 - open_pen
+    if goal == "pass_freq_bw":
+        f_pass = result.chamber_cycle_freq_hz
+        if f_pass is not None and np.isfinite(f_pass):
+            return float(f_pass)
+        dx = result.dx_at_025_mm if (result.dx_at_025_mm is not None and np.isfinite(result.dx_at_025_mm)) else 0.0
+        return 0.05 * (float(dx) / 0.25)
+    if goal == "min_energy":
+        e = result.energy_cycle_mj
+        if e is None or not np.isfinite(e):
+            return -1.0
+        stall_pen = 0.0 if getattr(result, "motor_ok", True) else 1.0
+        return 100.0 / (50.0 + max(0.0, float(e))) - stall_pen
     if goal == "flow_slope":
         sl = result.flow_slope_mean
         if sl is None or not np.isfinite(sl):
@@ -1087,7 +1352,19 @@ def admission_score(
         if not result.feasible:
             pen += 1000.0
         if result.max_stress_mpa is not None and not result.plastic_ok:
-            pen += result.max_stress_mpa
+            pen += min(float(result.max_stress_mpa), 1.0e4)
+            if (
+                c.motor_limited_stress
+                and result.thrust_available_n is not None
+                and result.thrust_to_yield_n is not None
+                and result.thrust_to_yield_n < result.thrust_available_n
+            ):
+                pen += (float(result.thrust_available_n) - float(result.thrust_to_yield_n)) * 3.0
+        if not getattr(result, "motor_ok", True):
+            over_f = 0.0
+            if result.peak_thrust_op_n is not None and result.thrust_available_n is not None:
+                over_f = max(0.0, float(result.peak_thrust_op_n) - float(result.thrust_available_n))
+            pen += 80.0 + over_f * 5.0
         if result.shell_clearance_mm is not None and not result.shell_ok:
             pen += max(0.0, c.min_shell_clearance_mm - result.shell_clearance_mm) * 100.0
         if result.pivot_clearance_mm is not None and not result.pivot_ok:
@@ -1122,6 +1399,21 @@ def admission_score(
             return float(sum(w * _goal_utility(result, c, g) for g, w in weights.items()))
         goal = next(iter(weights))
 
+    if goal == "min_energy":
+        e = result.energy_cycle_mj
+        if e is None or not np.isfinite(e):
+            return -10.0
+        stalls_in_op = (
+            not getattr(result, "motor_ok", True)
+            or (
+                result.thrust_available_n is not None
+                and result.peak_thrust_op_n is not None
+                and float(result.peak_thrust_op_n) > float(result.thrust_available_n) + 1e-9
+            )
+        )
+        stall_pen = 1.0 if stalls_in_op else 0.0
+        return 100.0 / (50.0 + max(0.0, float(e))) - stall_pen
+
     if goal == "trajectory_target":
         # Minimize error to desired pinch depth from ceiling + desired attack angle (-90..+90 deg).
         err_y = 0.0
@@ -1141,6 +1433,16 @@ def admission_score(
         leak_pen = 0.0 if result.sealed_at_y0 else 0.25
         open_pen = 0.02 * (result.y_open_mm if result.y_open_mm is not None else 1.0)
         return float(dx) - leak_pen - open_pen
+
+    if goal == "pass_freq_bw":
+        # Maximize chamber cycle pass frequency (= 1 / (2 * T_0->100), proportional to -3 dB BW = 0.35 / T_0->100).
+        f_pass = result.chamber_cycle_freq_hz
+        if f_pass is not None and np.isfinite(f_pass):
+            leak_pen = 0.0 if result.sealed_at_y0 else 0.25
+            return float(f_pass) - leak_pen
+        # Fallback if chamber did not reach 99% inflation within the simulation window: rank below any full-fill design.
+        dx = result.dx_at_025_mm if (result.dx_at_025_mm is not None and np.isfinite(result.dx_at_025_mm)) else 0.0
+        return -5.0 + float(dx)
 
     if goal == "min_open_stroke":
         # Minimize Y required to reach 90% flow (negated so higher is better).
@@ -1292,6 +1594,12 @@ def solve_compliant(
             "chamber_t100_ms": result.chamber_t100_ms,
             "chamber_cycle_freq_hz": result.chamber_cycle_freq_hz,
             "chamber_bandwidth_hz": result.chamber_bandwidth_hz,
+            "energy_cycle_mj": result.energy_cycle_mj,
+            "energy_stroke_mj": result.energy_stroke_mj,
+            "peak_thrust_op_n": result.peak_thrust_op_n,
+            "peak_torque_op_mnm": result.peak_torque_op_mnm,
+            "stall_y_mm": result.stall_y_mm,
+            "yield_y_mm": result.yield_y_mm,
             "pivot_inverted": params.pivot_inverted,
             "params": {**{key: getattr(params, key) for key in keys}, "pivot_inverted": params.pivot_inverted},
         }

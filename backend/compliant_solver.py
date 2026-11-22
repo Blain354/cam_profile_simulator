@@ -31,6 +31,7 @@ try:
         _constraints_from_mapping,
         _params_from_mapping,
         _row_to_params,
+        _screw_factors,
         admission_score,
         anchor_symmetric_range,
         anchor_val_to_z,
@@ -51,6 +52,7 @@ except ImportError:
         _constraints_from_mapping,
         _params_from_mapping,
         _row_to_params,
+        _screw_factors,
         admission_score,
         anchor_symmetric_range,
         anchor_val_to_z,
@@ -62,7 +64,7 @@ except ImportError:
     from .storage import CompliantExperimentStorage
 
 
-CONSTRAINT_KEYS = ("stress", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
+CONSTRAINT_KEYS = ("stress", "motor_stall", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
 
 SOLVER_METHODS = ("hybrid", "brute_force", "evolutionary", "local_refine")
 
@@ -78,6 +80,8 @@ def _classify_rejections(result: CompliantResult) -> List[str]:
         reasons.append("no_open")
     if not result.plastic_ok:
         reasons.append("stress")
+    if not getattr(result, "motor_ok", True):
+        reasons.append("motor_stall")
     if not getattr(result, "sealed_at_y0", True):
         reasons.append("seal_y0")
     if not getattr(result, "tube_ok", True):
@@ -212,6 +216,19 @@ def _runner_brief(params: CompliantParams, result: CompliantResult, score: float
         "chamber_t100_ms": result.chamber_t100_ms,
         "chamber_cycle_freq_hz": result.chamber_cycle_freq_hz,
         "chamber_bandwidth_hz": result.chamber_bandwidth_hz,
+        "energy_cycle_mj": result.energy_cycle_mj,
+        "energy_stroke_mj": result.energy_stroke_mj,
+        "peak_thrust_op_n": result.peak_thrust_op_n,
+        "peak_torque_op_mnm": result.peak_torque_op_mnm,
+        "thrust_available_n": result.thrust_available_n,
+        "thrust_to_yield_n": result.thrust_to_yield_n,
+        "torque_to_yield_mnm": result.torque_to_yield_mnm,
+        "stall_y_mm": result.stall_y_mm,
+        "yield_y_mm": result.yield_y_mm,
+        "motor_margin": result.motor_margin,
+        "motor_ok": result.motor_ok,
+        "max_stress_op_mpa": result.max_stress_op_mpa,
+        "max_stress_to_stall_mpa": result.max_stress_to_stall_mpa,
         "stroke": params.stroke,
         "pivot_inverted": params.pivot_inverted,
         "params": {**{key: getattr(params, key) for key in keys}, "pivot_inverted": params.pivot_inverted},
@@ -234,6 +251,7 @@ def run_time_budgeted_solve(
 ) -> dict:
     """Run time-budgeted optimization using the chosen search method up to time_budget_s."""
     c = constraints or CompliantConstraints()
+    _, _, base_thrust_avail, _ = _screw_factors(base)
     goal = goal if goal in SOLVER_GOALS else "dx_at_025"
     method = method if method in SOLVER_METHODS else "hybrid"
     mp: Dict[str, Any] = dict(method_params or {})
@@ -387,10 +405,12 @@ def run_time_budgeted_solve(
         if len(runners) < 24 and len(admissible_pool) > len(runners):
             axis_keys = [
                 lambda it: it[2].dx_at_025_mm if it[2].dx_at_025_mm is not None else -1e9,
+                lambda it: it[2].chamber_cycle_freq_hz if it[2].chamber_cycle_freq_hz is not None else -1e9,
                 lambda it: it[2].flow_slope_mean if it[2].flow_slope_mean is not None else -1e9,
                 lambda it: -(it[2].y_90_mm if it[2].y_90_mm is not None else 1e9),
                 lambda it: -abs((it[2].attack_angle_deg if it[2].attack_angle_deg is not None else 180.0) - c.target_attack_angle_deg),
                 lambda it: -(it[2].max_stress_mpa if it[2].max_stress_mpa is not None else 1e9),
+                lambda it: -(it[2].energy_cycle_mj if it[2].energy_cycle_mj is not None else 1e9),
             ]
             for key_fn in axis_keys:
                 if len(runners) >= 24:
@@ -478,6 +498,10 @@ def run_time_budgeted_solve(
             "best_chamber_t100_ms": round(float(best_r.chamber_t100_ms), 1) if (best_r and best_r.chamber_t100_ms is not None) else None,
             "best_chamber_cycle_freq_hz": round(float(best_r.chamber_cycle_freq_hz), 3) if (best_r and best_r.chamber_cycle_freq_hz is not None) else None,
             "best_chamber_bandwidth_hz": round(float(best_r.chamber_bandwidth_hz), 3) if (best_r and best_r.chamber_bandwidth_hz is not None) else None,
+            "best_energy_cycle_mj": round(float(best_r.energy_cycle_mj), 2) if (best_r and best_r.energy_cycle_mj is not None) else None,
+            "best_peak_thrust_op_n": round(float(best_r.peak_thrust_op_n), 2) if (best_r and best_r.peak_thrust_op_n is not None) else None,
+            "best_peak_torque_op_mnm": round(float(best_r.peak_torque_op_mnm), 2) if (best_r and best_r.peak_torque_op_mnm is not None) else None,
+            "best_stall_y_mm": round(float(best_r.stall_y_mm), 3) if (best_r and best_r.stall_y_mm is not None) else None,
             "rejection_stats": rejection_stats,
             "bound_hits": _compute_bound_hits(best_p),
             "free_vars": all_free_vars,
@@ -487,6 +511,10 @@ def run_time_budgeted_solve(
                 "member_strength_mpa": base.member_strength_mpa,
                 "stress_limit_factor": float(np.clip(c.stress_limit_factor, 0.05, 1.0)),
                 "allowable_stress_mpa": round(base.member_strength_mpa * float(np.clip(c.stress_limit_factor, 0.05, 1.0)), 2),
+                "motor_limited_stress": bool(c.motor_limited_stress),
+                "require_no_stall_in_stroke": bool(c.require_no_stall_in_stroke),
+                "motor_torque_mnm": round(float(base.motor_torque_mnm), 2),
+                "thrust_available_n": round(float(base_thrust_avail), 2) if base_thrust_avail is not None else None,
                 "min_shell_clearance_mm": c.min_shell_clearance_mm,
                 "min_pivot_clearance_mm": c.min_pivot_clearance_mm,
                 "min_tube_clearance_mm": c.min_tube_clearance_mm,
@@ -548,6 +576,7 @@ def run_time_budgeted_solve(
                     "score": round(float(score), 4),
                     "dx_025": round(float(result.dx_at_025_mm), 4) if result.dx_at_025_mm is not None else None,
                     "slope": round(float(result.flow_slope_mean), 3) if result.flow_slope_mean is not None else None,
+                    "energy_cycle_mj": round(float(result.energy_cycle_mj), 2) if result.energy_cycle_mj is not None else None,
                 })
         else:
             reasons = _classify_rejections(result)
@@ -1008,25 +1037,62 @@ def run_time_budgeted_solve(
     # ── Final full-resolution verification ──────────────────────────────────
     phase = "Final verification"
     runners = _extract_runners()
-    full_runners: List[Tuple[float, CompliantParams, CompliantResult]] = []
-    for idx_r, (sc_r, prm_r, res_r) in enumerate(runners):
-        if idx_r < 8:
+    verified_runners: List[Tuple[float, CompliantParams, CompliantResult]] = []
+    tail_runners: List[Tuple[float, CompliantParams, CompliantResult]] = []
+    failed_full: Optional[Tuple[float, CompliantParams, CompliantResult]] = None
+    full_checks = 0
+    for sc_r, prm_r, res_r in runners:
+        if len(verified_runners) < 8 and full_checks < 16:
             full_r = compute_compliant(prm_r, fast=False, constraints=c)
-            full_runners.append((sc_r, prm_r, full_r))
+            full_checks += 1
+            if full_r.passes:
+                full_sc = admission_score(full_r, c, goal=goal, goal_weights=norm_weights)
+                verified_runners.append((full_sc, prm_r, full_r))
+            elif failed_full is None:
+                failed_full = (sc_r, prm_r, full_r)
         else:
-            full_runners.append((sc_r, prm_r, res_r))
-    winner = full_runners[0] if full_runners else None
+            tail_runners.append((sc_r, prm_r, res_r))
+    # If all shortlisted runners sat on a knife-edge boundary and failed full-res, probe deeper in admissible_pool.
+    if not verified_runners and admissible_pool:
+        admissible_pool.sort(key=lambda item: item[0], reverse=True)
+        for sc_p, prm_p, _res_p, _z in admissible_pool:
+            if full_checks >= 24:
+                break
+            full_r = compute_compliant(prm_p, fast=False, constraints=c)
+            full_checks += 1
+            if full_r.passes:
+                full_sc = admission_score(full_r, c, goal=goal, goal_weights=norm_weights)
+                verified_runners.append((full_sc, prm_p, full_r))
+                break
+    verified_runners.sort(key=lambda item: item[0], reverse=True)
+    full_runners = verified_runners + tail_runners
+    winner = verified_runners[0] if verified_runners else failed_full
     full = winner[2] if winner else None
     snapshot = build_snapshot(final=True)
     if full_runners:
         snapshot["runners"] = [_runner_brief(p, r, s, keys) for s, p, r in full_runners]
-        best_r0 = full_runners[0][2]
+    if verified_runners:
+        best_sc0, _best_p0, best_r0 = verified_runners[0]
+        snapshot["best_score"] = round(float(best_sc0), 4)
+        snapshot["best_dx_at_025_mm"] = round(float(best_r0.dx_at_025_mm), 4) if best_r0.dx_at_025_mm is not None else None
+        snapshot["best_slope"] = round(float(best_r0.flow_slope_mean), 3) if best_r0.flow_slope_mean is not None else None
+        snapshot["best_y_90_mm"] = round(float(best_r0.y_90_mm), 3) if best_r0.y_90_mm is not None else None
+        snapshot["best_attack_angle_deg"] = round(float(best_r0.attack_angle_deg), 1) if best_r0.attack_angle_deg is not None else None
+        snapshot["best_stress_mpa"] = round(float(best_r0.max_stress_mpa), 1) if best_r0.max_stress_mpa is not None else None
         if best_r0.chamber_t100_ms is not None:
             snapshot["best_chamber_t100_ms"] = round(float(best_r0.chamber_t100_ms), 1)
         if best_r0.chamber_cycle_freq_hz is not None:
             snapshot["best_chamber_cycle_freq_hz"] = round(float(best_r0.chamber_cycle_freq_hz), 3)
         if best_r0.chamber_bandwidth_hz is not None:
             snapshot["best_chamber_bandwidth_hz"] = round(float(best_r0.chamber_bandwidth_hz), 3)
+        if best_r0.energy_cycle_mj is not None:
+            snapshot["best_energy_cycle_mj"] = round(float(best_r0.energy_cycle_mj), 2)
+        if best_r0.peak_thrust_op_n is not None:
+            snapshot["best_peak_thrust_op_n"] = round(float(best_r0.peak_thrust_op_n), 2)
+        if best_r0.peak_torque_op_mnm is not None:
+            snapshot["best_peak_torque_op_mnm"] = round(float(best_r0.peak_torque_op_mnm), 2)
+        if best_r0.stall_y_mm is not None:
+            snapshot["best_stall_y_mm"] = round(float(best_r0.stall_y_mm), 3)
     if on_progress is not None:
         on_progress(snapshot)
 

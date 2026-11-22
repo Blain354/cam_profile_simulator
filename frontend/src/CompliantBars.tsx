@@ -67,6 +67,8 @@ export function CompliantProfilePreview({ payload }: { payload: Record<string, u
     ['Pivot clearance', mm(c.min_pivot_clearance_mm)],
     ['Max rotation', `${c.max_rotation_deg}°`],
     ['Max stress factor', `${Math.round((c.stress_limit_factor ?? 1) * 100)}% (${(p.member_strength_mpa * (c.stress_limit_factor ?? 1)).toFixed(1)} MPa)`],
+    ['Motor & screw', `${p.motor_torque_mnm} mN·m · M${p.screw_diameter}×${p.lead_screw_pitch} (μ=${p.screw_friction})`],
+    ['Stall-safe stress', c.motor_limited_stress !== false ? 'Yes (stall before yield)' : 'Off (infinite torque)'],
   ];
   const row = (label: string, value: string, tone = 'text-neutral-200') => (
     <div key={label} className="flex justify-between gap-4">
@@ -133,7 +135,7 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
 
   const yPose = Math.min(params.stroke, Math.max(-params.stroke, y));
   const loadedRpm = MOTOR_RPM * LOAD_FACTOR;
-  const carriageSpeed = loadedRpm * SCREW_PITCH_MM / 60;
+  const carriageSpeed = loadedRpm * (params.lead_screw_pitch || SCREW_PITCH_MM) / 60;
   const wallX = result?.wall_x ?? params.tube_center_x + params.tube_od / 2;
 
   const hasFreeContext = CONTEXT_VAR_KEYS.some((k) => !contextFixed[k]) || !contextFixed.pivot_inverted;

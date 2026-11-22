@@ -5,7 +5,7 @@ import { SolverModal } from './compliant/SolverModal';
 import { SolverGoalBudgetControls } from './compliant/CompliantControls';
 import {
   COMPLIANT_DEFAULTS, DEFAULT_CONSTRAINTS, DEFAULT_SOLVER_GOAL_CONFIG, DEFAULT_SOLVER_METHOD_CONFIG,
-  allowableStressMpa, anchorPoint, memberChords,
+  allowableStressMpa, anchorPoint, memberChords, screwThrustAvailableN,
 } from './compliant/types';
 import type { Runner, SolveJobState } from './compliant/types';
 
@@ -439,4 +439,204 @@ test('SolverGoalBudgetControls has no max budget cap and cycles s / min / h via 
   );
   expect((getByLabelText('Time budget (min)') as HTMLInputElement).value).toBe('5');
   expect(unitBtn.textContent).toBe('min');
+});
+
+test('SolverGoalBudgetControls offers Max Pass freq / BW (-3 dB) goal and renders schematic difference tooltip', () => {
+  const onGoalChange = vi.fn();
+  const { getByLabelText, getByText, getByRole, queryByRole } = render(
+    <SolverGoalBudgetControls
+      goalConfig={DEFAULT_SOLVER_GOAL_CONFIG}
+      timeBudgetS={60}
+      onGoalConfigChange={onGoalChange}
+      onTimeBudgetChange={() => {}}
+    />,
+  );
+
+  // The new goal is listed and toggleable.
+  const goalLabel = getByText('Max Pass freq / BW (-3 dB)');
+  expect(goalLabel).toBeTruthy();
+  fireEvent.click(goalLabel);
+  expect(onGoalChange).toHaveBeenCalledWith(
+    expect.objectContaining({
+      selected: ['dx_at_025', 'pass_freq_bw'],
+    }),
+  );
+
+  // Clicking the info icon opens the portal tooltip with an inline SVG schematic explaining the difference.
+  expect(queryByRole('tooltip')).toBeNull();
+  const infoBtn = getByLabelText('Explain Pass freq / BW vs other goals');
+  fireEvent.click(infoBtn);
+  const tooltip = getByRole('tooltip');
+  expect(tooltip.querySelector('svg')).toBeTruthy();
+  expect(tooltip.textContent).toContain('f_pass = 1 / (2·T₁₀₀)');
+  expect(tooltip.textContent).toContain('BW(-3dB) = 0.35/T₁₀₀');
+  expect(tooltip.textContent).toContain('Why this goal is different:');
+});
+
+test('screwThrustAvailableN matches 60-degree M3x0.5 power-screw limit and motor/energy controls wire through to solve payload', async () => {
+  expect(screwThrustAvailableN(COMPLIANT_DEFAULTS)).toBeCloseTo(54.12, 1);
+
+  const solveBodies: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/compliant/solve/jobs')) {
+      solveBodies.push(JSON.parse(String(init?.body)));
+      return new Response(
+        JSON.stringify({
+          job_id: 'job-energy', experiment_id: 'job-energy', name: 'Energy Solve', note: '',
+          status: 'completed', goal: 'min_energy', time_budget_s: 60,
+          summary: null, found: false, params: null, result: null, runners: [], message: 'ok', error: null,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { getByRole, getByText } = render(<CompliantBars mode="finder" onOpenExplorer={() => {}} />);
+
+  // Fixed: motor & screw accordion is present and opens with motor torque + screw controls.
+  fireEvent.click(getByRole('button', { name: 'Fixed: motor & screw' }));
+  expect(getByText('Motor torque (mN·m)')).toBeTruthy();
+  expect(getByText('Screw Ø (mm)')).toBeTruthy();
+  expect(getByText('Lead screw pitch (mm/rev)')).toBeTruthy();
+
+  // Stall-safety constraints are checked by default in Solver constraints.
+  const motorStressCb = getByRole('checkbox', { name: /Motor-limited stress/ }) as HTMLInputElement;
+  const noStallCb = getByRole('checkbox', { name: /No motor stall inside ±stroke/ }) as HTMLInputElement;
+  expect(motorStressCb.checked).toBe(true);
+  expect(noStallCb.checked).toBe(true);
+
+  // Open Solve setup modal, select Min actuation energy (unselecting default), and launch.
+  fireEvent.click(getByRole('button', { name: /Solve…/ }));
+  fireEvent.click(getByText('Min actuation energy'));
+  fireEvent.click(getByText('Max ΔX @ Y = 0.25 mm'));
+  fireEvent.click(getByRole('button', { name: /Launch Solve/ }));
+
+  await waitFor(() => expect(solveBodies.length).toBe(1));
+  const body = solveBodies[0] as {
+    goal: string;
+    params: Record<string, number>;
+    constraints: Record<string, unknown>;
+  };
+  expect(body.goal).toBe('min_energy');
+  expect(body.params.motor_torque_mnm).toBe(30);
+  expect(body.constraints.motor_limited_stress).toBe(true);
+  expect(body.constraints.require_no_stall_in_stroke).toBe(true);
+});
+
+test('Results accordion displays peak thrust, cycle energy, stall Y, and yield Y, and SolverModal ranks by Low energy', async () => {
+  const line = {
+    x: [-8, -6], y: [10, 10.5],
+    x_per_y: [0, 0], y_per_y: [0, 0],
+    x_per_n: [0, 0], y_per_n: [0, 0],
+    thickness: 1,
+  };
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/simulate')) {
+      return new Response(JSON.stringify({
+        feasible: true, passes: true, message: 'ok',
+        Y_positions: [-1.0, 0, 1.0],
+        flow_a: [0, 0, 10], flow_b: [10, 0, 0],
+        gap_a: [0.4, 0.85, 2.1], gap_b: [2.1, 0.92, 0.4],
+        gap_rigid_a: [0.4, 0.85, 2.1],
+        closed_gap: 0.9, full_open_gap: 2.0,
+        flow_slope_mean: 5, flow_slope_max: 7,
+        max_stress_mpa: 60.2, stress_margin: 1.25,
+        plastic_ok: true, motor_ok: true, shell_ok: true, pivot_ok: true, pinch_ok: true, rotation_ok: true,
+        shell_clearance_mm: 1, pivot_clearance_mm: 1, pinch_ceiling_margin_mm: 5.5, max_rotation_deg: 5,
+        wall_x: 9.5, pivot_height_y0: 8, pinch_x: -8.1, travel_sign: 1,
+        force_a: [12.3, 4.56, 0.2], force_b: [0.2, 6.78, 12.3],
+        thrust: [35.1, 0, 35.1],
+        stress_a: [20, 10, 5], stress_b: [5, 10, 20],
+        lines: { l: line, r: line, f: line },
+        anchor: [-4.8, 0], junction: [-5.5, 12], pinch: [-8.1, 10.5], pivot: [4, 8],
+        thrust_available_n: 54.1,
+        peak_thrust_op_n: 35.1,
+        peak_torque_op_mnm: 19.5,
+        energy_cycle_mj: 215.4,
+        stall_y_mm: 1.49,
+        yield_y_mm: 1.57,
+        thrust_to_yield_n: 57.8,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { findByText, getByText } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
+  expect(await findByText('35.1 N · 19.5 mN·m')).toBeTruthy();
+  expect(getByText('215.4 mJ')).toBeTruthy();
+  expect(getByText('±1.49 mm (54.1 N)')).toBeTruthy();
+  expect(getByText('±1.57 mm (57.8 N)')).toBeTruthy();
+
+  cleanup();
+
+  // Verify SolverModal live re-ranking promotes lowest-energy runner when clicking "Low energy".
+  const makeRunner = (idx: number, dx: number, energy: number, thrust: number): Runner => ({
+    score: 10 - idx,
+    dx_at_025_mm: dx,
+    slope: 10,
+    y_90_mm: 0.5,
+    y_open_mm: 0.1,
+    max_stress_mpa: 40,
+    max_rotation_deg: 6,
+    attack_angle_deg: 0,
+    shell_clearance_mm: 0.4,
+    pivot_clearance_mm: 0.35,
+    pinch_ceiling_margin_mm: 5.5,
+    energy_cycle_mj: energy,
+    peak_thrust_op_n: thrust,
+    stall_y_mm: 1.4,
+    motor_ok: true,
+    stroke: 1.0,
+    pivot_inverted: false,
+    params: { ...COMPLIANT_DEFAULTS, anchor_distance: 4.5 + idx * 0.3 },
+  });
+  const runners = [
+    makeRunner(0, 0.35, 420, 38.0),
+    makeRunner(1, 0.22, 85, 11.2),
+  ];
+  const job: SolveJobState = {
+    job_id: 'exp-energy-rank',
+    experiment_id: 'exp-energy-rank',
+    name: 'Energy Ranking Test',
+    note: '',
+    status: 'completed',
+    goal: 'dx_at_025',
+    goal_weights: { dx_at_025: 1 },
+    method: 'hybrid',
+    time_budget_s: 30,
+    summary: null,
+    found: true,
+    params: runners[0].params,
+    result: null,
+    runners,
+    message: 'ok',
+    error: null,
+  };
+  const modal = render(
+    <SolverModal
+      open={true}
+      modalMode="live"
+      job={job}
+      baseParams={COMPLIANT_DEFAULTS}
+      constraints={DEFAULT_CONSTRAINTS}
+      tubeSweep={null}
+      goalConfig={DEFAULT_SOLVER_GOAL_CONFIG}
+      methodConfig={DEFAULT_SOLVER_METHOD_CONFIG}
+      timeBudgetS={30}
+      spaceSummary={{ freeCount: 5, lockedCount: 15, pivotBoth: false }}
+      onGoalConfigChange={() => {}}
+      onMethodConfigChange={() => {}}
+      onTimeBudgetChange={() => {}}
+      onLaunch={() => {}}
+      onSwitchToSetup={() => {}}
+      onClose={() => {}}
+      onCancel={() => {}}
+      onApplyRunner={() => {}}
+      onSaveMeta={async () => {}}
+    />,
+  );
+  expect(modal.getByTestId('best-solution-card-1').textContent).toContain('420 mJ');
+  fireEvent.click(modal.getByRole('button', { name: 'Low energy' }));
+  expect(modal.getByTestId('best-solution-card-1').textContent).toContain('85 mJ');
 });

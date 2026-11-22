@@ -951,7 +951,7 @@ class CompliantSolveJobBody(BaseModel):
     bounds: dict = Field(default_factory=dict)
     constraints: Optional[dict] = None
     pivot_side: str = Field("current", pattern="^(current|normal|inverted|both)$")
-    goal: str = Field("dx_at_025", pattern="^(dx_at_025|min_open_stroke|flow_slope|trajectory_target)$")
+    goal: str = Field("dx_at_025", pattern="^(dx_at_025|pass_freq_bw|min_open_stroke|flow_slope|trajectory_target|min_energy)$")
     goal_weights: Optional[dict] = None
     method: str = Field("hybrid", pattern="^(hybrid|brute_force|evolutionary|local_refine)$")
     method_params: Optional[dict] = None

@@ -56,10 +56,85 @@ export function CompliantCharts({
       rigidA: result?.gap_rigid_a?.[i] ?? null,
       forceA: result?.force_a?.[i] != null && result.force_a[i]! > 0 ? result.force_a[i] : null,
       forceB: result?.force_b?.[i] != null && result.force_b[i]! > 0 ? result.force_b[i] : null,
+      thrust: result?.thrust?.[i] != null && result.thrust[i]! > 0.05 ? result.thrust[i] : null,
       stressA: result?.stress_a?.[i] ?? null,
       stressB: result?.stress_b?.[i] ?? null,
     }));
   }, [result]);
+
+  const motorLimited = constraints?.motor_limited_stress ?? true;
+  const stallY = motorLimited && result?.stall_y_mm != null && Number.isFinite(result.stall_y_mm)
+    ? result.stall_y_mm
+    : null;
+
+  const forceData = useMemo(() => {
+    const ys = result?.overtravel_y && result.overtravel_y.length > 0
+      ? result.overtravel_y
+      : (result?.Y_positions ?? []);
+    const hasOver = Boolean(result?.overtravel_y && result.overtravel_y.length > 0);
+    const fa = hasOver ? result?.overtravel_force_a : result?.force_a;
+    const fb = hasOver ? result?.overtravel_force_b : result?.force_b;
+    const th = hasOver ? result?.overtravel_thrust : result?.thrust;
+    return ys.map((y, i) => ({
+      y,
+      forceA: fa?.[i] != null && fa[i]! > 0.05 ? fa[i] : null,
+      forceB: fb?.[i] != null && fb[i]! > 0.05 ? fb[i] : null,
+      thrust: th?.[i] != null && th[i]! > 0.05 ? th[i] : null,
+    }));
+  }, [result]);
+
+  const stressData = useMemo(() => {
+    const ys = result?.overtravel_y && result.overtravel_y.length > 0
+      ? result.overtravel_y
+      : (result?.Y_positions ?? []);
+    const hasOver = Boolean(result?.overtravel_y && result.overtravel_y.length > 0);
+    const sa = hasOver ? result?.overtravel_stress_a : result?.stress_a;
+    const sb = hasOver ? result?.overtravel_stress_b : result?.stress_b;
+    const basePts = ys.map((y, i) => ({
+      y,
+      a: sa?.[i] ?? null,
+      b: sb?.[i] ?? null,
+    }));
+
+    if (stallY == null || basePts.length === 0) {
+      return basePts.map((pt) => ({
+        y: pt.y,
+        stressAReach: pt.a,
+        stressBReach: pt.b,
+        stressAOver: null as number | null,
+        stressBOver: null as number | null,
+      }));
+    }
+
+    // Insert exact interpolated boundary points at ±stallY so reachable and beyond-stall curves join seamlessly.
+    const merged = [...basePts];
+    for (const bound of [-stallY, stallY]) {
+      const minY = basePts[0].y;
+      const maxY = basePts[basePts.length - 1].y;
+      if (bound < minY - 1e-9 || bound > maxY + 1e-9) continue;
+      if (merged.some((pt) => Math.abs(pt.y - bound) < 1e-6)) continue;
+      merged.push({
+        y: bound,
+        a: interpNullable(bound, ys, sa),
+        b: interpNullable(bound, ys, sb),
+      });
+    }
+    merged.sort((p, q) => p.y - q.y);
+
+    const eps = 1e-6;
+    return merged.map((pt) => {
+      const absY = Math.abs(pt.y);
+      const reachable = absY <= stallY + eps;
+      const beyond = absY >= stallY - eps;
+      return {
+        y: pt.y,
+        stressAReach: reachable ? pt.a : null,
+        stressBReach: reachable ? pt.b : null,
+        stressAOver: beyond ? pt.a : null,
+        stressBOver: beyond ? pt.b : null,
+      };
+    });
+  }, [result, stallY]);
 
   const cycleData = useMemo(() => {
     const ts = result?.time_ms ?? [];
@@ -356,7 +431,7 @@ export function CompliantCharts({
         <ChartCard title="Pinch force vs carriage Y" {...cardProps('force')}>
           {({ settings: c }) => (
             <FitChart>
-              <LineChart data={chartData} margin={MARGIN}>
+              <LineChart data={forceData} margin={MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                 {xAxisY(c)}
                 <YAxis
@@ -369,14 +444,46 @@ export function CompliantCharts({
                   label={{ value: 'Force (N)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
                 />
                 {safeStrokeMarkers()}
+                {result?.thrust_available_n != null && result.thrust_available_n > 0.1 && (
+                  <ReferenceLine
+                    y={result.thrust_available_n}
+                    stroke="#ef4444"
+                    strokeDasharray="4 3"
+                    label={{
+                      value: `motor (${result.thrust_available_n.toFixed(0)} N)`,
+                      fill: '#ef4444',
+                      fontSize: 10,
+                      position: 'insideTopRight',
+                    }}
+                  />
+                )}
+                {stallY != null && (
+                  <>
+                    <ReferenceLine
+                      x={stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                      label={{ value: `stall`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+                    />
+                    <ReferenceLine
+                      x={-stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                      label={{ value: `stall`, fill: VIOLET, fontSize: 10, position: 'insideBottomLeft' }}
+                    />
+                  </>
+                )}
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
                   formatter={(v) => `${Number(v).toFixed(2)} N`}
                   labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
                 />
                 <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="linear" dataKey="forceA" name="Foot on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="forceB" name="Foot on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="forceA" name="Foot on tube A" stroke={ORANGE} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="forceB" name="Foot on tube B" stroke={CYAN} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="thrust" name="Screw thrust" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
               </LineChart>
             </FitChart>
@@ -386,7 +493,7 @@ export function CompliantCharts({
         <ChartCard title="Worst stress in the part vs carriage Y" {...cardProps('stress')}>
           {({ settings: c }) => (
             <FitChart>
-              <LineChart data={chartData} margin={MARGIN}>
+              <LineChart data={stressData} margin={MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                 {xAxisY(c)}
                 <YAxis
@@ -398,6 +505,23 @@ export function CompliantCharts({
                   label={{ value: 'Stress (MPa)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
                 />
                 {safeStrokeMarkers()}
+                {stallY != null && (
+                  <>
+                    <ReferenceLine
+                      x={stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                      label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+                    />
+                    <ReferenceLine
+                      x={-stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                    />
+                  </>
+                )}
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
                   formatter={(v) => `${Number(v).toFixed(1)} MPa`}
@@ -423,8 +547,36 @@ export function CompliantCharts({
                     }}
                   />
                 )}
-                <Line type="linear" dataKey="stressA" name="Part on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="stressB" name="Part on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="stressAReach" name="Part on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="stressBReach" name="Part on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+                {stallY != null && (
+                  <>
+                    <Line
+                      type="linear"
+                      dataKey="stressAOver"
+                      name="Part A (beyond stall)"
+                      legendType="none"
+                      stroke={ORANGE}
+                      strokeOpacity={0.35}
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="stressBOver"
+                      name="Part B (beyond stall)"
+                      legendType="none"
+                      stroke={CYAN}
+                      strokeOpacity={0.35}
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </>
+                )}
                 <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
               </LineChart>
             </FitChart>

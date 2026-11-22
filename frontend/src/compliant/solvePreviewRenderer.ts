@@ -18,8 +18,10 @@ import { SOLVER_GOAL_META, SOLVER_METHOD_META } from './types';
 
 export const SHORT_REASON_LABELS: Record<string, string> = {
   stress: 'Stress',
+  motor_stall: 'Motor stall',
   seal_y0: 'Y=0 seal',
   tube: 'Tube hit',
+  crossing: 'Crossing',
   shell: 'Shell hit',
   pivot: 'Pivot hit',
   pinch: 'Pinch margin',

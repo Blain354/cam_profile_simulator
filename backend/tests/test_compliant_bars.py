@@ -65,13 +65,14 @@ class ComputeTests(unittest.TestCase):
         self.assertFalse(result.pivot_ok, result.message)
 
     def test_admissible_slope_outranks_a_rejected_shape(self):
-        good = compute_compliant(CompliantParams(), fast=True)
-        bad = compute_compliant(CompliantParams(member_strength_mpa=0.01), fast=True)
+        # 4.0 mN·m motor stalls before the 1 mm default bar reaches 75 MPa (at 5.8 mN·m).
+        good = compute_compliant(CompliantParams(motor_torque_mnm=4.0), fast=True)
+        bad = compute_compliant(CompliantParams(motor_torque_mnm=4.0, member_strength_mpa=0.01), fast=True)
         self.assertGreater(admission_score(good), 0.0)
         self.assertLess(admission_score(bad), admission_score(good))
 
     def test_solver_keeps_a_fixed_shape(self):
-        params = CompliantParams()
+        params = CompliantParams(motor_torque_mnm=4.0)
         bounds = {key: (getattr(params, key), getattr(params, key)) for key in (
             "anchor_distance", "junction_x", "junction_y", "pinch_y",
             "l_u1", "l_v1", "l_u2", "l_v2", "r_u1", "r_v1", "r_u2", "r_v2",
@@ -222,7 +223,7 @@ class ComputeTests(unittest.TestCase):
 
     def test_attack_angle_and_trajectory_target_goal(self):
         from backend.compliant_bars import admission_score
-        params = CompliantParams()
+        params = CompliantParams(motor_torque_mnm=4.0)
         res = compute_compliant(params, fast=True)
         self.assertIsNotNone(res.attack_angle_deg)
         self.assertGreaterEqual(res.attack_angle_deg, -90.0)
@@ -258,7 +259,7 @@ class ComputeTests(unittest.TestCase):
         w = normalize_goal_weights("dx_at_025", {"dx_at_025": 70, "trajectory_target": 30})
         self.assertAlmostEqual(w["dx_at_025"], 0.7, places=6)
         self.assertAlmostEqual(w["trajectory_target"], 0.3, places=6)
-        res = compute_compliant(CompliantParams(), fast=True)
+        res = compute_compliant(CompliantParams(motor_torque_mnm=4.0), fast=True)
         sc = admission_score(res, CompliantConstraints(target_pinch_from_top_mm=5.5, target_attack_angle_deg=0.0), goal_weights=w)
         self.assertTrue(sc > 0.0)
 
@@ -525,6 +526,174 @@ class ComputeTests(unittest.TestCase):
             self.assertLessEqual(ax, 5.8 + 0.02)
         self.assertTrue(any(x < 0 for x in seen_anchors))
         self.assertTrue(any(x > 0 for x in seen_anchors))
+
+    def test_pass_freq_bw_goal_scoring_and_solve(self):
+        from dataclasses import replace
+        from backend.compliant_bars import SOLVER_GOALS, admission_score, normalize_goal_weights
+        from backend.compliant_solver import run_time_budgeted_solve
+
+        self.assertIn("pass_freq_bw", SOLVER_GOALS)
+
+        res = compute_compliant(CompliantParams(motor_torque_mnm=4.0), fast=True)
+        self.assertTrue(res.passes)
+        self.assertIsNotNone(res.chamber_cycle_freq_hz)
+
+        faster = replace(res, chamber_cycle_freq_hz=2.5, chamber_bandwidth_hz=1.75)
+        slower = replace(res, chamber_cycle_freq_hz=0.8, chamber_bandwidth_hz=0.56)
+        unfilled = replace(res, chamber_cycle_freq_hz=None, chamber_bandwidth_hz=None)
+
+        s_fast = admission_score(faster, goal="pass_freq_bw")
+        s_slow = admission_score(slower, goal="pass_freq_bw")
+        s_none = admission_score(unfilled, goal="pass_freq_bw")
+        self.assertGreater(s_fast, s_slow)
+        self.assertGreater(s_slow, s_none)
+
+        w = normalize_goal_weights("pass_freq_bw", {"pass_freq_bw": 60, "dx_at_025": 40})
+        self.assertAlmostEqual(w["pass_freq_bw"], 0.6, places=6)
+        self.assertAlmostEqual(w["dx_at_025"], 0.4, places=6)
+        self.assertGreater(
+            admission_score(faster, goal_weights=w),
+            admission_score(slower, goal_weights=w),
+        )
+
+        out = run_time_budgeted_solve(
+            CompliantParams(motor_torque_mnm=4.0),
+            {"junction_x": (-6.5, -4.5), "l_thickness": (0.85, 1.15)},
+            time_budget_s=0.6,
+            goal="pass_freq_bw",
+            seed=7,
+        )
+        self.assertEqual(out["summary"]["goal_weights"], {"pass_freq_bw": 1.0})
+        self.assertGreater(out["tested"], 0)
+        if out["found"]:
+            self.assertIsNotNone(out["summary"]["best_chamber_cycle_freq_hz"])
+            self.assertIsNotNone(out["summary"]["best_chamber_bandwidth_hz"])
+
+    def test_vertical_screw_thrust_and_actuation_energy(self):
+        p = CompliantParams(stroke=1.0, motor_torque_mnm=30.0)
+        res = compute_compliant(p, fast=False)
+        self.assertEqual(len(res.thrust), len(res.Y_positions))
+        # Twin mechanism thrust is 0 at Y = 0 and symmetric in |Y|.
+        mid = len(res.Y_positions) // 2
+        self.assertAlmostEqual(res.Y_positions[mid], 0.0, places=6)
+        self.assertAlmostEqual(res.thrust[mid], 0.0, places=6)
+        self.assertAlmostEqual(res.thrust[0], res.thrust[-1], places=5)
+        self.assertGreater(res.peak_thrust_op_n, 0.0)
+        self.assertGreater(res.peak_torque_op_mnm, 0.0)
+        self.assertGreater(res.thrust_available_n, 50.0)
+        self.assertTrue(res.screw_self_locking)
+        # Full cycle energy (raise + lower on both sides) exceeds single-stroke raise work.
+        self.assertGreater(res.energy_stroke_mj, 0.0)
+        self.assertGreater(res.energy_cycle_mj, 2.0 * res.energy_stroke_mj)
+        # Over-travel series extends past operating stroke for force/stress plotting.
+        self.assertGreater(len(res.overtravel_y), len(res.Y_positions))
+        self.assertGreater(max(res.overtravel_y), p.stroke)
+
+    def test_motor_limited_stress_stall_before_yield_in_and_out_of_stroke(self):
+        from backend.compliant_solver import _classify_rejections
+
+        # Case A: Stall-safe stiff design (no stall in ±1.0 mm, stalls at ~±1.49 mm BEFORE yielding at ~±1.57 mm).
+        stiff_ok = CompliantParams(
+            stroke=1.0, l_thickness=2.6, r_thickness=2.6, f_thickness=1.6,
+            junction_x=-4.2, junction_y=12.5, motor_torque_mnm=30.0,
+        )
+        res_ok = compute_compliant(stiff_ok, fast=False)
+        self.assertTrue(res_ok.passes, res_ok.message)
+        self.assertTrue(res_ok.plastic_ok)
+        self.assertTrue(res_ok.motor_ok)
+        self.assertIsNotNone(res_ok.stall_y_mm)
+        self.assertIsNotNone(res_ok.yield_y_mm)
+        self.assertGreaterEqual(res_ok.stall_y_mm, stiff_ok.stroke)
+        self.assertLess(res_ok.stall_y_mm, res_ok.yield_y_mm)
+        self.assertLessEqual(res_ok.max_stress_to_stall_mpa, stiff_ok.member_strength_mpa)
+
+        # Case B: Flimsy design safe inside ±1.0 mm (19 MPa), but yields at ±2.58 mm (10.4 N) before 30 mN·m (54.1 N) stalls.
+        flimsy = CompliantParams(stroke=1.0, motor_torque_mnm=30.0)
+        res_flimsy = compute_compliant(flimsy, fast=False)
+        self.assertLess(res_flimsy.max_stress_op_mpa, flimsy.member_strength_mpa)
+        self.assertTrue(res_flimsy.motor_ok)
+        self.assertFalse(res_flimsy.plastic_ok)
+        self.assertFalse(res_flimsy.passes)
+        self.assertIn("before motor stalls", res_flimsy.message.lower())
+        # Turning off motor_limited_stress restores infinite-torque operating-zone-only check.
+        res_inf = compute_compliant(flimsy, fast=True, constraints=CompliantConstraints(motor_limited_stress=False))
+        self.assertTrue(res_inf.plastic_ok)
+
+        # Case C: High-gain stiff design fails infinite-torque stress inside ±1.5 mm, but motor stalls BEFORE yielding!
+        stiff_rescued = CompliantParams(
+            stroke=1.5, l_thickness=2.8, r_thickness=2.8, f_thickness=1.6,
+            junction_x=-4.2, junction_y=12.5, motor_torque_mnm=25.0,
+        )
+        res_inf_fail = compute_compliant(stiff_rescued, fast=True, constraints=CompliantConstraints(motor_limited_stress=False))
+        self.assertFalse(res_inf_fail.plastic_ok)
+        # Under motor-limited stress, stress stops at stall (~53 MPa < 75 MPa) -> plastic_ok is rescued!
+        res_strict_motor = compute_compliant(
+            stiff_rescued, fast=True,
+            constraints=CompliantConstraints(motor_limited_stress=True, require_no_stall_in_stroke=True),
+        )
+        self.assertTrue(res_strict_motor.plastic_ok)
+        self.assertFalse(res_strict_motor.motor_ok)
+        self.assertFalse(res_strict_motor.passes)
+        self.assertIn("motor_stall", _classify_rejections(res_strict_motor))
+        # Allowing stall in stroke lets the rescued design pass completely.
+        res_allow_stall = compute_compliant(
+            stiff_rescued, fast=True,
+            constraints=CompliantConstraints(motor_limited_stress=True, require_no_stall_in_stroke=False),
+        )
+        self.assertTrue(res_allow_stall.plastic_ok)
+        self.assertTrue(res_allow_stall.motor_ok)
+        self.assertTrue(res_allow_stall.passes, res_allow_stall.message)
+
+    def test_min_energy_goal_scoring_and_solver(self):
+        from dataclasses import replace
+        from backend.compliant_bars import SOLVER_GOALS, admission_score, normalize_goal_weights
+        from backend.compliant_solver import run_time_budgeted_solve
+
+        self.assertIn("min_energy", SOLVER_GOALS)
+
+        base = CompliantParams(
+            stroke=1.0, l_thickness=2.6, r_thickness=2.6, f_thickness=1.6,
+            junction_x=-4.2, junction_y=12.5, motor_torque_mnm=30.0,
+        )
+        res = compute_compliant(base, fast=True)
+        self.assertTrue(res.passes, res.message)
+
+        low_e = replace(res, energy_cycle_mj=60.0)
+        high_e = replace(res, energy_cycle_mj=450.0)
+        stalled_e = replace(res, energy_cycle_mj=60.0, peak_thrust_op_n=80.0, thrust_available_n=54.0)
+
+        self.assertGreater(
+            admission_score(low_e, goal="min_energy"),
+            admission_score(high_e, goal="min_energy"),
+        )
+        self.assertGreater(
+            admission_score(low_e, goal="min_energy"),
+            admission_score(stalled_e, goal="min_energy"),
+        )
+
+        w = normalize_goal_weights("min_energy", {"min_energy": 75, "dx_at_025": 25})
+        self.assertAlmostEqual(w["min_energy"], 0.75, places=6)
+        self.assertAlmostEqual(w["dx_at_025"], 0.25, places=6)
+
+        out = run_time_budgeted_solve(
+            base,
+            {"junction_x": (-5.5, -3.5), "l_thickness": (2.2, 2.9), "r_thickness": (2.2, 2.9)},
+            time_budget_s=0.7,
+            goal="min_energy",
+            seed=19,
+        )
+        summary = out["summary"]
+        self.assertEqual(summary["goal"], "min_energy")
+        self.assertEqual(summary["goal_weights"], {"min_energy": 1.0})
+        self.assertTrue(out["found"], out["message"])
+        self.assertIsNotNone(summary["best_energy_cycle_mj"])
+        self.assertIsNotNone(summary["best_peak_thrust_op_n"])
+        self.assertIsNotNone(summary["best_peak_torque_op_mnm"])
+        self.assertTrue(summary["active_constraints"]["motor_limited_stress"])
+        self.assertTrue(summary["active_constraints"]["require_no_stall_in_stroke"])
+        self.assertAlmostEqual(summary["active_constraints"]["motor_torque_mnm"], 30.0, places=2)
+        rej_keys = {r["key"] for r in summary["rejection_stats"]}
+        self.assertIn("motor_stall", rej_keys)
 
 
 if __name__ == "__main__":

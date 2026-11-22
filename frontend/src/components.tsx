@@ -495,7 +495,7 @@ export function ParameterSlider({
 
 // ─── StatRow ─────────────────────────────────────────────────────
 
-export function StatRow({ label, value, highlight = false }: { label: string; value: React.ReactNode; highlight?: boolean }) {
+export function StatRow({ label, value, highlight = false }: { label: React.ReactNode; value: React.ReactNode; highlight?: boolean }) {
   return (
     <div className="flex justify-between items-center gap-2 bg-neutral-900/50 p-2 rounded">
       <span className="min-w-0 text-sm text-neutral-400">{label}</span>

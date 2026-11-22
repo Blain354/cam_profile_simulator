@@ -3,9 +3,11 @@ import { Button } from '@blain-projects/ui';
 import { Clock, Eye, RefreshCw, Target, Trash2 } from 'lucide-react';
 import { Accordion, ParameterSlider, StatRow } from '../components';
 import { TubeModelControls } from '../TubeModel';
+import { PassFreqBwTooltip } from './PassFreqBwTooltip';
 import {
   ALL_SOLVER_GOALS, CONTEXT_LIMITS, CONTEXT_VAR_KEYS, LIMITS, MEMBERS, SOLVER_GOAL_META,
-  TIME_BUDGET_PRESETS, allowableStressMpa, anchorSymmetricRange, effectivePinchY, memberChords, mm, worldQuadrantsToUV,
+  TIME_BUDGET_PRESETS, allowableStressMpa, anchorSymmetricRange, effectivePinchY, memberChords, mm,
+  screwThrustAvailableN, worldQuadrantsToUV,
 } from './types';
 import type {
   CompliantParams, CompliantResult, ContextFixedMap, ContextToggleKey, ContextVarKey,
@@ -443,6 +445,37 @@ export function SolverConstraintsContent({
           description="Safety factor on the material max strength (e.g. 0.85 caps allowable stress at 85% of MPa max for solver filtering and pass checks)."
           onChange={(v) => onConstraintsChange({ stress_limit_factor: v })}
         />
+        <div className="space-y-2 rounded-lg border border-neutral-700/80 bg-neutral-900/50 p-2.5">
+          <div className="text-[11px] font-semibold text-neutral-300">Motor stall &amp; stress safety</div>
+          <label className="flex items-start gap-2 text-xs text-neutral-200 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={constraints.motor_limited_stress ?? true}
+              onChange={(e) => onConstraintsChange({ motor_limited_stress: e.target.checked })}
+              className="mt-0.5 accent-amber-500 shrink-0"
+            />
+            <span>
+              Motor-limited stress (stall before yield)
+              <span className="block text-[10px] leading-snug text-neutral-400 font-normal">
+                Validates peak stress up to the carriage Y where the motor stalls (in or out of ±stroke), instead of assuming infinite screw torque.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-xs text-neutral-200 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={constraints.require_no_stall_in_stroke ?? true}
+              onChange={(e) => onConstraintsChange({ require_no_stall_in_stroke: e.target.checked })}
+              className="mt-0.5 accent-amber-500 shrink-0"
+            />
+            <span>
+              No motor stall inside ±stroke
+              <span className="block text-[10px] leading-snug text-neutral-400 font-normal">
+                Rejects designs whose thrust inside ±stroke exceeds motor torque; stalling outside ±stroke is allowed.
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
 
       {showSolveButton && onSolve && (
@@ -575,6 +608,56 @@ export function FixedParametersSections({
           <ParameterSlider label="Modulus (MPa)" value={params.member_modulus_mpa} min={200} max={20000} step={10} onChange={(v) => onPatchParams({ member_modulus_mpa: v })} secondaryValue={`${(params.member_modulus_mpa / 1000).toFixed(2)} GPa`} />
           <ParameterSlider label="Strength (MPa)" value={params.member_strength_mpa} min={1} max={200} step={1} onChange={(v) => onPatchParams({ member_strength_mpa: v })} secondaryValue="MPa" />
           <ParameterSlider label="Pivot pin Ø (mm)" value={params.carriage_pin_diameter} min={0.4} max={4} step={0.05} onChange={(v) => onPatchParams({ carriage_pin_diameter: v })} />
+        </div>
+      </Accordion>
+
+      <Accordion title="Fixed: motor & screw" defaultOpen={false}>
+        <div className="space-y-4 pt-2">
+          <p className="text-[10px] leading-snug text-neutral-400">
+            Lead-screw drive limits used for stall-before-yield stress checks and actuation energy. Never varied by the solver.
+          </p>
+          {(() => {
+            const thrustAvail = screwThrustAvailableN(params);
+            return (
+              <ParameterSlider
+                label="Motor torque (mN·m)"
+                value={params.motor_torque_mnm}
+                min={1}
+                max={200}
+                step={1}
+                secondaryValue={`${(params.motor_torque_mnm / 98.0665).toFixed(2)} kg·cm · ${thrustAvail != null ? `${thrustAvail.toFixed(1)} N` : '—'}`}
+                description="Peak stall torque at the lead-screw shaft. Sets the max vertical carriage thrust before the motor stalls."
+                onChange={(v) => onPatchParams({ motor_torque_mnm: v })}
+              />
+            );
+          })()}
+          <ParameterSlider
+            label="Screw Ø (mm)"
+            value={params.screw_diameter}
+            min={1.5}
+            max={8}
+            step={0.5}
+            secondaryValue={`M${params.screw_diameter.toFixed(params.screw_diameter % 1 === 0 ? 0 : 1)}`}
+            onChange={(v) => onPatchParams({ screw_diameter: v })}
+          />
+          <ParameterSlider
+            label="Lead screw pitch (mm/rev)"
+            value={params.lead_screw_pitch}
+            min={0.2}
+            max={2.0}
+            step={0.05}
+            secondaryValue="mm/rev"
+            onChange={(v) => onPatchParams({ lead_screw_pitch: v })}
+          />
+          <ParameterSlider
+            label="Thread friction (μ)"
+            value={params.screw_friction}
+            min={0.05}
+            max={0.6}
+            step={0.02}
+            description="Sliding friction coefficient between screw and nut (steel/brass ≈ 0.25–0.35)."
+            onChange={(v) => onPatchParams({ screw_friction: v })}
+          />
         </div>
       </Accordion>
     </>
@@ -1092,6 +1175,7 @@ export function SolverRunners({
           className="w-full text-left text-xs px-2.5 py-1.5 rounded-lg border border-neutral-700 bg-neutral-900/50 text-neutral-300 hover:border-amber-500/60 hover:text-neutral-100"
         >
           {`Slope ${runner.slope == null ? '—' : runner.slope.toFixed(2)} · stress ${runner.max_stress_mpa == null ? '—' : runner.max_stress_mpa.toFixed(0)} MPa`}
+          {runner.energy_cycle_mj != null ? ` · ${runner.energy_cycle_mj.toFixed(0)} mJ` : ''}
           {runner.chamber_t100_ms != null ? ` · t100 ${runner.chamber_t100_ms.toFixed(0)} ms (${runner.chamber_cycle_freq_hz?.toFixed(2) ?? '—'} Hz)` : ''}
           {runner.pinch_ceiling_margin_mm != null ? ` · ceil ${runner.pinch_ceiling_margin_mm.toFixed(1)} mm` : ''}
         </button>
@@ -1260,11 +1344,14 @@ export function SolverGoalBudgetControls({
                       {SOLVER_GOAL_META[g].label}
                     </span>
                   </label>
-                  {on && multi && (
-                    <span className="font-mono text-[10px] font-bold text-amber-300 shrink-0">
-                      {sharePct}%
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {g === 'pass_freq_bw' && <PassFreqBwTooltip />}
+                    {on && multi && (
+                      <span className="font-mono text-[10px] font-bold text-amber-300">
+                        {sharePct}%
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {on && multi && useWeights && (
                   <div className="mt-1.5 flex items-center gap-2 pl-5">
@@ -1454,7 +1541,12 @@ export function ResultsAccordion({
           highlight={result?.chamber_t100_ms != null}
         />
         <StatRow
-          label="Pass freq / BW (-3 dB)"
+          label={
+            <span className="inline-flex items-center gap-1">
+              <span>Pass freq / BW (-3 dB)</span>
+              <PassFreqBwTooltip ariaLabel="Explain Pass freq vs -3 dB BW schematic" />
+            </span>
+          }
           value={
             result?.chamber_cycle_freq_hz != null && result?.chamber_bandwidth_hz != null
               ? `${result.chamber_cycle_freq_hz.toFixed(2)} Hz / ${result.chamber_bandwidth_hz.toFixed(2)} Hz`
@@ -1470,6 +1562,45 @@ export function ResultsAccordion({
               : factorPct < 100
                 ? `${result.max_stress_mpa.toFixed(1)} / ${maxAllowed.toFixed(1)} MPa (${factorPct}%)`
                 : `${result.max_stress_mpa.toFixed(1)} / ${params.member_strength_mpa} MPa`
+          }
+          highlight={result ? !result.plastic_ok : false}
+        />
+        <StatRow
+          label="Peak thrust / torque (op)"
+          value={
+            result?.peak_thrust_op_n == null
+              ? '—'
+              : `${result.peak_thrust_op_n.toFixed(1)} N${result.peak_torque_op_mnm != null ? ` · ${result.peak_torque_op_mnm.toFixed(1)} mN·m` : ''}`
+          }
+          highlight={result?.motor_ok === false}
+        />
+        <StatRow
+          label="Cycle energy (shaft)"
+          value={
+            result?.energy_cycle_mj == null
+              ? '—'
+              : `${result.energy_cycle_mj.toFixed(1)} mJ`
+          }
+        />
+        <StatRow
+          label="Motor stalls at"
+          value={
+            result?.thrust_available_n == null
+              ? '—'
+              : result.stall_y_mm != null
+                ? `±${result.stall_y_mm.toFixed(2)} mm (${result.thrust_available_n.toFixed(1)} N)`
+                : `> housing (${result.thrust_available_n.toFixed(1)} N)`
+          }
+          highlight={result?.motor_ok === false}
+        />
+        <StatRow
+          label="Yields at"
+          value={
+            result == null
+              ? '—'
+              : result.yield_y_mm != null
+                ? `±${result.yield_y_mm.toFixed(2)} mm (${result.thrust_to_yield_n != null ? `${result.thrust_to_yield_n.toFixed(1)} N` : '—'})`
+                : 'Safe to endstop'
           }
           highlight={result ? !result.plastic_ok : false}
         />

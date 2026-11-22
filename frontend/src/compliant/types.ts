@@ -28,6 +28,10 @@ export const COMPLIANT_DEFAULTS = {
   tube_model: 'simple' as TubeModel,
   tube_shore_a: 50,
   chamber_volume_ml: 10,
+  motor_torque_mnm: 30,
+  screw_diameter: 3.0,
+  screw_friction: 0.3,
+  lead_screw_pitch: 0.5,
 };
 
 export type CompliantParams = typeof COMPLIANT_DEFAULTS;
@@ -221,6 +225,8 @@ export interface SolverConstraints {
   max_y0_flex_mm: number;
   max_rotation_deg: number;
   stress_limit_factor: number;
+  motor_limited_stress?: boolean;
+  require_no_stall_in_stroke?: boolean;
   junction_exclude_x?: [number, number] | null;
   junction_exclude_y?: [number, number] | null;
   target_pinch_from_top_mm?: number | null;
@@ -237,6 +243,8 @@ export const DEFAULT_CONSTRAINTS: SolverConstraints = {
   max_y0_flex_mm: 0.05,
   max_rotation_deg: 15,
   stress_limit_factor: 0.85,
+  motor_limited_stress: true,
+  require_no_stall_in_stroke: true,
   junction_exclude_x: null,
   junction_exclude_y: null,
   target_pinch_from_top_mm: 5.5,
@@ -389,6 +397,28 @@ export interface CompliantResult {
   chamber_t100_ms?: number | null;
   chamber_cycle_freq_hz?: number | null;
   chamber_bandwidth_hz?: number | null;
+  motor_ok?: boolean;
+  thrust?: (number | null)[];
+  thrust_available_n?: number | null;
+  peak_thrust_op_n?: number | null;
+  mean_thrust_op_n?: number | null;
+  peak_torque_op_mnm?: number | null;
+  motor_margin?: number | null;
+  screw_self_locking?: boolean;
+  stall_y_mm?: number | null;
+  yield_y_mm?: number | null;
+  thrust_to_yield_n?: number | null;
+  torque_to_yield_mnm?: number | null;
+  max_stress_op_mpa?: number | null;
+  max_stress_to_stall_mpa?: number | null;
+  energy_stroke_mj?: number | null;
+  energy_cycle_mj?: number | null;
+  overtravel_y?: number[];
+  overtravel_thrust?: (number | null)[];
+  overtravel_force_a?: (number | null)[];
+  overtravel_force_b?: (number | null)[];
+  overtravel_stress_a?: (number | null)[];
+  overtravel_stress_b?: (number | null)[];
 }
 
 export interface Runner {
@@ -412,14 +442,27 @@ export interface Runner {
   chamber_t100_ms?: number | null;
   chamber_cycle_freq_hz?: number | null;
   chamber_bandwidth_hz?: number | null;
+  energy_cycle_mj?: number | null;
+  energy_stroke_mj?: number | null;
+  peak_thrust_op_n?: number | null;
+  peak_torque_op_mnm?: number | null;
+  thrust_available_n?: number | null;
+  thrust_to_yield_n?: number | null;
+  torque_to_yield_mnm?: number | null;
+  stall_y_mm?: number | null;
+  yield_y_mm?: number | null;
+  motor_margin?: number | null;
+  motor_ok?: boolean;
+  max_stress_op_mpa?: number | null;
+  max_stress_to_stall_mpa?: number | null;
   stroke?: number;
   pivot_inverted?: boolean;
   params: Partial<CompliantParams>;
 }
 
-export type SolverGoal = 'dx_at_025' | 'min_open_stroke' | 'flow_slope' | 'trajectory_target';
+export type SolverGoal = 'dx_at_025' | 'pass_freq_bw' | 'min_energy' | 'min_open_stroke' | 'flow_slope' | 'trajectory_target';
 
-export const ALL_SOLVER_GOALS: SolverGoal[] = ['dx_at_025', 'trajectory_target', 'min_open_stroke', 'flow_slope'];
+export const ALL_SOLVER_GOALS: SolverGoal[] = ['dx_at_025', 'pass_freq_bw', 'min_energy', 'trajectory_target', 'min_open_stroke', 'flow_slope'];
 
 export type SolverMethod = 'hybrid' | 'brute_force' | 'evolutionary' | 'local_refine';
 
@@ -485,6 +528,8 @@ export const DEFAULT_SOLVER_GOAL_CONFIG: SolverGoalConfig = {
   useWeights: false,
   weights: {
     dx_at_025: 50,
+    pass_freq_bw: 50,
+    min_energy: 50,
     trajectory_target: 50,
     min_open_stroke: 50,
     flow_slope: 50,
@@ -496,6 +541,16 @@ export const SOLVER_GOAL_META: Record<SolverGoal, { label: string; short: string
     label: 'Max ΔX @ Y = 0.25 mm',
     short: 'ΔX @ 0.25',
     description: 'Maximizes effective horizontal pinch opening (mm) for 0.25 mm of carriage travel under tube load.',
+  },
+  pass_freq_bw: {
+    label: 'Max Pass freq / BW (-3 dB)',
+    short: 'Pass freq / BW',
+    description: 'Maximizes full pneumatic chamber cycle frequency (1 / 2·T₁₀₀) and -3 dB bandwidth (0.35 / T₁₀₀) by minimizing 0 → 100% inflation time.',
+  },
+  min_energy: {
+    label: 'Min actuation energy',
+    short: 'Min energy',
+    description: 'Minimizes motor shaft work per full valve cycle (mJ) over ±stroke from vertical screw thrust and lead-screw efficiency.',
   },
   trajectory_target: {
     label: 'Match pinch height & attack angle',
@@ -561,6 +616,7 @@ export interface ConvergencePoint {
   score: number;
   dx_025: number | null;
   slope: number | null;
+  energy_cycle_mj?: number | null;
 }
 
 export interface PreviewFrame {
@@ -610,6 +666,10 @@ export interface SolveSummary {
   best_chamber_t100_ms?: number | null;
   best_chamber_cycle_freq_hz?: number | null;
   best_chamber_bandwidth_hz?: number | null;
+  best_energy_cycle_mj?: number | null;
+  best_peak_thrust_op_n?: number | null;
+  best_peak_torque_op_mnm?: number | null;
+  best_stall_y_mm?: number | null;
   rejection_stats: RejectionStat[];
   bound_hits: BoundHit[];
   free_vars: string[];
@@ -619,6 +679,10 @@ export interface SolveSummary {
     member_strength_mpa: number;
     stress_limit_factor?: number;
     allowable_stress_mpa?: number;
+    motor_limited_stress?: boolean;
+    require_no_stall_in_stroke?: boolean;
+    motor_torque_mnm?: number;
+    thrust_available_n?: number | null;
     min_shell_clearance_mm: number;
     min_pivot_clearance_mm: number;
     min_tube_clearance_mm?: number;
@@ -890,6 +954,12 @@ export function fromCompliantProfilePayload(raw: Record<string, unknown>): Compl
     if (typeof map.anchor_symmetric === 'boolean') {
       constraints.anchor_symmetric = map.anchor_symmetric;
     }
+    if (typeof map.motor_limited_stress === 'boolean') {
+      constraints.motor_limited_stress = map.motor_limited_stress;
+    }
+    if (typeof map.require_no_stall_in_stroke === 'boolean') {
+      constraints.require_no_stall_in_stroke = map.require_no_stall_in_stroke;
+    }
   }
   const chartSettings = resolveChartSettings(raw.chartSettings ?? raw.chart_settings);
   const chartScales = resolveChartScales(raw.chartScales ?? raw.chart_scales);
@@ -982,6 +1052,19 @@ export function anchorSymmetricRange(range: [number, number]): [number, number] 
 export function allowableStressMpa(memberStrengthMpa: number, constraints?: SolverConstraints | null): number {
   const factor = constraints?.stress_limit_factor ?? 1;
   return memberStrengthMpa * Math.min(1, Math.max(0.05, factor));
+}
+
+/** Max vertical lead-screw thrust (N) before motor stall, matching backend `_screw_factors`. */
+export function screwThrustAvailableN(
+  p: Pick<CompliantParams, 'motor_torque_mnm' | 'screw_diameter' | 'lead_screw_pitch' | 'screw_friction'>,
+): number | null {
+  const dm = p.screw_diameter - 0.6495 * p.lead_screw_pitch;
+  if (dm <= 0 || p.lead_screw_pitch <= 0 || p.motor_torque_mnm < 0) return null;
+  const helix = Math.atan(p.lead_screw_pitch / (Math.PI * dm));
+  const friction = Math.atan(Math.max(p.screw_friction, 0) / Math.cos(Math.PI / 6));
+  const angleRaise = Math.min(helix + friction, Math.PI / 2 - 1e-4);
+  const kRaise = (dm / 2) * Math.tan(angleRaise);
+  return kRaise > 1e-12 ? p.motor_torque_mnm / kRaise : null;
 }
 
 /** Outer contact surface X of the foot facing the left wall (-wall_x) at rest (Y = 0). */
