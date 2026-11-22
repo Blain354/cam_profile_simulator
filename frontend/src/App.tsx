@@ -219,6 +219,10 @@ export default function App() {
     setTimeout(() => setToast({ message: '', visible: false }), 3000);
   }, [setSubTab]);
 
+  const handleShowMobileResults = useCallback(() => {
+    setMobilePane('schematic');
+  }, []);
+
   const applyCamProfile = (p: StoredProfile) => {
     const merged = camParamsFromProfile(p.payload, p.note);
     setParams(merged);
@@ -606,10 +610,10 @@ export default function App() {
               </div>
             </div>
 
-            {/* Row 2 on phones: Mode switcher + Profile pill cleanly side-by-side. */}
-            <div className="flex w-full sm:w-auto min-w-0 items-center justify-between sm:justify-start gap-2">
+            {/* Row 2 on phones: Mode switcher + Profile pill cleanly side-by-side (wraps on very narrow screens when dirty). */}
+            <div className="flex w-full sm:w-auto min-w-0 flex-wrap sm:flex-nowrap items-center justify-between sm:justify-start gap-x-2 gap-y-1.5">
               <SubTabs label="Mode" value={subTab} options={activeTab === 'compliant' ? SOLVER_SUB_TABS : SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
-              <div className="min-w-0 flex-1 sm:flex-initial flex justify-end sm:justify-start">
+              <div className="ml-auto sm:ml-0 max-w-full flex justify-end sm:justify-start">
                 <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
                   onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }} />
               </div>
@@ -798,7 +802,7 @@ export default function App() {
       ) : activeTab === 'compliant' ? (
         <CompliantBars
           mode={subTab}
-          onOpenExplorer={() => setSubTab('compliant', 'explorer')}
+          onOpenExplorer={() => { setSubTab('compliant', 'explorer'); setMobilePane('schematic'); }}
           onProfileStateChange={setCompliantProfile}
           profileRef={compliantRef}
         />
@@ -807,7 +811,7 @@ export default function App() {
           key={activeTab}
           kind={activeTab === 'linkage' ? 'elbow' : activeTab}
           mode={subTab}
-          onOpenExplorer={() => setSubTab(activeTab, 'explorer')}
+          onOpenExplorer={() => { setSubTab(activeTab, 'explorer'); setMobilePane('schematic'); }}
           onProfileStateChange={(state) => setLinkageProfile({ type: activeTab === 'linkage' ? 'elbow' : activeTab, state })}
           profileRef={linkageRef}
           shared={{
@@ -826,6 +830,7 @@ export default function App() {
         <div className={camFinder ? 'cam-keepalive contents' : 'hidden'}>
           <KeptProfileBuilder
             onApplyToExplorer={handleApplyFromBuilder}
+            onSolveStart={handleShowMobileResults}
             explorerCompliance={params.compliance}
             explorerTubeModel={params.tube_model}
             explorerShoreA={params.tube_shore_a}

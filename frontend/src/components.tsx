@@ -602,7 +602,7 @@ export function VerticalSystemSvgDiagram({
   }, [canInteract]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!canInteract || e.button !== 0) return;
+    if (!canInteract || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.preventDefault();
     (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
     pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });

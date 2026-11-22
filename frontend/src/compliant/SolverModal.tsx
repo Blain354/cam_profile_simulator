@@ -634,59 +634,49 @@ export function SolverModal({
     >
       <div className="flex h-full max-h-[100dvh] w-full max-w-5xl flex-col overflow-hidden rounded-none border-0 sm:h-auto sm:max-h-[92vh] sm:rounded-2xl sm:border border-neutral-700 bg-neutral-900 text-neutral-100 shadow-2xl">
         {/* Header */}
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between border-b border-neutral-800 bg-neutral-950/60 px-3.5 py-3 sm:px-5 sm:py-3.5">
-          <div className="flex items-start sm:items-center justify-between gap-2 min-w-0 flex-1">
-            <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
-              <Sparkles className={`w-5 h-5 mt-0.5 sm:mt-0 shrink-0 ${running ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`} />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
-                  <h3 className="text-sm font-bold text-white truncate max-w-full">{job.name}</h3>
-                  <span className="shrink-0 rounded-full bg-neutral-800 border border-neutral-600 px-2 py-0.5 text-[10px] font-semibold text-neutral-200">
-                    {SOLVER_METHOD_META[activeMethod]?.short ?? activeMethod}
-                  </span>
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                      running
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                        : job.status === 'completed'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                          : job.status === 'cancelled'
-                            ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                            : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                    }`}
-                  >
-                    {job.status}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-[11px] text-neutral-400 truncate">
-                  Goal:{' '}
-                  <span className="text-neutral-200">
-                    {(() => {
-                      const gw = s?.goal_weights ?? job.goal_weights;
-                      const entries = gw ? Object.entries(gw).filter(([, w]) => w > 0) : [];
-                      if (entries.length > 1) {
-                        return entries
-                          .map(([k, w]) => `${Math.round(w * 100)}% ${SOLVER_GOAL_META[k as keyof typeof SOLVER_GOAL_META]?.short ?? k}`)
-                          .join(' + ');
-                      }
-                      return SOLVER_GOAL_META[job.goal]?.label ?? job.goal;
-                    })()}
-                  </span>
-                  {s ? ` · ${s.phase}` : ''}
-                </p>
+        <div className="flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-x-2 gap-y-2.5 border-b border-neutral-800 bg-neutral-950/60 px-3.5 py-3 sm:px-5 sm:py-3.5">
+          <div className="order-1 flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+            <Sparkles className={`w-5 h-5 mt-0.5 sm:mt-0 shrink-0 ${running ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+                <h3 className="text-sm font-bold text-white truncate max-w-full">{job.name}</h3>
+                <span className="shrink-0 rounded-full bg-neutral-800 border border-neutral-600 px-2 py-0.5 text-[10px] font-semibold text-neutral-200">
+                  {SOLVER_METHOD_META[activeMethod]?.short ?? activeMethod}
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                    running
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : job.status === 'completed'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : job.status === 'cancelled'
+                          ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                          : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                  }`}
+                >
+                  {job.status}
+                </span>
               </div>
+              <p className="mt-0.5 text-[11px] text-neutral-400 truncate">
+                Goal:{' '}
+                <span className="text-neutral-200">
+                  {(() => {
+                    const gw = s?.goal_weights ?? job.goal_weights;
+                    const entries = gw ? Object.entries(gw).filter(([, w]) => w > 0) : [];
+                    if (entries.length > 1) {
+                      return entries
+                        .map(([k, w]) => `${Math.round(w * 100)}% ${SOLVER_GOAL_META[k as keyof typeof SOLVER_GOAL_META]?.short ?? k}`)
+                        .join(' + ');
+                    }
+                    return SOLVER_GOAL_META[job.goal]?.label ?? job.goal;
+                  })()}
+                </span>
+                {s ? ` · ${s.phase}` : ''}
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="sm:hidden shrink-0 rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:border-neutral-500 hover:text-white"
-              aria-label="Close solver modal"
-            >
-              <X className="w-4 h-4" />
-            </button>
           </div>
 
-          <div className="flex items-center justify-end gap-2 shrink-0">
+          <div className="order-3 sm:order-2 flex w-full sm:w-auto items-center justify-end gap-2 shrink-0">
             {running ? (
               <button
                 type="button"
@@ -706,15 +696,16 @@ export function SolverModal({
                 New solve
               </button>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="hidden sm:inline-flex shrink-0 rounded-lg border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-500 hover:text-white"
-              aria-label="Close solver modal"
-            >
-              <X className="w-4 h-4" />
-            </button>
           </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="order-2 sm:order-3 shrink-0 rounded-lg border border-neutral-700 p-2 sm:p-1.5 text-neutral-400 hover:border-neutral-500 hover:text-white"
+            aria-label="Close solver modal"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Body */}

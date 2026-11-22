@@ -19,7 +19,7 @@ export function ProfilePill({ state, onImport, onSaveAsNew, onUpdate }: {
   return (
     <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap min-w-0 max-w-full">
       <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-0.5 sm:p-1 shadow-sm transition-colors ${dirty ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={label}>
-        <div className={`flex min-w-0 max-w-[7.5rem] sm:max-w-[12rem] items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-2.5 py-1.5 ${dirty ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
+        <div className={`flex min-w-[4.5rem] max-w-[8.5rem] sm:min-w-0 sm:max-w-[12rem] items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-2.5 py-1.5 ${dirty ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
           <span className="hidden sm:inline shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
           <span data-testid="profile-name" className={`min-w-0 truncate font-mono text-xs font-medium tabular-nums ${dirty ? 'text-amber-300' : name ? 'text-emerald-400' : 'text-neutral-400'}`}>
             {label}

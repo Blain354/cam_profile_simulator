@@ -540,6 +540,8 @@ interface SolverResult {
 
 interface ProfileBuilderProps {
   onApplyToExplorer: (params: SimulationParams) => void;
+  /** Called when a Finder solve starts so mobile viewports reveal the live progress & cancel view. */
+  onSolveStart?: () => void;
   /** Matches Explorer tab params (including the registered default config on load). */
   explorerCompliance: number;
   explorerTubeModel: TubeModel;
@@ -659,6 +661,7 @@ function searchGridPreviewFromParams(p: Record<string, unknown>) {
 
 export default function ProfileBuilder({
   onApplyToExplorer,
+  onSolveStart,
   explorerCompliance,
   explorerTubeModel,
   explorerShoreA,
@@ -1279,6 +1282,7 @@ export default function ProfileBuilder({
     solveAbortRef.current = ac;
     setSolving(true);
     setResult(null);
+    onSolveStart?.();
     for (const idx of Object.keys(candidateCacheTimersRef.current)) {
       clearCandidateCacheTimer(Number(idx));
     }
