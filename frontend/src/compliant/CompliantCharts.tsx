@@ -152,7 +152,7 @@ export function CompliantCharts({
   })();
 
   return (
-    <div className="lg:col-span-5 min-w-0 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">
+    <div data-pane="charts" className="lg:col-span-5 min-w-0 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">
       {/* Shared chart scale settings bar */}
       <div className="shrink-0 rounded-xl border border-neutral-700 bg-neutral-800/90 px-3 py-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
         <div className="flex items-center gap-1.5 text-neutral-300 font-semibold">
@@ -268,7 +268,7 @@ export function CompliantCharts({
                     allowDataOverflow={!c.autoX}
                     stroke="#888"
                     label={{
-                      value: `Time (s): safe stroke 0 → +${stroke.toFixed(2)} → 0 → -${stroke.toFixed(2)} → 0 mm`,
+                      value: `Time (s) · ±${stroke.toFixed(2)} mm stroke`,
                       position: 'bottom',
                       fill: '#888',
                       offset: 0,
@@ -298,7 +298,7 @@ export function CompliantCharts({
                     formatter={(v, name) => (name === 'Chamber pressure' ? `${Number(v).toFixed(1)} kPa` : `${Number(v).toFixed(3)} L/min`)}
                     labelFormatter={(l) => `t: ${Number(l).toFixed(2)} s`}
                   />
-                  <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                  <Legend verticalAlign="top" align="right" height={28} iconSize={9} wrapperStyle={{ fontSize: 10, lineHeight: '13px' }} />
                   <Line yAxisId="q" type="linear" dataKey="flowIn" name="Inflate (tube A)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
                   <Line yAxisId="q" type="linear" dataKey="flowOut" name="Deflate (tube B)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
                   <Line yAxisId="p" type="linear" dataKey="kpa" name="Chamber pressure" stroke={VIOLET} strokeWidth={2} dot={false} isAnimationActive={false} />

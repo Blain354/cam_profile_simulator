@@ -29,35 +29,98 @@ body { margin: 0; min-width: 320px; block-size: 100%; overflow: clip; background
 .cam-kit-header { flex-wrap: wrap; }
 .cam-kit-header > div { min-width: 0; max-width: 100%; flex-wrap: wrap; }
 /* Wide screens keep the header on one row: the context pill truncates instead of wrapping. */
-@media (min-width: 1440px) {
+@media (min-width: 1560px) {
   .cam-kit-header, .cam-kit-header > div, .cam-tab-row, .cam-tab-row .bui-tablist { flex-wrap: nowrap; }
   .cam-tab-row { flex-shrink: 0; }
 }
-@media (max-width: 1439px) {
+@media (max-width: 1559px) {
   .cam-tab-row .bui-tablist { flex-wrap: wrap; }
 }
-/* Below the desktop columns, panels stack at their own height and the area under
-   the header scrolls. The window itself stays fixed. */
+/* Below desktop, the top tabs stay on one horizontally scrollable row instead of stacking 3 rows tall. */
 @media (max-width: 1023px) {
+  .cam-tab-strip {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .cam-tab-strip::-webkit-scrollbar { display: none; }
+  .cam-tab-strip .bui-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* One active workspace pane fills the screen between header and bottom nav bar. */
   .cam-workspace > .flex-1,
   .cam-workspace > .cam-keepalive > .flex-1 {
     display: flex;
     flex-direction: column;
-    overflow: auto;
-    overscroll-behavior: contain;
+    overflow: hidden;
     min-block-size: 0;
   }
-  .cam-workspace > .flex-1 > div,
-  .cam-workspace > .cam-keepalive > .flex-1 > div {
-    flex: none;
+  .cam-workspace [data-pane-split="true"] {
+    display: contents;
+  }
+  .cam-workspace [data-pane] {
+    flex: 1 1 auto;
     width: 100%;
     min-width: 0;
-    min-block-size: min-content;
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .cam-workspace [data-pane="charts"],
+  .cam-workspace [data-pane="charts"] > .grid {
+    grid-auto-rows: minmax(240px, auto);
+  }
+  .cam-workspace[data-mobile-pane="controls"] [data-pane="schematic"],
+  .cam-workspace[data-mobile-pane="controls"] [data-pane="charts"],
+  .cam-workspace[data-mobile-pane="controls"] [data-pane="results"],
+  .cam-workspace[data-mobile-pane="schematic"] [data-pane="controls"],
+  .cam-workspace[data-mobile-pane="schematic"] [data-pane="charts"],
+  .cam-workspace[data-mobile-pane="charts"] [data-pane="controls"],
+  .cam-workspace[data-mobile-pane="charts"] [data-pane="schematic"] {
+    display: none;
   }
 }
 @media (max-width: 640px) {
-  .cam-kit-header { gap: 8px; }
-  .cam-kit-header > div { gap: 8px; max-width: 100%; }
+  .cam-kit-header {
+    gap: 6px;
+    padding: max(6px, env(safe-area-inset-top)) 10px 6px !important;
+  }
+  .cam-kit-header > div { gap: 6px; max-width: 100%; }
+}
+/* Mobile bottom pane switcher: flat surface, hairline border, keyboard-only focus ring. */
+.cam-mobile-nav {
+  background: var(--bui-surface);
+  border-top: 1px solid var(--bui-border);
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
+}
+.cam-mobile-nav__btn {
+  color: var(--bui-muted);
+  border-radius: var(--bui-r-sm, 8px);
+  transition: color 180ms ease-out, background-color 180ms ease-out;
+}
+.cam-mobile-nav__btn[aria-selected="true"] {
+  color: var(--bui-text);
+  background: var(--bui-surface-2);
+}
+.cam-mobile-nav__btn:focus-visible {
+  outline: 2px solid var(--bui-ring-color, var(--bui-blue));
+  outline-offset: -2px;
+}
+/* Landscape phones: keep fixed chrome slim so schematics and charts keep vertical room. */
+@media (max-height: 500px) and (max-width: 1023px) {
+  .cam-kit-header { padding: 4px 10px !important; gap: 4px; }
+  .cam-mobile-nav__btn { flex-direction: row; gap: 6px; min-height: 36px; }
+}
+/* Touch screens: give native range sliders a comfortable vertical hit target without blocking vertical scroll. */
+@media (pointer: coarse) {
+  .cam-workspace input[type="range"] {
+    min-height: 36px;
+    touch-action: pan-y;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

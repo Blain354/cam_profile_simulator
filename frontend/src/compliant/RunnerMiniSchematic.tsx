@@ -301,7 +301,7 @@ export function RunnerMiniSchematic({
   }, [simResult, params.stroke, attackAngleDeg, restLines.f, pinch]);
 
   return (
-    <div className="relative w-full sm:w-44 aspect-[1.12/1] shrink-0 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
+    <div className="relative w-full max-w-[260px] mx-auto sm:mx-0 sm:max-w-none sm:w-44 aspect-[1.12/1] shrink-0 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
       <svg
         viewBox={`${-(wall + margin)} ${-ceiling - margin} ${2 * (wall + margin)} ${ceiling + 2 * margin}`}
         className="h-full w-full select-none"

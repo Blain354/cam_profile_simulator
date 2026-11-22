@@ -363,7 +363,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
         <p className="text-xs text-neutral-400">Pushes the current cam configuration to Onshape, runs a translation, then downloads the resulting STL.</p>
             {/* Configuration summary */}
             <section className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-3">
-              <header className="flex items-center justify-between mb-2">
+              <header className="flex items-center justify-between gap-2 mb-2 min-w-0">
                 <h3 className="text-[11px] font-semibold text-neutral-400">Configuration to export</h3>
                 <span className="text-[11px] font-mono text-emerald-400 truncate max-w-[12rem]" title={configName}>{configName}</span>
               </header>
@@ -375,8 +375,8 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                   </div>
                 ))}
               </div>
-              <p className="mt-3 text-[11px] text-neutral-500">
-                Destination filename: <span className="font-mono text-neutral-300">{suggestedFilename}</span>
+              <p className="mt-3 text-[11px] text-neutral-500 break-words">
+                Destination filename: <span className="font-mono text-neutral-300 break-all">{suggestedFilename}</span>
               </p>
             </section>
 
@@ -444,9 +444,9 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                     >
                       <span className="text-neutral-600 shrink-0 w-10 tabular-nums">{String(line.percent).padStart(3, ' ')}%</span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate">{line.message}</p>
+                        <p className="break-words sm:truncate">{line.message}</p>
                         {line.detailsText && (
-                          <p className="truncate text-[10px] text-neutral-500">{line.detailsText}</p>
+                          <p className="break-all sm:truncate text-[10px] text-neutral-500">{line.detailsText}</p>
                         )}
                       </div>
                       <span className="text-neutral-600 shrink-0">
@@ -469,10 +469,10 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
 
             {/* Download button (job cached for ~10 min on backend) */}
             {result && phase !== 'running' && (
-              <div className="rounded-lg border border-emerald-700/40 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-100 flex items-center justify-between gap-3">
+              <div className="rounded-lg border border-emerald-700/40 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
                 <div className="min-w-0">
-                  <p className="font-semibold truncate">
-                    STL ready <span className="font-mono opacity-80">{result.filename}</span>
+                  <p className="font-semibold break-words sm:truncate">
+                    STL ready <span className="font-mono opacity-80 break-all">{result.filename}</span>
                   </p>
                   <p className="text-emerald-300/80 text-[11px]">
                     {(result.size_bytes / 1024).toFixed(1)} KB · {result.pushed_variables} variable(s) pushed
@@ -495,7 +495,7 @@ export default function StlExportModal({ isOpen, onClose, params, configName }: 
                     }
                   }}
                   disabled={busy}
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/60 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-600/30 transition-colors"
+                  className="w-full sm:w-auto justify-center shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/60 bg-emerald-600/20 px-3 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-600/30 transition-colors"
                 >
                   <FolderDown className="h-4 w-4" /> Download STL
                 </Button>

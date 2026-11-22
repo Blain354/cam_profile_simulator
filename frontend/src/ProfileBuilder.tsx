@@ -540,6 +540,8 @@ interface SolverResult {
 
 interface ProfileBuilderProps {
   onApplyToExplorer: (params: SimulationParams) => void;
+  /** Called when a Finder solve starts so mobile viewports reveal the live progress & cancel view. */
+  onSolveStart?: () => void;
   /** Matches Explorer tab params (including the registered default config on load). */
   explorerCompliance: number;
   explorerTubeModel: TubeModel;
@@ -659,6 +661,7 @@ function searchGridPreviewFromParams(p: Record<string, unknown>) {
 
 export default function ProfileBuilder({
   onApplyToExplorer,
+  onSolveStart,
   explorerCompliance,
   explorerTubeModel,
   explorerShoreA,
@@ -1279,6 +1282,7 @@ export default function ProfileBuilder({
     solveAbortRef.current = ac;
     setSolving(true);
     setResult(null);
+    onSolveStart?.();
     for (const idx of Object.keys(candidateCacheTimersRef.current)) {
       clearCandidateCacheTimer(Number(idx));
     }
@@ -1824,7 +1828,7 @@ export default function ProfileBuilder({
                       )}
                     </div>
                     {chartSim && (
-                      <div className="border-l border-neutral-700 pl-6">
+                      <div className="w-full sm:w-auto border-t border-neutral-700 pt-4 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-6">
                         <div className="text-[10px] text-neutral-500 font-bold mb-2">Dynamic Stats</div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div><div className="text-[10px] text-neutral-500">Total Volume</div><div className="text-sm font-mono font-bold text-amber-400">{chartSim.total_volume_ml.toFixed(2)} mL</div></div>
@@ -1835,7 +1839,7 @@ export default function ProfileBuilder({
                     )}
                     <div className="order-first basis-full flex justify-end -mb-2">
                       <Button variant="ghost" onClick={handleApply}
-                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-all shadow-lg flex items-center gap-2">
+                        className="w-full sm:w-auto justify-center px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-all shadow-lg flex items-center gap-2">
                         Apply to Explorer <ArrowRight className="w-4 h-4" />
                       </Button>
                     </div>
@@ -1849,7 +1853,7 @@ export default function ProfileBuilder({
   return (
     <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 relative min-h-0">
       {/* Left: Input Parameters */}
-      <div className="lg:col-span-3 xl:col-span-3 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
+      <div data-pane="controls" className="lg:col-span-3 xl:col-span-3 min-w-0 bg-neutral-800 p-3 sm:p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0">
         <div className="flex items-center gap-3 mb-6 min-w-0">
           <Crosshair className="w-5 h-5 text-emerald-500 shrink-0" />
           <h2 className="text-lg font-bold text-white tracking-tight truncate">Profile Builder</h2>
@@ -2250,11 +2254,15 @@ export default function ProfileBuilder({
       </div>
 
       {/* Right: Results & Preview */}
-      <div className="lg:col-span-9 xl:col-span-9 min-w-0 flex flex-col gap-4 min-h-0">
+      <div
+        data-pane={result && chartSim && builderViewParams ? undefined : 'results'}
+        data-pane-split={result && chartSim && builderViewParams ? 'true' : undefined}
+        className="lg:col-span-9 xl:col-span-9 min-w-0 flex flex-col gap-4 min-h-0"
+      >
         <AnimatePresence mode="wait">
           {solving && !result ? (
             <motion.div key="solving" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-neutral-700 bg-neutral-800/80 p-8">
+              className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-neutral-700 bg-neutral-800/80 p-5 sm:p-8">
               <LoadingState
                 state="solving"
                 label={solveProgress?.message ?? 'Solving…'}
@@ -2309,15 +2317,16 @@ export default function ProfileBuilder({
             </motion.div>
           ) : result ? (
             <motion.div key="results" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              data-pane-split={chartSim && builderViewParams ? 'true' : undefined}
               className="flex flex-col gap-4 min-h-0 flex-1">
 
               {/* Schematic and charts: the same columns as the other tabs */}
               {chartSim && builderViewParams ? (
-                <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-9 gap-4">
+                <div data-pane-split="true" className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-9 gap-4">
                   <CamSchematicCard id="finder" data={chartSim} params={builderViewParams} travel={travel} details={schematicDetails} setDetails={setSchematicDetails}
                     speedNote={`${(chartSim.linear_speed_mm_s * 60 / builderViewParams.lead_screw_pitch).toFixed(0)} RPM × ${builderViewParams.lead_screw_pitch} mm pitch`}
                     domain={builderChartSettings.vertical} onDomainChange={(next) => setBuilderChartSettings((prev) => ({ ...prev, vertical: next }))} />
-                  <div className="lg:col-span-5 min-w-0 flex flex-col gap-4 min-h-0 overflow-y-auto pr-1">
+                  <div data-pane="charts" className="lg:col-span-5 min-w-0 flex flex-col gap-4 min-h-0 overflow-y-auto pr-1">
                     {statsBar}
                     <div className="flex min-h-[210px] flex-1 flex-col">
                     <ChartCard title="Flow vs Y" {...builderCard('flowY')} className="flex-1">
@@ -2412,7 +2421,7 @@ export default function ProfileBuilder({
             </motion.div>
           ) : (
             <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              className="flex-1 flex items-center justify-center">
+              className="flex-1 flex items-center justify-center p-6 min-h-[240px]">
               <div className="text-center space-y-3">
                 <Crosshair className="w-12 h-12 text-neutral-700 mx-auto" />
                 <p className="text-neutral-500 text-sm">Configure parameters and click <strong className="text-emerald-400">Solve</strong> to find optimal cam profile.</p>

@@ -250,7 +250,8 @@ export function CompliantSchematic({
   const margin = 2;
   const poly = (pts: Pt[]) => pts.map(([x, yy]) => `${x.toFixed(3)},${(-yy).toFixed(3)}`).join(' ');
   const dot = (p: Pt, color: string, kind: 'anchor' | 'junction' | 'pinch', label: string) => (
-    <g className="cursor-grab" onPointerDown={(e) => { drag.current = { kind }; svgRef.current?.setPointerCapture(e.pointerId); }}>
+    <g className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind }; svgRef.current?.setPointerCapture(e.pointerId); }}>
+      <circle cx={p[0]} cy={-p[1]} r={1.05} fill="transparent" />
       <circle cx={p[0]} cy={-p[1]} r={0.45} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />
       <text x={p[0] + 0.5} y={-p[1] - 0.45} fill={color} fontSize={0.55} fontWeight="bold">{label}</text>
     </g>
@@ -342,91 +343,93 @@ export function CompliantSchematic({
   );
 
   return (
-    <div className="lg:col-span-4 min-w-0 bg-neutral-800 p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
-      <div className="flex items-center gap-2 mb-3 shrink-0 min-w-0">
+    <div data-pane="schematic" className="lg:col-span-4 min-w-0 bg-neutral-800 p-3 sm:p-4 rounded-xl border border-neutral-700 flex flex-col min-h-0 overflow-y-auto">
+      <div className="flex flex-wrap items-center gap-2 mb-3 shrink-0 min-w-0">
         <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Schematic</h3>
-        <Button
-          variant="ghost"
-          type="button"
-          aria-pressed={details}
-          onClick={() => setDetails((v) => !v)}
-          className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}
-        >
-          {details ? 'Hide details' : 'Details'}
-        </Button>
-        <Button
-          variant="ghost"
-          type="button"
-          aria-pressed={showNodes}
-          onClick={() => setShowNodes((v) => !v)}
-          className={`shrink-0 px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${showNodes ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}
-        >
-          Spline nodes
-        </Button>
-        <div className="relative shrink-0" ref={gifPopoverRef}>
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
           <Button
             variant="ghost"
             type="button"
-            disabled={!result?.lines}
-            aria-expanded={gifMenuOpen}
-            aria-haspopup="dialog"
-            onClick={handleToggleGifMenu}
-            title="Export a looping GIF of the running mechanism (without spline nodes)"
-            className={`inline-flex items-center gap-1.5 shrink-0 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/70 disabled:opacity-40 ${gifMenuOpen ? 'border-amber-500/70 bg-amber-500/20 text-amber-200' : 'bg-neutral-800 border-neutral-600 text-neutral-300 hover:border-amber-500/50 hover:text-amber-200'}`}
+            aria-pressed={details}
+            onClick={() => setDetails((v) => !v)}
+            className={`shrink-0 px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${details ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}
           >
-            {gifExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Film className="w-3.5 h-3.5" />}
-            GIF
+            {details ? 'Hide details' : 'Details'}
           </Button>
-          {gifMenuOpen && (
-            <div
-              role="dialog"
-              aria-label="Export mechanism GIF"
-              className="absolute right-0 top-full mt-1.5 z-30 w-60 rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-xl space-y-2.5"
+          <Button
+            variant="ghost"
+            type="button"
+            aria-pressed={showNodes}
+            onClick={() => setShowNodes((v) => !v)}
+            className={`shrink-0 px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm ${showNodes ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:text-white'}`}
+          >
+            Spline nodes
+          </Button>
+          <div className="relative shrink-0" ref={gifPopoverRef}>
+            <Button
+              variant="ghost"
+              type="button"
+              disabled={!result?.lines}
+              aria-expanded={gifMenuOpen}
+              aria-haspopup="dialog"
+              onClick={handleToggleGifMenu}
+              title="Export a looping GIF of the running mechanism (without spline nodes)"
+              className={`inline-flex items-center gap-1.5 shrink-0 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors border shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/70 disabled:opacity-40 ${gifMenuOpen ? 'border-amber-500/70 bg-amber-500/20 text-amber-200' : 'bg-neutral-800 border-neutral-600 text-neutral-300 hover:border-amber-500/50 hover:text-amber-200'}`}
             >
-              <div className="space-y-0.5">
-                <div className="text-xs font-semibold text-neutral-100">Mechanism GIF</div>
-                <p className="text-[11px] text-neutral-400 leading-snug">
-                  Real-time loop ({carriageSpeed.toFixed(2)} mm/s). Spline nodes are never included.
-                </p>
-              </div>
-              <label className="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2 cursor-pointer select-none">
-                <span className="text-xs text-neutral-200">Include details</span>
-                <input
-                  type="checkbox"
-                  checked={gifIncludeDetails}
-                  onChange={(e) => setGifIncludeDetails(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded accent-amber-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/70"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={gifExporting || !result?.lines}
-                onClick={handleExportMechanismGif}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/70"
+              {gifExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Film className="w-3.5 h-3.5" />}
+              GIF
+            </Button>
+            {gifMenuOpen && (
+              <div
+                role="dialog"
+                aria-label="Export mechanism GIF"
+                className="absolute right-0 top-full mt-1.5 z-30 w-[min(15rem,calc(100vw-2.5rem))] rounded-xl border border-neutral-700 bg-neutral-900 p-3 shadow-xl space-y-2.5"
               >
-                {gifExporting ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Encoding… {gifPct}%
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-3.5 h-3.5" />
-                    Download GIF
-                  </>
+                <div className="space-y-0.5">
+                  <div className="text-xs font-semibold text-neutral-100">Mechanism GIF</div>
+                  <p className="text-[11px] text-neutral-400 leading-snug">
+                    Real-time loop ({carriageSpeed.toFixed(2)} mm/s). Spline nodes are never included.
+                  </p>
+                </div>
+                <label className="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950/70 px-2.5 py-2 cursor-pointer select-none">
+                  <span className="text-xs text-neutral-200">Include details</span>
+                  <input
+                    type="checkbox"
+                    checked={gifIncludeDetails}
+                    onChange={(e) => setGifIncludeDetails(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded accent-amber-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/70"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={gifExporting || !result?.lines}
+                  onClick={handleExportMechanismGif}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/70"
+                >
+                  {gifExporting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Encoding… {gifPct}%
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5" />
+                      Download GIF
+                    </>
+                  )}
+                </button>
+                {gifError && (
+                  <p className="text-[11px] text-rose-300" role="alert">
+                    {gifError}
+                  </p>
                 )}
-              </button>
-              {gifError && (
-                <p className="text-[11px] text-rose-300" role="alert">
-                  {gifError}
-                </p>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="mb-3 flex shrink-0 flex-col gap-1">
-        <div className="flex items-center justify-between gap-2 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <label htmlFor="compliant-y" className="font-medium text-neutral-300">Carriage Y</label>
           {result != null && result.travel_sign < 0 && (
             <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the chart. This part pulls, so its carriage moves the other way from a part that pushes for the same Y: the motor turns the other way.">
@@ -435,7 +438,7 @@ export function CompliantSchematic({
           )}
           <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
         </div>
-        <div className="order-last flex items-center justify-between gap-2 pt-1">
+        <div className="order-last flex flex-wrap items-center gap-2 pt-1">
           <Button
             variant="ghost"
             type="button"
@@ -443,7 +446,7 @@ export function CompliantSchematic({
             disabled={carriageSpeed <= 0}
             aria-pressed={playing}
             title="Run the carriage back and forth over the full stroke at the loaded motor speed"
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}
+            className={`flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-bold disabled:opacity-50 ${playing ? 'border-amber-500 bg-amber-600 text-white' : 'border-amber-500/60 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}
           >
             {playing ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />} {playing ? 'Stop' : 'Oscillate'}
           </Button>
@@ -453,12 +456,12 @@ export function CompliantSchematic({
             onClick={onCenter}
             disabled={!playing && yPose === 0}
             title="Bring the carriage back to Y = 0"
-            className="rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50"
+            className="shrink-0 whitespace-nowrap rounded-lg border border-neutral-700 px-3 py-1 text-xs font-bold text-neutral-200 hover:bg-neutral-700/40 disabled:opacity-50"
           >
             Center
           </Button>
           <FlowParticlesSwitch note="Full density and speed at the flow through the full bore. The chamber is not drawn: it is taken as below the drawing, so the air runs down tube A (supply) and up tube B (exhaust)." />
-          <span className="text-right text-xs text-neutral-400">
+          <span className="w-full sm:w-auto sm:ml-auto text-left sm:text-right text-xs text-neutral-400">
             {loadedRpm.toFixed(0)} RPM under load ({MOTOR_RPM} × {Math.round(LOAD_FACTOR * 100)} %), {carriageSpeed.toFixed(2)} mm/s
           </span>
         </div>
@@ -474,15 +477,16 @@ export function CompliantSchematic({
         />
       </div>
 
-      <div className="min-h-[180px] w-full flex-1 overflow-hidden rounded-lg border border-neutral-800/80 bg-neutral-900/60">
+      <div className="min-h-[240px] lg:min-h-[180px] w-full flex-1 overflow-hidden rounded-lg border border-neutral-800/80 bg-neutral-900/60">
         <svg
           ref={svgRef}
           viewBox={`${-(wall + margin)} ${-ceiling - margin} ${2 * (wall + margin)} ${ceiling + 2 * margin}`}
-          className="h-full w-full select-none touch-none"
+          className="h-full w-full select-none touch-pan-y"
           role="img"
           aria-label="Compliant bars"
           onPointerMove={onPointerMove}
           onPointerUp={() => { drag.current = null; }}
+          onPointerCancel={() => { drag.current = null; }}
           onPointerLeave={() => { drag.current = null; }}
         >
           <defs>
@@ -733,8 +737,9 @@ export function CompliantSchematic({
                 const end = index === 0 ? chords[member.id][0] : chords[member.id][1];
                 const isHovered = hoveredBound === `${member.id}_${index + 1}`;
                 return (
-                  <g key={`${member.id}-${index}`} className="cursor-grab" onPointerDown={(e) => { drag.current = { kind: 'handle', member: member.id, index }; svgRef.current?.setPointerCapture(e.pointerId); }}>
+                  <g key={`${member.id}-${index}`} className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind: 'handle', member: member.id, index }; svgRef.current?.setPointerCapture(e.pointerId); }}>
                     <line x1={end[0]} y1={-end[1]} x2={h[0]} y2={-h[1]} stroke={member.color} strokeOpacity={isHovered ? 1 : 0.7} strokeWidth={isHovered ? 0.14 : 0.06} />
+                    <circle cx={h[0]} cy={-h[1]} r={1.05} fill="transparent" />
                     {isHovered && (
                       <circle cx={h[0]} cy={-h[1]} r={0.75} fill={member.color} fillOpacity={0.25} stroke={member.color} strokeWidth={0.12} />
                     )}

@@ -357,6 +357,8 @@ export function DelayedHoverHint({
   }, [hintsEnabled, clearTimer]);
 
   const scheduleOpen = useCallback(() => {
+    // Touch screens have no true hover: avoid stuck floating tooltips after a tap.
+    if (typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches) return;
     clearTimer();
     timerRef.current = setTimeout(() => {
       const el = wrapRef.current;
@@ -446,14 +448,14 @@ export function ParameterSlider({
   const hintsEnabled = useContext(TooltipHintsEnabledContext);
   const inner = (
     <div className={`space-y-2 ${disabled ? 'pointer-events-none opacity-45' : ''}`}>
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-2">
         <label
-          className={`text-sm tracking-tight flex items-center gap-2 ${isModified ? 'text-amber-400 font-bold' : 'text-neutral-300 font-medium'}`}
+          className={`min-w-0 flex-1 text-sm tracking-tight flex flex-wrap items-center gap-x-2 gap-y-0.5 ${isModified ? 'text-amber-400 font-bold' : 'text-neutral-300 font-medium'}`}
         >
-          {label}
+          <span>{label}</span>
           {isModified && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 hidden xl:block" />}
           {secondaryValue && (
-            <span className={`ml-2 text-xs font-normal ${isModified ? 'text-amber-500/70' : 'text-neutral-500'}`}>
+            <span className={`text-xs font-normal ${isModified ? 'text-amber-500/70' : 'text-neutral-500'}`}>
               ({secondaryValue})
             </span>
           )}
@@ -469,7 +471,7 @@ export function ParameterSlider({
             const v = parseFloat(e.target.value);
             if (!isNaN(v)) onChange(v);
           }}
-          className="w-20 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-right text-neutral-100 font-mono disabled:cursor-not-allowed"
+          className="w-20 shrink-0 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-right text-neutral-100 font-mono disabled:cursor-not-allowed"
         />
       </div>
       <input
@@ -495,9 +497,9 @@ export function ParameterSlider({
 
 export function StatRow({ label, value, highlight = false }: { label: string; value: React.ReactNode; highlight?: boolean }) {
   return (
-    <div className="flex justify-between items-center bg-neutral-900/50 p-2 rounded">
-      <span className="text-sm text-neutral-400">{label}</span>
-      <span className={`text-sm font-mono font-medium ${highlight ? 'text-fuchsia-400' : 'text-neutral-200'}`}>{value}</span>
+    <div className="flex justify-between items-center gap-2 bg-neutral-900/50 p-2 rounded">
+      <span className="min-w-0 text-sm text-neutral-400">{label}</span>
+      <span className={`shrink-0 text-right text-sm font-mono font-medium ${highlight ? 'text-fuchsia-400' : 'text-neutral-200'}`}>{value}</span>
     </div>
   );
 }
@@ -565,10 +567,18 @@ export function VerticalSystemSvgDiagram({
 
   const svgRef = useRef<SVGSVGElement>(null);
   const panRef = useRef<{ id: number | null; last: { x: number; y: number } | null }>({ id: null, last: null });
+  const pointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map());
+  const pinchDistRef = useRef<number | null>(null);
 
   const canInteract = details && (!isPreview || allowInteractInPreview);
 
-  useEffect(() => { if (!details) panRef.current = { id: null, last: null }; }, [details]);
+  useEffect(() => {
+    if (!details) {
+      panRef.current = { id: null, last: null };
+      pointersRef.current.clear();
+      pinchDistRef.current = null;
+    }
+  }, [details]);
 
   useEffect(() => {
     const el = svgRef.current;
@@ -592,15 +602,46 @@ export function VerticalSystemSvgDiagram({
   }, [canInteract]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!canInteract || e.button !== 0) return;
+    if (!canInteract || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.preventDefault();
     (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
-    const p = svgClientToWorld(e.currentTarget, e.clientX, e.clientY);
-    panRef.current = { id: e.pointerId, last: p };
+    pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    if (pointersRef.current.size === 1) {
+      const p = svgClientToWorld(e.currentTarget, e.clientX, e.clientY);
+      panRef.current = { id: e.pointerId, last: p };
+      pinchDistRef.current = null;
+    } else if (pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      pinchDistRef.current = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      panRef.current = { id: null, last: null };
+    }
   }, [canInteract]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!canInteract || panRef.current.id === null || panRef.current.last === null) return;
+    if (!canInteract) return;
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+    }
+    if (pointersRef.current.size === 2 && pinchDistRef.current != null) {
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      if (dist > 4 && pinchDistRef.current > 4) {
+        const z = pinchDistRef.current / dist;
+        const midX = (a.clientX + b.clientX) / 2;
+        const midY = (a.clientY + b.clientY) / 2;
+        const pt = svgClientToWorld(e.currentTarget, midX, midY);
+        const { bw } = boundsRef.current;
+        setVb((prev) => {
+          const newW = Math.min(Math.max(prev.w * z, bw * 0.02), bw * 25);
+          const zAct = newW / prev.w;
+          const newH = prev.h * zAct;
+          return { x: pt.x - (pt.x - prev.x) * zAct, y: pt.y - (pt.y - prev.y) * zAct, w: newW, h: newH };
+        });
+        pinchDistRef.current = dist;
+      }
+      return;
+    }
+    if (panRef.current.id === null || panRef.current.last === null) return;
     if (e.pointerId !== panRef.current.id) return;
     const p = svgClientToWorld(e.currentTarget, e.clientX, e.clientY);
     const last = panRef.current.last;
@@ -609,9 +650,15 @@ export function VerticalSystemSvgDiagram({
   }, [canInteract]);
 
   const onPointerEnd = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (panRef.current.id !== e.pointerId) return;
+    pointersRef.current.delete(e.pointerId);
     try { (e.currentTarget as SVGSVGElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    panRef.current = { id: null, last: null };
+    if (pointersRef.current.size < 2) pinchDistRef.current = null;
+    if (pointersRef.current.size === 1) {
+      const [[id, pt]] = [...pointersRef.current.entries()];
+      panRef.current = { id, last: svgClientToWorld(e.currentTarget, pt.clientX, pt.clientY) };
+    } else if (panRef.current.id === e.pointerId || pointersRef.current.size === 0) {
+      panRef.current = { id: null, last: null };
+    }
   }, []);
 
   // Dimension lines in cam coordinates: in the live view they move with the cam. Without a ramp the
@@ -653,7 +700,7 @@ export function VerticalSystemSvgDiagram({
         </Button>
       )}
       <svg ref={svgRef} viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} preserveAspectRatio="xMidYMid meet"
-        className={`w-full h-full scale-y-[-1] touch-none select-none ${canInteract ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        className={`w-full h-full scale-y-[-1] select-none ${canInteract ? 'touch-none cursor-grab active:cursor-grabbing' : ''}`}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
         onDoubleClick={(e) => { if (!canInteract) return; e.preventDefault(); resetView(); }}>
 

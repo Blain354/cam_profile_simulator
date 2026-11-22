@@ -17,10 +17,10 @@ export function ProfilePill({ state, onImport, onSaveAsNew, onUpdate }: {
   const { name, dirty, canSave } = state;
   const label = name ?? 'Unsaved';
   return (
-    <div className="flex items-center gap-2 flex-nowrap min-w-0">
-      <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-1 shadow-sm transition-colors ${dirty ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={label}>
-        <div className={`flex min-w-0 max-w-[12rem] items-center gap-2 rounded-lg px-2.5 py-1.5 ${dirty ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
-          <span className="shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
+    <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap min-w-0 max-w-full">
+      <div className={`inline-flex min-w-0 max-w-full items-center gap-0 rounded-xl border p-0.5 sm:p-1 shadow-sm transition-colors ${dirty ? 'border-amber-500/35 bg-amber-950/20' : 'border-neutral-700/80 bg-neutral-800/50'}`} title={label}>
+        <div className={`flex min-w-[4.5rem] max-w-[8.5rem] sm:min-w-0 sm:max-w-[12rem] items-center gap-1.5 sm:gap-2 rounded-lg px-2 sm:px-2.5 py-1.5 ${dirty ? 'bg-amber-500/5' : 'bg-neutral-900/40'}`}>
+          <span className="hidden sm:inline shrink-0 text-[10px] font-semibold text-neutral-500">Profile</span>
           <span data-testid="profile-name" className={`min-w-0 truncate font-mono text-xs font-medium tabular-nums ${dirty ? 'text-amber-300' : name ? 'text-emerald-400' : 'text-neutral-400'}`}>
             {label}
           </span>
@@ -250,7 +250,7 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
 
   return (
     <Modal open={open} onClose={onClose} title={PROFILE_TYPE_LABEL[type]} size="lg">
-      <div className="flex h-[min(62vh,640px)] min-h-0 flex-col overflow-hidden md:flex-row">
+      <div className="flex h-[min(74dvh,640px)] md:h-[min(62vh,640px)] min-h-0 flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-neutral-800 md:w-60 md:flex-none md:border-b-0 md:border-r">
           <div className="border-b border-neutral-800/70 px-3 pb-2 pt-1">
             <Input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" aria-label="Search profiles"
@@ -262,7 +262,7 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
                 <Button variant="ghost" type="button" onMouseEnter={() => { void show(name); }}
                   onClick={() => { setSelected(name); void show(name); }}
                   onDoubleClick={() => { void openProfile(name); }} title={`${name} (double-click to open)`}
-                  className={`min-w-0 w-full max-w-full text-left px-3 py-2 rounded-lg text-xs transition-all pr-10 ${selected === name ? 'bg-blue-600 text-white font-bold' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
+                  className={`!flex !flex-col !items-stretch !justify-start min-w-0 w-full max-w-full text-left px-3 py-2 rounded-lg text-xs transition-all pr-12 ${selected === name ? 'bg-blue-600 text-white font-bold' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
                   <div className="flex items-start justify-between gap-2 w-full min-w-0">
                     <span className="font-mono break-all [overflow-wrap:anywhere] text-left leading-snug">{name}</span>
                     {defaultName === name && (
@@ -279,7 +279,7 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
                   )}
                 </Button>
                 <Button variant="ghost" type="button" onClick={(e) => { e.stopPropagation(); void remove(name); }}
-                  className="absolute right-2 top-2 p-1.5 rounded-md text-neutral-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all"
+                  className="absolute right-1.5 top-1.5 p-1.5 rounded-md text-neutral-500 hover:text-red-400 hover:bg-red-500/10 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus:opacity-100 transition-all"
                   title={`Delete ${name}`} aria-label={`Delete ${name}`}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
@@ -291,7 +291,7 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
               </div>
             )}
           </div>
-          <div className="p-4 border-t border-neutral-800">
+          <div className="p-2.5 md:p-4 border-t border-neutral-800">
             <Button variant="ghost" type="button" disabled={!selected} onClick={() => { if (selected) void openProfile(selected); }}
               className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold transition-all shadow-lg">
               Open
@@ -299,7 +299,7 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
           </div>
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="p-4 border-b border-neutral-800 flex justify-between items-center gap-2 bg-neutral-900/40">
+          <div className="px-3 py-2.5 md:p-4 border-b border-neutral-800 flex justify-between items-center gap-2 bg-neutral-900/40">
             <h4 className="text-xs font-bold text-neutral-500">Preview</h4>
             {selected && (
               <Button variant="ghost" type="button" onClick={() => void makeDefault(selected)} disabled={defaultName === selected}
@@ -316,14 +316,14 @@ export function ProfileImportModal({ open, onClose, type, renderPreview, onOpen,
                   <PreviewBoundary key={preview.name}><PreviewOf render={renderPreview} payload={preview.payload} /></PreviewBoundary>
                 </div>
                 {preview.note.trim() ? (
-                  <div className="shrink-0 p-4 bg-neutral-900 border-t border-neutral-800 space-y-1">
+                  <div className="shrink-0 p-3 md:p-4 bg-neutral-900 border-t border-neutral-800 space-y-1">
                     <div className="text-[10px] text-neutral-500 font-bold">Note</div>
                     <p className="text-xs text-neutral-200 leading-relaxed whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{preview.note.trim()}</p>
                   </div>
                 ) : null}
               </>
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-neutral-600 text-sm font-medium">Hover a profile to preview it</div>
+              <div className="w-full h-full flex items-center justify-center p-4 text-center text-neutral-600 text-sm font-medium">Select a profile to preview it</div>
             )}
           </div>
         </div>
