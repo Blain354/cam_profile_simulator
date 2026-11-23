@@ -610,6 +610,15 @@ def run_time_budgeted_solve(
             "time_budget_s": time_budget_s,
             "max_evals": max_evals or None,
             "seed": seed,
+            # What ended the run. Only a seeded run that ended on its evaluation budget gives the same design again.
+            "stop_reason": (
+                None if not final
+                else "cancelled" if (cancel_event is not None and cancel_event.is_set())
+                else "evaluations" if (max_evals > 0 and tested >= max_evals)
+                else "time"
+            ),
+            "repeatable": bool(final and seed is not None and max_evals > 0 and tested >= max_evals
+                               and not (cancel_event is not None and cancel_event.is_set())),
             "progress": 1.0 if final else min(0.99, max(elapsed / time_budget_s, (tested / max_evals) if max_evals > 0 else 0.0)),
             "evals_per_sec": round(tested / elapsed, 1),
             "best_score": round(float(best_sc), 4) if best_sc is not None else None,

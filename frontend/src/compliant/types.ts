@@ -527,7 +527,7 @@ export const SOLVER_METHOD_META: Record<SolverMethod, {
     label: 'CMA-ES (adaptive, repeatable)',
     short: 'CMA-ES',
     description: 'Starts on your current design and learns which variables move together (thickness against handle offsets, say), then restarts elsewhere with a larger population. Same seed and evaluation budget, same answer.',
-    defaults: { max_evals_k: 0, seed: 1, sigma0: 0.2, pop_size: 0, workers: 0 },
+    defaults: { max_evals_k: 15, seed: 1, sigma0: 0.2, pop_size: 0, workers: 0 },
   },
   hybrid: {
     label: 'Hybrid (LHS + Gradient + Nelder-Mead)',
@@ -729,6 +729,12 @@ export interface SolveSummary {
   time_budget_s: number;
   progress: number;
   evals_per_sec: number;
+  max_evals?: number | null;
+  seed?: number | null;
+  /** Set on the final summary: 'evaluations', 'time' or 'cancelled'. */
+  stop_reason?: string | null;
+  /** True when a seeded run ended on its evaluation budget: launching it again gives the same design. */
+  repeatable?: boolean;
   best_score: number | null;
   best_dx_at_025_mm: number | null;
   best_slope: number | null;

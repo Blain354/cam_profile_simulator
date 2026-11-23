@@ -198,6 +198,8 @@ class CmaesTests(unittest.TestCase):
         self.assertEqual(one["summary"]["seed"], 5)
         self.assertEqual(one["summary"]["max_evals"], 240)
         self.assertTrue(one["found"])
+        self.assertEqual(one["summary"]["stop_reason"], "evaluations")
+        self.assertTrue(one["summary"]["repeatable"])
         self.assertEqual(one["params"], again["params"])
         self.assertEqual(one["params"], spread["params"])
         self.assertNotEqual(one["params"], self.solve(workers=1, seed=6)["params"])
@@ -221,6 +223,9 @@ class CmaesTests(unittest.TestCase):
         thousands = run_time_budgeted_solve(CompliantParams(), BOUNDS, time_budget_s=0.6, method="cmaes",
                                             method_params={"max_evals_k": 1, "seed": 2, "workers": 1})
         self.assertEqual(thousands["summary"]["max_evals"], 1000)
+        # The clock ended that one before its thousand evaluations, and it says so.
+        self.assertEqual(thousands["summary"]["stop_reason"], "time")
+        self.assertFalse(thousands["summary"]["repeatable"])
 
 
 if __name__ == "__main__":

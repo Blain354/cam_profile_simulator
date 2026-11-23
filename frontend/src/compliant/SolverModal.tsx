@@ -264,7 +264,7 @@ function MethodParamsPanel({
 
       {m === 'cmaes' && (
         <div className="space-y-3">
-          {numField('max_evals_k', 'Evaluation budget (thousands, 0 = time budget only)', 0, 200, 5, 'Stops after this many thousand designs. With a seed, the same budget gives the same answer; the time budget stays as a ceiling.')}
+          {numField('max_evals_k', 'Evaluation budget (thousands, 0 = time budget only)', 0, 200, 5, 'Stops after this many thousand designs. With a seed, the same budget gives the same answer. The time budget stays as a ceiling: if it ends the run first, the result is not repeatable, and the run says so.')}
           {numField('seed', 'Seed (0 = random)', 0, 20, 1, 'Same seed, same evaluation budget, same result. Change it to explore another path.')}
           {numField('sigma0', 'First step (fraction of each range)', 0.05, 0.5, 0.05, 'How far the first run looks around your current design.')}
           {numField('pop_size', 'Population (0 = automatic)', 0, 120, 4, 'Designs per generation. Automatic is 2 × (4 + 3 ln d), doubled at each far restart.')}
@@ -777,6 +777,14 @@ export function SolverModal({
               </div>
               <div className="font-mono text-neutral-400">
                 {s ? `${s.evals_per_sec.toFixed(0)} eval/s · wave ${s.wave}` : 'initializing…'}
+                {s?.stop_reason === 'evaluations' && (
+                  <span className={s.repeatable ? 'text-emerald-300' : 'text-neutral-400'}>
+                    {s.repeatable ? ` · stopped on the evaluation budget: repeatable (seed ${s.seed})` : ' · stopped on the evaluation budget (random seed)'}
+                  </span>
+                )}
+                {s?.stop_reason === 'time' && (
+                  <span className="text-amber-300"> · stopped on the time budget: another run can differ</span>
+                )}
               </div>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-950">
