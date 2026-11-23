@@ -763,6 +763,41 @@ class ComputeTests(unittest.TestCase):
         self.assertFalse(strict.motor_ok)
         self.assertFalse(strict.passes)
 
+    def test_motor_stall_before_airflow_is_rejected(self):
+        from backend.compliant_solver import _classify_rejections, run_time_budgeted_solve
+
+        # Stiff bar with weak motor stalls at ~±0.08 mm while the tube is still pinched shut (0% flow, no bandwidth).
+        stalled_no_flow = CompliantParams(
+            stroke=1.5, l_thickness=2.8, r_thickness=2.8, f_thickness=1.6,
+            junction_x=-4.2, junction_y=12.5, motor_torque_mnm=2.0,
+        )
+        res = compute_compliant(stalled_no_flow, fast=False)
+        self.assertTrue(res.feasible)
+        self.assertTrue(res.plastic_ok)
+        self.assertTrue(res.motor_ok)
+        self.assertFalse(res.flow_ok)
+        self.assertFalse(res.passes)
+        self.assertEqual(res.max_flow_l_min, 0.0)
+        self.assertIsNone(res.chamber_bandwidth_hz)
+        self.assertIn("before air flows", res.message.lower())
+        self.assertIn("stall_no_flow", _classify_rejections(res))
+        self.assertLess(admission_score(res), -1.0e6)
+
+        # Solver must never accept a stall-before-airflow design as valid and must record stall_no_flow rejections.
+        out = run_time_budgeted_solve(
+            stalled_no_flow,
+            {"l_thickness": (2.4, 3.0), "r_thickness": (2.4, 3.0)},
+            time_budget_s=0.6,
+            goal="pass_freq_bw",
+            seed=5,
+        )
+        self.assertFalse(out["found"])
+        self.assertEqual(out["feasible"], 0)
+        rej = {r["key"]: r["count"] for r in out["summary"]["rejection_stats"]}
+        self.assertGreater(rej.get("stall_no_flow", 0), 0)
+        for runner in out["runners"]:
+            self.assertGreaterEqual(runner["max_flow_frac"] or 0.0, 0.02 - 1e-9)
+
 
 if __name__ == "__main__":
     unittest.main()

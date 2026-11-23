@@ -66,7 +66,7 @@ except ImportError:
     from . import tube_model as tube_law
 
 
-CONSTRAINT_KEYS = ("stress", "motor_stall", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
+CONSTRAINT_KEYS = ("stress", "stall_no_flow", "motor_stall", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
 
 SOLVER_METHODS = ("hybrid", "brute_force", "evolutionary", "local_refine")
 
@@ -82,6 +82,13 @@ def _classify_rejections(result: CompliantResult) -> List[str]:
         reasons.append("no_open")
     if not result.plastic_ok:
         reasons.append("stress")
+    if not getattr(result, "flow_ok", True) and result.feasible:
+        stroke_max = max((abs(v) for v in result.Y_positions), default=0.0)
+        eff = getattr(result, "effective_stroke_mm", None)
+        if eff is not None and stroke_max > 0.0 and eff < stroke_max - 1e-6:
+            reasons.append("stall_no_flow")
+        elif "no_open" not in reasons:
+            reasons.append("no_open")
     if not getattr(result, "motor_ok", True):
         reasons.append("motor_stall")
     if not getattr(result, "sealed_at_y0", True):

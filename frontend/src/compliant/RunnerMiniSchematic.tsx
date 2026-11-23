@@ -5,8 +5,9 @@ import { apiFetch } from '../components';
 import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import {
-  LOAD_FACTOR, MOTOR_RPM, SCREW_PITCH_MM, anchorPoint, bezier, deflected, deflectedPoint, effectivePinchY, interp,
-  nearestToWall, pinchContactX, strokeOutlinePath,
+  LOAD_FACTOR, MOTOR_RPM, SCREW_PITCH_MM, activeStallY, anchorPoint, bezier, deflected, deflectedPoint,
+  effectivePinchY, initialDirectionForPlay, interp, isCarriageStalled, nearestToWall, pinchContactX,
+  stepCarriageMotion, strokeOutlinePath,
 } from './types';
 import type {
   CompliantParams, CompliantResult, Member, Pt, Runner, SolverConstraints,
@@ -97,19 +98,36 @@ export function RunnerMiniSchematic({
   const backdropBlurId = `mini-backdrop-blur-${filterUid}`;
   const carriageClipId = `mini-carriage-clip-${filterUid}`;
   const primaryMaskId = `mini-primary-mask-${filterUid}`;
-  const motion = useRef({ d: 0, speed: (MOTOR_RPM * LOAD_FACTOR * SCREW_PITCH_MM) / 60, stroke: params.stroke });
+  const motion = useRef<{
+    y: number;
+    dir: 1 | -1;
+    speed: number;
+    stroke: number;
+    stallY: number | null;
+  }>({ y: 0, dir: 1, speed: (MOTOR_RPM * LOAD_FACTOR * (params.lead_screw_pitch || SCREW_PITCH_MM)) / 60, stroke: params.stroke, stallY: null });
+
+  const stallY = activeStallY(simResult, constraints, params.stroke);
+  const stalled = isCarriageStalled(yPose, stallY);
 
   // Reset playback and pick up cached simulation whenever the card displays a different runner.
   useEffect(() => {
     setPlaying(false);
     setYPose(0);
     setLoading(false);
-    motion.current.d = 0;
+    motion.current.y = 0;
+    motion.current.dir = 1;
     motion.current.stroke = params.stroke;
-    setSimResult(resultCache.current.get(runnerKey) ?? null);
-  }, [runnerKey, params.stroke, resultCache]);
+    motion.current.speed = (MOTOR_RPM * LOAD_FACTOR * (params.lead_screw_pitch || SCREW_PITCH_MM)) / 60;
+    const cached = resultCache.current.get(runnerKey) ?? null;
+    motion.current.stallY = activeStallY(cached, constraints, params.stroke);
+    setSimResult(cached);
+  }, [runnerKey, params.stroke, params.lead_screw_pitch, constraints, resultCache]);
 
-  // Triangle-wave oscillation loop matching the main schematic's carriage speed.
+  useEffect(() => {
+    motion.current.stallY = stallY;
+  }, [stallY]);
+
+  // Triangle-wave oscillation loop matching the main schematic's carriage speed, stopping at ±stallY.
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
@@ -121,12 +139,19 @@ export function RunnerMiniSchematic({
         setPlaying(false);
         return;
       }
-      if (last != null) m.d = (m.d + ((now - last) / 1000) * m.speed) % (4 * m.stroke);
+      const dt = last != null ? Math.min(0.1, (now - last) / 1000) : 0;
       last = now;
+      const next = stepCarriageMotion(m.y, m.dir, dt, m.speed, m.stroke, m.stallY);
+      m.y = next.y;
+      m.dir = next.dir;
+      if (next.stalled) {
+        setYPose(next.y);
+        setPlaying(false);
+        return;
+      }
       if (now - shown > 28) {
         shown = now;
-        const s = m.stroke;
-        setYPose(m.d <= s ? m.d : m.d <= 3 * s ? 2 * s - m.d : m.d - 4 * s);
+        setYPose(m.y);
       }
       raf = requestAnimationFrame(step);
     };
@@ -138,13 +163,25 @@ export function RunnerMiniSchematic({
     if (playing) {
       setPlaying(false);
       setYPose(0);
-      motion.current.d = 0;
+      motion.current.y = 0;
+      motion.current.dir = 1;
       return;
     }
-    if (simResult) {
-      motion.current.d = 0;
+    const startWithResult = (resObj: CompliantResult) => {
+      const activeS = activeStallY(resObj, constraints, params.stroke);
       motion.current.stroke = params.stroke;
+      motion.current.stallY = activeS;
+      if (activeS != null && activeS <= 1e-6) {
+        motion.current.y = 0;
+        setYPose(0);
+        return;
+      }
+      motion.current.y = yPose;
+      motion.current.dir = initialDirectionForPlay(yPose, activeS);
       setPlaying(true);
+    };
+    if (simResult) {
+      startWithResult(simResult);
       return;
     }
     setLoading(true);
@@ -159,9 +196,7 @@ export function RunnerMiniSchematic({
         const parsed = data as CompliantResult;
         resultCache.current.set(runnerKey, parsed);
         setSimResult(parsed);
-        motion.current.d = 0;
-        motion.current.stroke = params.stroke;
-        setPlaying(true);
+        startWithResult(parsed);
       }
     } finally {
       setLoading(false);
@@ -270,8 +305,9 @@ export function RunnerMiniSchematic({
   const contactB = nearestToWall(secondaryLines.f, 1);
   const rPin = Math.max(params.f_thickness / 2, 0.18);
   const maxFlow = simResult ? Math.max(0, ...simResult.flow_a.map((f) => f ?? 0)) : 0;
-  const flowA = simResult && playing ? interp(yPose, simResult.Y_positions, simResult.flow_a) : 0;
-  const flowB = simResult && playing ? interp(-yPose, simResult.Y_positions, simResult.flow_a) : 0;
+  const showActiveFlow = playing || Math.abs(yPose) > 1e-6;
+  const flowA = simResult && showActiveFlow ? interp(yPose, simResult.Y_positions, simResult.flow_a) : 0;
+  const flowB = simResult && showActiveFlow ? interp(-yPose, simResult.Y_positions, simResult.flow_a) : 0;
 
   const attackAngleDeg = simResult?.attack_angle_deg ?? runner.attack_angle_deg ?? null;
 
@@ -367,14 +403,14 @@ export function RunnerMiniSchematic({
           />
         ))}
 
-        {/* Tubes A & B with flow particles (shown during playback only) */}
+        {/* Tubes A & B with flow particles (shown during playback or while held at stall) */}
         {miniTube({
           sign: -1, contact: contactA, rPin, wall, od: params.tube_od, id: params.tube_id,
-          top: ceiling, flow: flowA, maxFlow, sweep: tubeSweep, showParticles: playing,
+          top: ceiling, flow: flowA, maxFlow, sweep: tubeSweep, showParticles: playing || stalled,
         })}
         {miniTube({
           sign: 1, contact: contactB, rPin, wall, od: params.tube_od, id: params.tube_id,
-          top: ceiling, flow: flowB, maxFlow, sweep: tubeSweep, showParticles: playing,
+          top: ceiling, flow: flowB, maxFlow, sweep: tubeSweep, showParticles: playing || stalled,
         })}
 
         {/* Back plane: minimal vertical lead-screw axis + dashed hollow outline & ultra-faint dashed skeleton */}
@@ -410,12 +446,14 @@ export function RunnerMiniSchematic({
           </g>
         </g>
         <polygon
+          data-carriage="mini"
+          data-stalled={stalled ? 'true' : 'false'}
           points={carriagePoly}
-          fill="#1b1e25"
-          fillOpacity={0.55}
-          stroke="var(--bui-text)"
-          strokeOpacity={0.38}
-          strokeWidth={0.07}
+          fill={stalled ? '#ef4444' : '#1b1e25'}
+          fillOpacity={stalled ? 0.58 : 0.55}
+          stroke={stalled ? '#f87171' : 'var(--bui-text)'}
+          strokeOpacity={stalled ? 0.9 : 0.38}
+          strokeWidth={stalled ? 0.14 : 0.07}
         />
 
         {/* Front plane: primary mechanism with frosted interior blur clipped to sharp strokes */}
@@ -433,7 +471,14 @@ export function RunnerMiniSchematic({
               strokeDasharray="0.55 0.25 0.12 0.25"
             />
             {renderSecondaryMinimal(0.4, 0.14)}
-            <polygon points={carriagePoly} fill="#1b1e25" fillOpacity={0.65} stroke="var(--bui-text)" strokeOpacity={0.45} strokeWidth={0.11} />
+            <polygon
+              points={carriagePoly}
+              fill={stalled ? '#ef4444' : '#1b1e25'}
+              fillOpacity={stalled ? 0.68 : 0.65}
+              stroke={stalled ? '#f87171' : 'var(--bui-text)'}
+              strokeOpacity={stalled ? 0.9 : 0.45}
+              strokeWidth={stalled ? 0.15 : 0.11}
+            />
           </g>
         </g>
         <g data-layer="mini-primary" opacity={0.82}>
@@ -477,6 +522,16 @@ export function RunnerMiniSchematic({
           title="Pinch foot attack angle (α)"
         >
           α {attackAngleDeg > 0 ? '+' : ''}{attackAngleDeg.toFixed(0)}°
+        </span>
+      )}
+
+      {/* Motor stall pill when animation stops at max torque */}
+      {stalled && stallY != null && (
+        <span
+          className="pointer-events-none absolute bottom-1.5 left-1.5 rounded bg-red-950/90 border border-red-500/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-red-300"
+          title={`Motor stalled at ±${stallY.toFixed(2)} mm`}
+        >
+          Stall ±{stallY.toFixed(2)}
         </span>
       )}
 

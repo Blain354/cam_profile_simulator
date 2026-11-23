@@ -5,8 +5,9 @@ import { SolverModal } from './compliant/SolverModal';
 import { SolverGoalBudgetControls } from './compliant/CompliantControls';
 import {
   COMPLIANT_DEFAULTS, DEFAULT_CONSTRAINTS, DEFAULT_SOLVER_GOAL_CONFIG, DEFAULT_SOLVER_METHOD_CONFIG,
-  allowableStressMpa, anchorPoint, deflected, deflectedPoint, fromCompliantProfilePayload,
-  memberChords, pinchContactX, pinchX, screwThrustAvailableN,
+  activeStallY, allowableStressMpa, anchorPoint, deflected, deflectedPoint, fromCompliantProfilePayload,
+  initialDirectionForPlay, isCarriageStalled, memberChords, pinchContactX, pinchX,
+  screwThrustAvailableN, stepCarriageMotion,
 } from './compliant/types';
 import type { Runner, SolveJobState } from './compliant/types';
 
@@ -726,4 +727,105 @@ test('fromCompliantProfilePayload migrates legacy v1 max_y0_flex_mm=0.05 and req
   });
   expect(v2.constraints.max_y0_flex_mm).toBe(0.12);
   expect(v2.constraints.require_no_stall_in_stroke).toBe(true);
+});
+
+test('carriage stall motion helpers stop at exact ±stallY and reverse on replay', () => {
+  expect(activeStallY({ stall_y_mm: 0.65 }, { motor_limited_stress: true }, 1.5)).toBeCloseTo(0.65, 6);
+  expect(activeStallY({ stall_y_mm: 1.8 }, { motor_limited_stress: true }, 1.5)).toBeNull();
+  expect(activeStallY({ stall_y_mm: 0.65 }, { motor_limited_stress: false }, 1.5)).toBeNull();
+
+  // Approaching +stallY clamps cleanly to exact stallY and flags stalled = true.
+  const hitPos = stepCarriageMotion(0.6, 1, 0.2, 0.7, 1.5, 0.65);
+  expect(hitPos.stalled).toBe(true);
+  expect(hitPos.y).toBeCloseTo(0.65, 6);
+  expect(isCarriageStalled(hitPos.y, 0.65)).toBe(true);
+
+  // Replaying from +stallY reverses direction (-1) and moves cleanly away from stall until -stallY.
+  expect(initialDirectionForPlay(0.65, 0.65)).toBe(-1);
+  const backedOff = stepCarriageMotion(0.65, -1, 0.1, 0.7, 1.5, 0.65);
+  expect(backedOff.stalled).toBe(false);
+  expect(backedOff.y).toBeCloseTo(0.58, 6);
+  expect(isCarriageStalled(backedOff.y, 0.65)).toBe(false);
+
+  const hitNeg = stepCarriageMotion(-0.6, -1, 0.2, 0.7, 1.5, 0.65);
+  expect(hitNeg.stalled).toBe(true);
+  expect(hitNeg.y).toBeCloseTo(-0.65, 6);
+  expect(initialDirectionForPlay(-0.65, 0.65)).toBe(1);
+});
+
+test('carriage oscillation stops at exact stall Y and tints the carriage red', async () => {
+  const line = {
+    x: [-8, -6], y: [10, 10.5],
+    x_per_y: [0, 0.2], y_per_y: [0, 0],
+    x_per_n: [0, 0], y_per_n: [0, 0],
+    thickness: 1,
+  };
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/simulate')) {
+      return new Response(JSON.stringify({
+        feasible: true, passes: true, message: 'ok',
+        Y_positions: [-1.5, 0, 1.5],
+        flow_a: [0, 0, 10], flow_b: [10, 0, 0],
+        gap_a: [0.4, 0.85, 2.1], gap_b: [2.1, 0.92, 0.4],
+        gap_rigid_a: [0.4, 0.85, 2.1],
+        closed_gap: 0.9, full_open_gap: 2.0,
+        flow_slope_mean: 5, flow_slope_max: 7,
+        max_stress_mpa: 20, stress_margin: 2,
+        plastic_ok: true, motor_ok: true, flow_ok: true, shell_ok: true, pivot_ok: true, pinch_ok: true, rotation_ok: true,
+        shell_clearance_mm: 1, pivot_clearance_mm: 1, pinch_ceiling_margin_mm: 5.5, max_rotation_deg: 5,
+        wall_x: 9.5, pivot_height_y0: 8, pinch_x: -8.1, travel_sign: 1,
+        force_a: [12.3, 4.56, 0.2], force_b: [0.2, 6.78, 12.3],
+        stress_a: [20, 10, 5], stress_b: [5, 10, 20],
+        stall_y_mm: 0.65, effective_stroke_mm: 0.65,
+        lines: { l: line, r: line, f: line },
+        anchor: [-4.8, 0.5], junction: [-5.5, 12], pinch: [-8.1, 10.5], pivot: [4, 8],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const rafQueue: Array<{ id: number; cb: FrameRequestCallback }> = [];
+  let nextRafId = 1;
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    const id = nextRafId++;
+    rafQueue.push({ id, cb });
+    return id;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    const idx = rafQueue.findIndex((item) => item.id === id);
+    if (idx >= 0) rafQueue.splice(idx, 1);
+  });
+
+  const { container, findByText, getByRole, queryByText } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
+  expect(await findByText('gap 0.850, 4.56 N')).toBeTruthy();
+
+  const carriage = () => container.querySelector('polygon[data-carriage="main"]')!;
+  expect(carriage().getAttribute('data-stalled')).toBe('false');
+  expect(queryByText('Motor stalled · max torque')).toBeNull();
+
+  // Start oscillating from Y = 0; advance frames past Y = 0.65 mm (at ~0.708 mm/s, 100 ms steps reach 0.65 in ~10 frames).
+  const oscBtn = getByRole('button', { name: /Oscillate/ });
+  fireEvent.click(oscBtn);
+  expect(oscBtn.getAttribute('aria-pressed')).toBe('true');
+
+  let t = 0;
+  for (let i = 0; i < 20 && rafQueue.length > 0; i++) {
+    const batch = rafQueue.splice(0, rafQueue.length);
+    for (const item of batch) item.cb(t);
+    t += 100;
+  }
+
+  await waitFor(() => {
+    expect(carriage().getAttribute('data-stalled')).toBe('true');
+  });
+  expect(carriage().getAttribute('fill')).toBe('#ef4444');
+  expect(getByRole('button', { name: /Oscillate/ }).getAttribute('aria-pressed')).toBe('false');
+  expect(container.textContent).toContain('0.65 mm');
+  expect(container.textContent).toContain('Motor stalled · max torque');
+  expect(container.querySelector('[data-layer="stall-indicator"]')?.textContent).toContain('Stall · max torque');
+
+  // Clicking Center returns carriage to Y = 0 and clears the red stall tint.
+  fireEvent.click(getByRole('button', { name: 'Center' }));
+  expect(carriage().getAttribute('data-stalled')).toBe('false');
+  expect(queryByText('Motor stalled · max torque')).toBeNull();
 });

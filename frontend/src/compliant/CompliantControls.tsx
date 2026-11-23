@@ -1595,7 +1595,7 @@ export function ResultsAccordion({
                   : ''
               }`
           }
-          highlight={result?.max_flow_frac != null && result.max_flow_frac < 0.5}
+          highlight={result?.flow_ok === false || (result?.max_flow_frac != null && result.max_flow_frac < 0.5)}
         />
         <StatRow
           label="Motor stalls at"

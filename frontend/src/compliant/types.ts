@@ -285,6 +285,70 @@ export function triangleWaveY(distanceMm: number, stroke: number): number {
   return d <= s ? d : d <= 3 * s ? 2 * s - d : d - 4 * s;
 }
 
+/** Active motor stall threshold |Y| inside ±stroke, or null if motor clears the full stroke (or motor limit is off). */
+export function activeStallY(
+  result: Pick<CompliantResult, 'stall_y_mm'> | null | undefined,
+  constraints: Pick<SolverConstraints, 'motor_limited_stress'> | null | undefined,
+  stroke: number,
+): number | null {
+  if ((constraints?.motor_limited_stress ?? true) === false) return null;
+  const s = result?.stall_y_mm;
+  if (s == null || !Number.isFinite(s)) return null;
+  const clamped = Math.max(0, s);
+  return clamped < stroke - 1e-6 ? clamped : null;
+}
+
+/** Whether the carriage at `yPose` has hit (or exceeded) an active motor stall inside ±stroke. */
+export function isCarriageStalled(yPose: number, stallY: number | null): boolean {
+  return stallY != null && Math.abs(yPose) >= stallY - 1e-4;
+}
+
+/** Choose initial playback direction: backs away from a stall stop if already stalled at ±stallY. */
+export function initialDirectionForPlay(yPose: number, stallY: number | null): 1 | -1 {
+  if (stallY != null) {
+    if (yPose >= stallY - 1e-4) return -1;
+    if (yPose <= -stallY + 1e-4) return 1;
+  }
+  return yPose >= 0 ? 1 : -1;
+}
+
+/**
+ * Advance constant-speed carriage oscillation by `dt` seconds.
+ * When `stallY` is active (< stroke), stops at the exact ±stallY boundary with `stalled: true`.
+ */
+export function stepCarriageMotion(
+  y: number,
+  dir: 1 | -1,
+  dt: number,
+  speed: number,
+  stroke: number,
+  stallY: number | null,
+): { y: number; dir: 1 | -1; stalled: boolean } {
+  if (stallY != null && stallY < stroke - 1e-6) {
+    if (stallY <= 1e-6) {
+      return { y: 0, dir, stalled: true };
+    }
+    const nextY = y + dir * dt * speed;
+    if (dir > 0 && nextY >= stallY) {
+      return { y: stallY, dir, stalled: true };
+    }
+    if (dir < 0 && nextY <= -stallY) {
+      return { y: -stallY, dir, stalled: true };
+    }
+    return { y: nextY, dir, stalled: false };
+  }
+  let nextY = y + dir * dt * speed;
+  let nextDir = dir;
+  if (nextY >= stroke) {
+    nextY = Math.max(-stroke, stroke - (nextY - stroke));
+    nextDir = -1;
+  } else if (nextY <= -stroke) {
+    nextY = Math.min(stroke, -stroke + (-stroke - nextY));
+    nextDir = 1;
+  }
+  return { y: nextY, dir: nextDir, stalled: false };
+}
+
 export interface ConstantSpeedStep {
   y: number;
   /** Exact GIF-quantized frame duration in ms (multiple of 10 ms, >= 20 ms). */
@@ -401,6 +465,7 @@ export interface CompliantResult {
   chamber_cycle_freq_hz?: number | null;
   chamber_bandwidth_hz?: number | null;
   motor_ok?: boolean;
+  flow_ok?: boolean;
   thrust?: (number | null)[];
   thrust_available_n?: number | null;
   peak_thrust_op_n?: number | null;

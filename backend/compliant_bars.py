@@ -286,6 +286,7 @@ class CompliantResult:
     chamber_cycle_freq_hz: Optional[float] = None
     chamber_bandwidth_hz: Optional[float] = None
     motor_ok: bool = True
+    flow_ok: bool = True
     thrust: List[Optional[float]] = None
     thrust_available_n: Optional[float] = None
     peak_thrust_op_n: Optional[float] = None
@@ -343,7 +344,7 @@ def _empty(message: str, **kw) -> CompliantResult:
         feasible=False, message=message, Y_positions=[], flow_a=[], flow_b=[],
         gap_a=[], gap_b=[], gap_rigid_a=[], closed_gap=0.0, full_open_gap=0.0,
         flow_slope_mean=None, flow_slope_max=None, max_stress_mpa=None, stress_margin=None,
-        plastic_ok=False, motor_ok=False, shell_ok=False, pivot_ok=False, pinch_ok=False, rotation_ok=False, crossing_ok=False,
+        plastic_ok=False, motor_ok=False, flow_ok=False, shell_ok=False, pivot_ok=False, pinch_ok=False, rotation_ok=False, crossing_ok=False,
         shell_clearance_mm=None, pivot_clearance_mm=None, pinch_ceiling_margin_mm=None,
         max_rotation_deg=None, wall_x=0.0, pivot_height_y0=0.0, anchor_x=0.0, pivot_x=0.0,
         pinch_x=0.0, travel_sign=1.0, force_a=[], force_b=[], stress_a=[], stress_b=[],
@@ -1065,10 +1066,13 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     per_mm2 = _compute_orifice_mass_flow_rate(1.0, p_up, P_ATM) / (p_up / (R_AIR * T_AMB)) * 60.0 * 1000.0
     flow = area_a * per_mm2
     flow_reach = area_a_reach * per_mm2
-    q_max = float(np.pi * (p.tube_id / 2.0) ** 2 * per_mm2)
+    full_bore_area = float(np.pi * (p.tube_id / 2.0) ** 2)
+    q_max = float(full_bore_area * per_mm2)
     pos = y >= 0.0
     y_pos = y[pos]
     flow_pos_reach = flow_reach[pos]
+    max_area_reach = float(np.nanmax(area_a_reach[pos])) if np.any(pos) else 0.0
+    max_area_frac = float(max_area_reach / full_bore_area) if full_bore_area > 1e-12 else 0.0
     max_flow_l_min = float(np.nanmax(flow_pos_reach)) if flow_pos_reach.size else 0.0
     max_flow_frac = float(max_flow_l_min / q_max) if q_max > 1e-12 else 0.0
     slope_mean, slope_max, _a, _b = _flow_derivatives(y_pos, flow_pos_reach, q_max, None)
@@ -1149,9 +1153,22 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     chamber_cycle_freq_hz, chamber_bandwidth_hz = _chamber_bandwidth_from_t100(chamber_t100_ms)
 
     opens = bool(abs(gain) > 1e-4)
+    # Require real airflow (at least 2% of full bore, matching y_open_mm) within reachable stroke / before stall.
+    flow_ok = bool(opens and max_area_frac >= 0.02 - 1e-9)
     notes = []
     if not opens:
         notes.append("The carriage motion does not open the tube.")
+    elif not flow_ok:
+        if motor_limit_active and stall_y_mm is not None and stall_y_mm < p.stroke - 1e-9:
+            notes.append(
+                "Motor stalls at Y = ±%.2f mm before air flows (%.1f%% bore open at stall; needs ≥ 2%%)."
+                % (stall_y_mm, max_area_frac * 100.0)
+            )
+        else:
+            notes.append(
+                "No airflow within ±%.2f mm stroke (%.1f%% bore open; needs ≥ 2%%)."
+                % (p.stroke, max_area_frac * 100.0)
+            )
     if not plastic_ok:
         limit_desc = (
             "%.1f MPa limit (%.0f%% of %g MPa)" % (allowable_stress, stress_factor * 100.0, p.member_strength_mpa)
@@ -1211,7 +1228,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     if not crossing_ok:
         notes.append("Members cross each other.")
     passes = bool(
-        opens and plastic_ok and motor_ok and shell_ok and pivot_ok and pinch_ok
+        opens and flow_ok and plastic_ok and motor_ok and shell_ok and pivot_ok and pinch_ok
         and rotation_ok and junction_ok and sealed_at_y0 and tube_ok and crossing_ok
     )
     message = "ok" if passes else " ".join(notes) or "This shape does not pass."
@@ -1290,6 +1307,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         chamber_cycle_freq_hz=chamber_cycle_freq_hz,
         chamber_bandwidth_hz=chamber_bandwidth_hz,
         motor_ok=motor_ok,
+        flow_ok=flow_ok,
         thrust=_nan_to_none(thrust_op),
         thrust_available_n=thrust_avail,
         peak_thrust_op_n=peak_thrust_op_n,
@@ -1412,6 +1430,10 @@ def admission_score(
             if result.peak_thrust_op_n is not None and result.thrust_available_n is not None:
                 over_f = max(0.0, float(result.peak_thrust_op_n) - float(result.thrust_available_n))
             pen += 80.0 + over_f * 5.0
+        if not getattr(result, "flow_ok", True):
+            shortfall = max(0.0, 0.02 - float(result.max_flow_frac or 0.0))
+            dx_reach = max(0.0, float(result.dx_at_025_mm or 0.0))
+            pen += 250.0 + shortfall * 5000.0 + max(0.0, 0.25 - dx_reach) * 200.0
         if result.shell_clearance_mm is not None and not result.shell_ok:
             pen += max(0.0, c.min_shell_clearance_mm - result.shell_clearance_mm) * 100.0
         if result.pivot_clearance_mm is not None and not result.pivot_ok:

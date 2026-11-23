@@ -5,8 +5,8 @@ import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import { applyFrostedBackdrop } from './solvePreviewRenderer';
 import {
-  CARRIAGE_SPEED_MM_S, MEMBERS, buildConstantSpeedCycle, deflected, deflectedPoint, interp, interpNullable,
-  nearestToWall, pinchContactX, strokeOutlinePath,
+  CARRIAGE_SPEED_MM_S, MEMBERS, activeStallY, buildConstantSpeedCycle, deflected, deflectedPoint, interp,
+  interpNullable, isCarriageStalled, nearestToWall, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
   CompliantParams, CompliantResult, Member, Pt, SolverConstraints,
@@ -37,6 +37,9 @@ const COLORS = {
   screw: '#d4a94a',
   carriageFill: '#3b404c',
   carriageStroke: '#d4d4d8',
+  stallFill: '#ef4444',
+  stallStroke: '#f87171',
+  stallText: '#fca5a5',
   datum: '#60a5fa',
   text: '#f4f4f5',
   mutedText: '#a1a1aa',
@@ -99,6 +102,7 @@ export function drawMechanismFrame(
     constraints: SolverConstraints;
     tubeSweep: TubeSweep | null;
     yPose: number;
+    stalled?: boolean;
     includeDetails: boolean;
     includeParticles: boolean;
     particlePhaseA: number;
@@ -106,7 +110,7 @@ export function drawMechanismFrame(
   },
 ) {
   const {
-    params, result, constraints, tubeSweep, yPose,
+    params, result, constraints, tubeSweep, yPose, stalled = false,
     includeDetails, includeParticles, particlePhaseA, particlePhaseB,
   } = opts;
 
@@ -400,12 +404,12 @@ export function drawMechanismFrame(
   });
 
   traceCarriage(ctx);
-  ctx.fillStyle = COLORS.carriageFill;
-  ctx.globalAlpha = 0.56;
+  ctx.fillStyle = stalled ? COLORS.stallFill : COLORS.carriageFill;
+  ctx.globalAlpha = stalled ? 0.58 : 0.56;
   ctx.fill();
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = COLORS.carriageStroke;
-  ctx.lineWidth = 1.1;
+  ctx.strokeStyle = stalled ? COLORS.stallStroke : COLORS.carriageStroke;
+  ctx.lineWidth = stalled ? 1.8 : 1.1;
   ctx.stroke();
 
   // Horizontal datum h0
@@ -436,6 +440,10 @@ export function drawMechanismFrame(
 
   for (const m of MEMBERS) {
     drawMemberLine(ctx, linesA[m.id], params[`${m.id}_thickness`], m.color, 0.4, 1);
+  }
+
+  if (stalled) {
+    drawOutlinedText(ctx, 'Stall · max torque', toX(0), toY(carriageY), COLORS.stallText, 'center', 10);
   }
 
   // Details overlay (strictly controlled by includeDetails; NEVER spline nodes)
@@ -575,7 +583,11 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
   if (!ctx) throw new Error('Canvas 2D context unavailable.');
 
   const speed = carriageSpeed && carriageSpeed > 0 ? carriageSpeed : CARRIAGE_SPEED_MM_S;
-  const steps = buildConstantSpeedCycle(params.stroke, speed, 120);
+  const stallY = activeStallY(result, constraints, params.stroke);
+  const effectiveAmp = stallY != null ? Math.max(0.05, stallY) : params.stroke;
+  const steps = stallY != null && stallY <= 1e-6
+    ? [{ y: 0, delayMs: 600, dir: 1 as const }]
+    : buildConstantSpeedCycle(effectiveAmp, speed, 120);
   const maxFlow = Math.max(1e-6, ...result.flow_a.map((f) => f ?? 0));
 
   const frames: GifFrameInput[] = [];
@@ -584,7 +596,9 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const yPose = step.y;
+    const yPose = stallY != null ? Math.max(-stallY, Math.min(stallY, step.y)) : step.y;
+    const isStalled = isCarriageStalled(yPose, stallY);
+    const delayMs = isStalled ? Math.max(step.delayMs, 600) : step.delayMs;
     const flowA = Math.max(0, interp(yPose, result.Y_positions, result.flow_a));
     const flowB = Math.max(0, interp(-yPose, result.Y_positions, result.flow_a));
     const fracA = Math.min(1, flowA / maxFlow);
@@ -596,6 +610,7 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
       constraints,
       tubeSweep,
       yPose,
+      stalled: isStalled,
       includeDetails,
       includeParticles,
       particlePhaseA: phaseA,
@@ -603,10 +618,10 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
     });
 
     const img = ctx.getImageData(0, 0, width, height);
-    frames.push({ rgba: new Uint8ClampedArray(img.data), delayMs: step.delayMs });
+    frames.push({ rgba: new Uint8ClampedArray(img.data), delayMs });
 
     // Advance particles over the exact real-time step duration (A: -1, B: +1)
-    const dt = step.delayMs / 1000;
+    const dt = delayMs / 1000;
     phaseA = (phaseA - particleSpeed(fracA, 'side') * dt) % 1;
     phaseB = (phaseB + particleSpeed(fracB, 'side') * dt) % 1;
 

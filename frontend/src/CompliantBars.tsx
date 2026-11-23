@@ -12,8 +12,9 @@ import type { ChartDomainSettings } from './components';
 import type { SubTab } from './SubTabs';
 import {
   BUILTIN_MATERIALS, COMPLIANT_DEFAULTS, CONTEXT_VAR_KEYS, LIMITS, LOAD_FACTOR,
-  MEMBERS, MOTOR_RPM, SCREW_PITCH_MM, SHAPE_KEYS, SOLVER_METHOD_META, STORE, defaultQuadrantMap,
-  effectivePinchY, fromCompliantProfilePayload, loadStore, mm,
+  MEMBERS, MOTOR_RPM, SCREW_PITCH_MM, SHAPE_KEYS, SOLVER_METHOD_META, STORE, activeStallY,
+  defaultQuadrantMap, effectivePinchY, fromCompliantProfilePayload, initialDirectionForPlay,
+  loadStore, mm, stepCarriageMotion,
 } from './compliant/types';
 import type {
   ChartScaleSettings, CompliantChartKey, CompliantChartSettings, CompliantParams, CompliantResult,
@@ -132,10 +133,17 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
 
   const [y, setY] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const motion = useRef({ d: 0, speed: 0, stroke: COMPLIANT_DEFAULTS.stroke });
+  const motion = useRef<{
+    y: number;
+    dir: 1 | -1;
+    speed: number;
+    stroke: number;
+    stallY: number | null;
+  }>({ y: 0, dir: 1, speed: 0, stroke: COMPLIANT_DEFAULTS.stroke, stallY: null });
   const { drawn: tubeSweep, stale: tubeStale } = useTubeSweep(params);
 
   const yPose = Math.min(params.stroke, Math.max(-params.stroke, y));
+  const stallY = activeStallY(result, constraints, params.stroke);
   const loadedRpm = MOTOR_RPM * LOAD_FACTOR;
   const carriageSpeed = loadedRpm * (params.lead_screw_pitch || SCREW_PITCH_MM) / 60;
   const wallX = result?.wall_x && result.wall_x > 0 ? result.wall_x : params.tube_center_x + params.tube_od / 2;
@@ -329,7 +337,8 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
   useEffect(() => {
     motion.current.speed = carriageSpeed;
     motion.current.stroke = params.stroke;
-  }, [carriageSpeed, params.stroke]);
+    motion.current.stallY = stallY;
+  }, [carriageSpeed, params.stroke, stallY]);
 
   useEffect(() => {
     if (!playing) return;
@@ -338,13 +347,20 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
     let shown = 0;
     const step = (now: number) => {
       const m = motion.current;
-      if (m.speed <= 0) { setPlaying(false); return; }
-      if (last != null) m.d = (m.d + (now - last) / 1000 * m.speed) % (4 * m.stroke);
+      if (m.speed <= 0 || m.stroke <= 0) { setPlaying(false); return; }
+      const dt = last != null ? Math.min(0.1, (now - last) / 1000) : 0;
       last = now;
+      const next = stepCarriageMotion(m.y, m.dir, dt, m.speed, m.stroke, m.stallY);
+      m.y = next.y;
+      m.dir = next.dir;
+      if (next.stalled) {
+        setY(next.y);
+        setPlaying(false);
+        return;
+      }
       if (now - shown > 30) {
         shown = now;
-        const s = m.stroke;
-        setY(m.d <= s ? m.d : m.d <= 3 * s ? 2 * s - m.d : m.d - 4 * s);
+        setY(m.y);
       }
       raf = requestAnimationFrame(step);
     };
@@ -353,7 +369,14 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
   }, [playing]);
 
   const togglePlay = () => {
-    if (!playing) motion.current.d = yPose >= 0 ? yPose : 2 * params.stroke - yPose;
+    if (!playing) {
+      if (stallY != null && stallY <= 1e-6) {
+        setY(0);
+        return;
+      }
+      motion.current.y = yPose;
+      motion.current.dir = initialDirectionForPlay(yPose, stallY);
+    }
     setPlaying(!playing);
   };
 

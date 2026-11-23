@@ -7,7 +7,8 @@ import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import { buildMechanismGif } from './mechanismGif';
 import {
-  LOAD_FACTOR, MEMBERS, MOTOR_RPM, anchorPoint, anchorSymmetricRange, bezier, deflected, deflectedPoint, effectivePinchY, interp, interpNullable,
+  LOAD_FACTOR, MEMBERS, MOTOR_RPM, activeStallY, anchorPoint, anchorSymmetricRange, bezier, deflected,
+  deflectedPoint, effectivePinchY, interp, interpNullable, isCarriageStalled,
   leftNormal, nearestToWall, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
@@ -264,6 +265,8 @@ export function CompliantSchematic({
   );
 
   const carriageY = h0 + (result?.travel_sign ?? 1) * yPose;
+  const stallY = activeStallY(result, constraints, params.stroke);
+  const stalled = isCarriageStalled(yPose, stallY);
   const hw = params.pivot_offset + 1;
   const carriagePoly = [
     [-hw, carriageY + 0.9], [-hw + 0.9, carriageY + 1.5], [hw - 0.9, carriageY + 1.5], [hw, carriageY + 0.9],
@@ -436,13 +439,24 @@ export function CompliantSchematic({
       </div>
       <div className="mb-3 flex shrink-0 flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-          <label htmlFor="compliant-y" className="font-medium text-neutral-300">Carriage Y</label>
+          <div className="flex items-center gap-2">
+            <label htmlFor="compliant-y" className="font-medium text-neutral-300">Carriage Y</label>
+            {stalled && stallY != null && (
+              <span
+                role="status"
+                title={`Motor reached max torque (${params.motor_torque_mnm.toFixed(0)} mN·m) and stalled at ±${stallY.toFixed(2)} mm`}
+                className="rounded border border-red-500/45 bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-300"
+              >
+                Motor stalled · max torque
+              </span>
+            )}
+          </div>
           {result != null && result.travel_sign < 0 && (
             <span className="text-[10px] text-neutral-400" title="Y is the travel that opens tube A, here and in the chart. This part pulls, so its carriage moves the other way from a part that pushes for the same Y: the motor turns the other way.">
               link pulls: carriage runs the other way
             </span>
           )}
-          <span className="font-mono text-neutral-100">{yPose.toFixed(2)} mm</span>
+          <span className={`font-mono ${stalled ? 'text-red-300 font-semibold' : 'text-neutral-100'}`}>{yPose.toFixed(2)} mm</span>
         </div>
         <div className="order-last flex flex-wrap items-center gap-2 pt-1">
           <Button
@@ -479,7 +493,7 @@ export function CompliantSchematic({
           step={0.01}
           value={yPose}
           onChange={(e) => onYChange(parseFloat(e.target.value))}
-          className="w-full accent-amber-500 cursor-pointer"
+          className={`w-full cursor-pointer ${stalled ? 'accent-red-500' : 'accent-amber-500'}`}
         />
       </div>
 
@@ -621,11 +635,13 @@ export function CompliantSchematic({
             </g>
           </g>
           <polygon
+            data-carriage="main"
+            data-stalled={stalled ? 'true' : 'false'}
             points={carriagePoly}
-            fill="var(--bui-muted)"
-            fillOpacity={0.42}
-            stroke="var(--bui-text)"
-            strokeWidth={0.07}
+            fill={stalled ? '#ef4444' : 'var(--bui-muted)'}
+            fillOpacity={stalled ? 0.48 : 0.42}
+            stroke={stalled ? '#f87171' : 'var(--bui-text)'}
+            strokeWidth={stalled ? 0.12 : 0.07}
           />
           <line x1={-wall} y1={-h0} x2={wall} y2={-h0} stroke="#60a5fa" strokeWidth={0.04} strokeDasharray="0.2 0.2" />
           {/* Front plane: primary mechanism with frosted backdrop blur strictly inside its sharp strokes */}
@@ -646,10 +662,10 @@ export function CompliantSchematic({
               {renderMirroredMinimal(0.42, 0.14)}
               <polygon
                 points={carriagePoly}
-                fill="var(--bui-muted)"
-                fillOpacity={0.55}
-                stroke="var(--bui-text)"
-                strokeWidth={0.11}
+                fill={stalled ? '#ef4444' : 'var(--bui-muted)'}
+                fillOpacity={stalled ? 0.62 : 0.55}
+                stroke={stalled ? '#f87171' : 'var(--bui-text)'}
+                strokeWidth={stalled ? 0.14 : 0.11}
               />
             </g>
           </g>
@@ -660,6 +676,24 @@ export function CompliantSchematic({
               <polyline points={poly(lines[member.id])} fill="none" stroke={member.color} strokeWidth={0.12} strokeLinecap="round" />
             </g>
           ))}
+          {stalled && (
+            <g data-layer="stall-indicator" pointerEvents="none">
+              <text
+                x={0}
+                y={-carriageY}
+                fill="#fca5a5"
+                fontSize={0.58}
+                fontWeight="bold"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                stroke="var(--bui-surface)"
+                strokeWidth={0.18}
+                paintOrder="stroke"
+              >
+                Stall · max torque
+              </text>
+            </g>
+          )}
           {details && (
             <g data-layer="details-overlay">
               {overlayLabel(-wall + 0.25, h0 + 0.55, `h₀ ${h0.toFixed(2)}`, '#60a5fa', 'start')}
