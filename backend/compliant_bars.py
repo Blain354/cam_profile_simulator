@@ -70,6 +70,29 @@ def sample_bezier(s, e, u1, v1, u2, v2, n: int = N_SPAN) -> Tuple[np.ndarray, np
     return pts, p1, p2
 
 
+SKIN_SAMPLES = 1001   # points per spline when looking for its tightest bend
+
+
+def bezier_min_radius(s, e, u1, v1, u2, v2, n: int = SKIN_SAMPLES) -> float:
+    """Smallest radius of curvature |B'|^3 / |B' x B''| of the cubic, in mm, sampled on n points.
+
+    The handles are taken exactly as written to Onshape (no swap, no clip), since that is the curve the
+    CAD wraps its skin around. A straight stretch counts as infinite radius; a cusp (B' = 0) as zero.
+    """
+    s, e = np.asarray(s, float), np.asarray(e, float)
+    normal, _ = _left_normal(s, e)
+    p1 = s + float(u1) * (e - s) + float(v1) * normal
+    p2 = s + float(u2) * (e - s) + float(v2) * normal
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    d1 = 3 * (1 - t) ** 2 * (p1 - s) + 6 * (1 - t) * t * (p2 - p1) + 3 * t ** 2 * (e - p2)
+    d2 = 6 * (1 - t) * (p2 - 2 * p1 + s) + 6 * t * (e - 2 * p2 + p1)
+    cross = np.abs(d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0])
+    speed3 = np.hypot(d1[:, 0], d1[:, 1]) ** 3
+    with np.errstate(divide="ignore", invalid="ignore"):
+        radius = np.where(cross > 1e-12, speed3 / cross, np.where(speed3 > 1e-12, np.inf, 0.0))
+    return float(np.min(radius))
+
+
 def _polyline_distances(pts: np.ndarray, poly: np.ndarray) -> np.ndarray:
     """Distance from each point of pts to the polyline poly."""
     a = poly[:-1]
@@ -376,6 +399,22 @@ def _apply_pinch_goal(p: CompliantParams, c: CompliantConstraints) -> CompliantP
     return replace(p, pinch_y=2.0 * p.closed_carriage_height - float(c.target_pinch_from_top_mm))
 
 
+def _tube(p: CompliantParams) -> LinkageParams:
+    """The tube and drive the geometry and the pinch law are computed with."""
+    return LinkageParams(
+        tube_id=p.tube_id, tube_od=p.tube_od, tube_center_x=p.tube_center_x,
+        input_pressure_kpa=p.input_pressure_kpa, compliance=p.compliance,
+        tube_model=p.tube_model, tube_shore_a=p.tube_shore_a,
+        pin_diameter=max(p.f_thickness, 0.2), preload=p.preload,
+        stroke=p.stroke, chamber_volume_ml=p.chamber_volume_ml,
+        motor_speed=p.motor_speed, speed_factor=p.speed_factor,
+        lead_screw_pitch=p.lead_screw_pitch,
+        motor_torque_mnm=p.motor_torque_mnm,
+        screw_diameter=p.screw_diameter,
+        screw_friction=p.screw_friction,
+    )
+
+
 def _geometry(p: CompliantParams, tube: LinkageParams):
     """Rest polylines, handles, bottom-tangent anchor, and the pinch x that puts the foot contact face on the closed tube."""
     wall_x, closed_gap, full_open_gap = _closure(tube)
@@ -395,6 +434,35 @@ def _geometry(p: CompliantParams, tube: LinkageParams):
         samples[name] = pts
         handles[name] = [h1, h2]
     return wall_x, closed_gap, full_open_gap, pinch_contact_x, pinch_x, anchor, junction, pinch, pivot, samples, handles
+
+
+SKIN_MEMBERS = {"l": "L (anchor to junction)", "r": "R (junction to carriage pivot eye)", "f": "Foot (junction to pinch)"}
+
+
+def skin_check(p: CompliantParams) -> dict:
+    """Can Onshape wrap each member's skin around its spline?
+
+    The CAD builds each member as a slot of width #cb_*_thickness around its spline; the slot's inner edge
+    does not exist where the spline bends tighter than half that width, and the Part Studio fails
+    (over-defined skin sketch, failed eyelet fillets). Each member passes when its smallest radius of
+    curvature is at least half its thickness.
+    """
+    _, _, _, _, _, anchor, junction, pinch, pivot, _, _ = _geometry(p, _tube(p))
+    chords = {"l": (anchor, junction), "r": (junction, pivot), "f": (junction, pinch)}
+    rows = []
+    for name, (s, e) in chords.items():
+        radius = bezier_min_radius(s, e, *(getattr(p, f"{name}_{k}") for k in ("u1", "v1", "u2", "v2")))
+        half = getattr(p, f"{name}_thickness") / 2.0
+        rows.append({"member": name, "label": SKIN_MEMBERS[name], "thickness_variable": f"cb_{name}_thickness",
+                     "min_radius_mm": radius if np.isfinite(radius) else None, "half_thickness_mm": half,
+                     "ok": bool(radius >= half)})
+    bad = [r for r in rows if not r["ok"]]
+    message = None
+    if bad:
+        message = "; ".join(
+            f"{r['label']} bends to a {r['min_radius_mm']:.3f} mm radius, below half its thickness ({r['half_thickness_mm']:.3f} mm)"
+            for r in bad) + ". Onshape cannot build its skin: open the bend with the handles or thin the member."
+    return {"valid": not bad, "rows": rows, "message": message}
 
 
 def _overlap_nodes(samples: Dict[str, np.ndarray], thickness: Dict[str, float], junction: np.ndarray) -> Dict[str, np.ndarray]:
@@ -827,18 +895,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         return _empty("Stroke, tube wall, depth and modulus must be positive.")
     if min(p.l_thickness, p.r_thickness, p.f_thickness) <= 0:
         return _empty("Each spline needs a thickness above zero.")
-    tube = LinkageParams(
-        tube_id=p.tube_id, tube_od=p.tube_od, tube_center_x=p.tube_center_x,
-        input_pressure_kpa=p.input_pressure_kpa, compliance=p.compliance,
-        tube_model=p.tube_model, tube_shore_a=p.tube_shore_a,
-        pin_diameter=max(p.f_thickness, 0.2), preload=p.preload,
-        stroke=p.stroke, chamber_volume_ml=p.chamber_volume_ml,
-        motor_speed=p.motor_speed, speed_factor=p.speed_factor,
-        lead_screw_pitch=p.lead_screw_pitch,
-        motor_torque_mnm=p.motor_torque_mnm,
-        screw_diameter=p.screw_diameter,
-        screw_friction=p.screw_friction,
-    )
+    tube = _tube(p)
     try:
         wall_x, closed_gap, full_open_gap, pinch_contact_x, pinch_x, anchor, junction, pinch, pivot, samples, handles = _geometry(p, tube)
     except Exception as exc:  # tube law can refuse a section

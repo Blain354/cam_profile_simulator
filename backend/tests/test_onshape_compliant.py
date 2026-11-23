@@ -4,8 +4,10 @@ import unittest
 from dataclasses import replace
 from unittest import mock
 
+import numpy as np
+
 from backend import onshape_compliant as oc
-from backend.compliant_bars import CompliantConstraints, CompliantParams
+from backend.compliant_bars import CompliantConstraints, CompliantParams, bezier_min_radius, skin_check
 from backend.tests.test_onshape_variables import FakeOnshape, metres
 
 ov = oc.ov
@@ -21,6 +23,10 @@ OWNER_TABLES = {
         {"name": "cb_sketch_datum", "type": "LENGTH", "expression": "30 mm", "description": "CAD only"},
     ]),
 }
+# Pivot side +1 with R handles kept from a pivot -1 design: R hooks to a 0.31 mm radius, below half its
+# 0.75 mm thickness. In Onshape (2026-11-23) the skin sketch went over-defined and the eyelet fillets failed.
+HOOKED_R = replace(DESIGN, junction_x=4.7798, junction_y=8.7458, pivot_offset=3.25, closed_carriage_height=11.5,
+                   pivot_inverted=False, r_u1=0.0907, r_v1=5.8792, r_u2=0.5399, r_v2=6.9578, r_thickness=0.75)
 
 
 def fs_number(x):
@@ -140,6 +146,53 @@ class CompliantOnshapeTests(unittest.TestCase):
         with mock.patch.dict(ov.os.environ, {"ONSHAPE_LINKAGE_MEASURED": '{"pendulum": {"tube_center_x": "pend_x"}}'}):
             self.assertEqual(ov.measured_for("compliant")["member_depth"], "cb_member_depth")
 
+    def test_preview_flags_a_member_that_bends_tighter_than_half_its_thickness(self):
+        self.use(FakeOnshape(OWNER_TABLES))
+        out = oc.preview(HOOKED_R, target=TARGET)
+        skins = out["skin_check"]
+        self.assertFalse(skins["valid"])
+        r = {row["member"]: row for row in skins["rows"]}["r"]
+        self.assertFalse(r["ok"])
+        self.assertAlmostEqual(r["min_radius_mm"], 0.31, delta=0.005)
+        self.assertEqual(r["half_thickness_mm"], 0.375)
+        self.assertEqual(r["thickness_variable"], "cb_r_thickness")
+        self.assertIn("R (junction to carriage pivot eye)", skins["message"])
+        self.assertIn("0.312 mm", skins["message"])
+        self.assertIn("0.375 mm", skins["message"])
+        self.assertEqual([t["table_name"] for t in out["tables"]], list(oc.TABLES))   # still shown, flagged
+        self.assertTrue(oc.preview(DESIGN, target=TARGET)["skin_check"]["valid"])
+
+    def test_apply_refuses_a_member_onshape_cannot_skin_before_any_call(self):
+        fake = self.use(FakeOnshape(OWNER_TABLES))
+        names = [r.name for rows in oc.wanted_rows(HOOKED_R).values() for r in rows]
+        with self.assertRaises(ov.ExportRefused) as refused:
+            oc.apply(HOOKED_R, names, target=TARGET)
+        self.assertIn("R (junction to carriage pivot eye)", str(refused.exception))
+        self.assertEqual(fake.calls, [])
+        # Thin enough that half the thickness fits inside the bend: the same shape is written.
+        self.assertIsNone(oc.apply(replace(HOOKED_R, r_thickness=0.6), names, target=TARGET)["write_error"])
+
+    def test_the_guard_reads_the_member_thickness(self):
+        self.assertTrue(skin_check(replace(HOOKED_R, r_thickness=0.62))["valid"])
+        self.assertFalse(skin_check(replace(HOOKED_R, r_thickness=0.63))["valid"])
+
+
+class SkinRadiusTests(unittest.TestCase):
+    def test_a_straight_spline_never_fails(self):
+        self.assertEqual(bezier_min_radius((0, 0), (10, 0), 0.3, 0.0, 0.7, 0.0), float("inf"))
+
+    def test_a_circular_arc_gives_its_radius(self):
+        # Quarter circle of radius 5 from (5, 0) to (0, 5), handles at the usual k = 0.5523 R.
+        k = 0.5523 * 5
+        s, e = (5.0, 0.0), (0.0, 5.0)
+        chord = 5 * 2 ** 0.5
+        # (u, v) of (5, k) and (k, 5) along the chord, v to its left (the left normal points away from the centre).
+        d = (np.array(e) - s) / chord
+        n = np.array([-d[1], d[0]])
+        u1, v1 = float((np.array((5, k)) - s) @ d / chord), float((np.array((5, k)) - s) @ n)
+        u2, v2 = float((np.array((k, 5)) - s) @ d / chord), float((np.array((k, 5)) - s) @ n)
+        self.assertAlmostEqual(bezier_min_radius(s, e, u1, v1, u2, v2), 5.0, delta=0.05)
+
 
 class CompliantEndpointsTests(unittest.TestCase):
     """The two routes as FastAPI serves them (main.py imports its siblings by bare name)."""
@@ -174,6 +227,14 @@ class CompliantEndpointsTests(unittest.TestCase):
             res = self.client.post("/api/compliant/onshape/apply", json={**body, "pivot_inverted": True, "names": ["carriage_pivot_side"]})
             self.assertEqual(res.status_code, 200, res.text)
             self.assertEqual(fake.expression("cam_sim_carriage", "carriage_pivot_side"), "-1")
+            hooked = {**body, **{k: getattr(HOOKED_R, k) for k in ("junction_x", "junction_y", "pivot_offset", "closed_carriage_height",
+                                                                  "r_u1", "r_v1", "r_u2", "r_v2", "r_thickness")}}
+            res = self.client.post("/api/compliant/onshape/preview", json=hooked)
+            self.assertEqual(res.status_code, 200, res.text)
+            self.assertFalse(res.json()["skin_check"]["valid"])
+            res = self.client.post("/api/compliant/onshape/apply", json={**hooked, "names": ["cb_r_u1"]})
+            self.assertEqual(res.status_code, 409, res.text)
+            self.assertIn("0.312 mm", res.json()["detail"])
 
 
 if __name__ == "__main__":

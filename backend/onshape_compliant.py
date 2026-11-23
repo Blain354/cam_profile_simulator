@@ -27,10 +27,10 @@ from typing import Optional
 
 try:
     import onshape_variables as ov
-    from compliant_bars import CompliantConstraints, CompliantParams, _apply_pinch_goal, compute_compliant
+    from compliant_bars import CompliantConstraints, CompliantParams, _apply_pinch_goal, compute_compliant, skin_check
 except ImportError:  # imported as the backend package (tests)
     from . import onshape_variables as ov
-    from .compliant_bars import CompliantConstraints, CompliantParams, _apply_pinch_goal, compute_compliant
+    from .compliant_bars import CompliantConstraints, CompliantParams, _apply_pinch_goal, compute_compliant, skin_check
 
 KIND = "compliant"
 
@@ -70,6 +70,11 @@ def wanted_rows(params: CompliantParams, constraints: Optional[CompliantConstrai
     return out
 
 
+def check_skins(params: CompliantParams, constraints: Optional[CompliantConstraints] = None) -> dict:
+    """Each member's tightest bend against half its thickness: below it, Onshape cannot build the skin."""
+    return skin_check(_apply_pinch_goal(params, constraints or CompliantConstraints()))
+
+
 def _checked_inputs(params: CompliantParams, t: ov.Target) -> tuple[dict, int]:
     try:
         measured = ov.read_measured(KIND, t)
@@ -101,6 +106,7 @@ def preview(params: CompliantParams, constraints: Optional[CompliantConstraints]
     """What a write would change, table by table. Reads only."""
     t = target or ov.target_from_env()
     rows = wanted_rows(params, constraints)
+    skins = check_skins(params, constraints)
     check, calls = _checked_inputs(params, t)
     ids = _find_tables(t, list(rows))
     calls += 1
@@ -112,19 +118,23 @@ def preview(params: CompliantParams, constraints: Optional[CompliantConstraints]
         ov._locate(trs, studio, frozenset(referenced))
         tables.append(ov._summary(t, name, eid, trs, 0))
     cad, cad_calls = ov.cad_check([r for trs in rows.values() for r in trs], t, KIND)
-    return {"tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad}
+    return {"tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad, "skin_check": skins}
 
 
 def apply(params: CompliantParams, names: list[str], constraints: Optional[CompliantConstraints] = None,
           target: Optional[ov.Target] = None) -> dict:
     """Write the named variables, each into its own table (created when missing), after the input check.
 
-    A table where nothing ticked changes is neither created nor written. A failed write in one table
+    Refused (ExportRefused, HTTP 409) when a member bends tighter than half its thickness: Onshape could not
+    build its skin. A table where nothing ticked changes is neither created nor written. A failed write in one table
     is reported on that table; the others are still written, and the read-back is skipped.
     """
     t = target or ov.target_from_env()
     keep = set(names)
     rows = wanted_rows(params, constraints)
+    skins = check_skins(params, constraints)
+    if not skins["valid"]:   # refused before any call: nothing is read or written
+        raise ov.ExportRefused(f"Export refused: {skins['message']}")
     check, calls = _checked_inputs(params, t)
     if check["configured"] and not check["valid"]:
         raise ov.ExportRefused(ov._refusal(check))
@@ -142,4 +152,4 @@ def apply(params: CompliantParams, names: list[str], constraints: Optional[Compl
         written = [r for trs in rows.values() for r in trs if r.status in ("written", "created", "same")]
         cad, cad_calls = ov.cad_check(written, t, KIND)
     return {"tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad,
-            "write_error": write_error}
+            "skin_check": skins, "write_error": write_error}

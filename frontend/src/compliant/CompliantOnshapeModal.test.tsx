@@ -27,11 +27,11 @@ const reply = (valid: boolean): CompliantOnshapeReply => ({
   cad_check: { configured: false, coherent: true, error: null, rows: [] },
 });
 
-function stub(valid: boolean) {
+function stub(valid: boolean, extra: Partial<CompliantOnshapeReply> = {}) {
   const bodies: Record<string, unknown>[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     bodies.push({ url, ...(JSON.parse(String(init?.body ?? '{}'))) });
-    return new Response(JSON.stringify(reply(valid)), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ...reply(valid), ...extra }), { status: 200, headers: { 'content-type': 'application/json' } });
   });
   vi.stubGlobal('fetch', fetchMock);
   return bodies;
@@ -61,4 +61,14 @@ test('an export that does not start from the CAD values cannot be written', asyn
   expect((button as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(getByRole('button', { name: /Load CAD values and check again/ }));
   expect(onSync).toHaveBeenCalled();
+});
+
+test('a member Onshape cannot skin is named with its radius and blocks the write', async () => {
+  stub(true, { skin_check: { valid: false, message: 'R bends too tight',
+    rows: [{ member: 'r', label: 'R (junction to carriage pivot eye)', thickness_variable: 'cb_r_thickness', min_radius_mm: 0.3116, half_thickness_mm: 0.375, ok: false }] } });
+  const { findByRole, getByText } = render(
+    <CompliantOnshapeModal open onClose={() => {}} params={COMPLIANT_DEFAULTS} constraints={DEFAULT_CONSTRAINTS} onSyncMeasured={() => {}} />);
+  const button = await findByRole('button', { name: /Export not valid/ });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  expect(getByText(/R \(junction to carriage pivot eye\): tightest radius 0\.312 mm, half of #cb_r_thickness 0\.375 mm/)).toBeTruthy();
 });

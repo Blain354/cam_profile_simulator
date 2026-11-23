@@ -22,9 +22,15 @@ interface CadCheck {
   configured: boolean; coherent: boolean; error: string | null;
   rows: { name: string; label: string; unit: string; simulator: number; onshape: number | null; ok: boolean }[];
 }
+/** Each member's tightest bend against half its thickness (backend `compliant_bars.skin_check`). */
+interface SkinCheck {
+  valid: boolean; message: string | null;
+  rows: { member: string; label: string; thickness_variable: string; min_radius_mm: number | null; half_thickness_mm: number; ok: boolean }[];
+}
 /** Reply of /api/compliant/onshape/preview and /apply (backend `onshape_compliant`). */
 export interface CompliantOnshapeReply {
-  tables: TableState[]; api_calls: number; input_check: InputCheck; cad_check: CadCheck; write_error?: string | null;
+  tables: TableState[]; api_calls: number; input_check: InputCheck; cad_check: CadCheck; skin_check?: SkinCheck;
+  write_error?: string | null;
 }
 
 /** What each table holds: the window says it so the split is visible. */
@@ -97,7 +103,9 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
   const check = reply?.input_check;
   const cad = reply?.cad_check;
   const cadByName = new Map((cad?.rows ?? []).map((c) => [c.name, c]));
-  const blocked = check != null && check.configured && !check.valid;
+  const skins = reply?.skin_check;
+  const unskinnable = skins != null && !skins.valid;
+  const blocked = (check != null && check.configured && !check.valid) || unskinnable;
   const allRows = reply ? reply.tables.flatMap((t) => t.rows) : [];
   const chosen = allRows.filter((r) => pickable(r) && picked.has(r.name));
   const n = chosen.length;
@@ -134,6 +142,17 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
         {error && <p className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{error}</p>}
         {reply && (
           <>
+            {skins && !skins.valid && (
+              <div className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">
+                <p className="font-bold">Onshape cannot build this shape: a member bends tighter than half its thickness, so its skin does not exist.</p>
+                {skins.rows.filter((r) => !r.ok).map((r) => (
+                  <p key={r.member} className="mt-1 font-mono">
+                    {r.label}: tightest radius {r.min_radius_mm == null ? '∞' : r.min_radius_mm.toFixed(3)} mm, half of #{r.thickness_variable} {r.half_thickness_mm.toFixed(3)} mm ✗
+                  </p>
+                ))}
+                <p className="mt-1">Open the bend with the handles or thin the member, then read again.</p>
+              </div>
+            )}
             {check?.configured && (
               <div className={`rounded-lg border p-2 text-xs ${check.valid ? 'border-emerald-600/60 bg-emerald-900/20 text-emerald-200' : 'border-red-500/50 bg-red-900/30 text-red-200'}`} role="status">
                 <p className="font-bold">
@@ -211,7 +230,7 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
               </Button>
               {!done && (
                 <Button variant="ghost" type="button" onClick={write} disabled={busy != null || n === 0 || blocked}
-                  title={blocked ? 'Load the CAD values first' : undefined}
+                  title={unskinnable ? 'A member cannot be skinned in Onshape' : blocked ? 'Load the CAD values first' : undefined}
                   className="flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-bold text-neutral-900 disabled:opacity-40">
                   <UploadCloud className="w-3.5 h-3.5" />
                   {busy === 'write' ? 'Writing…' : blocked ? 'Export not valid' : n === 0 ? 'Nothing to write' : `Write ${n} variable${n > 1 ? 's' : ''}`}
