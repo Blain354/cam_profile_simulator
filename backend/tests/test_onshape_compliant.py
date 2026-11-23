@@ -110,11 +110,17 @@ class CompliantOnshapeTests(unittest.TestCase):
         self.assertEqual(fake.created(), [])
         self.assertTrue(oc.apply(replace(DESIGN, member_depth=3.0), ["cb_junction_x"], target=TARGET)["input_check"]["valid"])
 
-    def test_inverted_pivot_is_refused_before_any_call(self):
-        fake = self.use(FakeOnshape())
-        with self.assertRaises(ov.LinkageOnshapeError):
-            oc.preview(replace(DESIGN, pivot_inverted=True), target=TARGET)
-        self.assertEqual(fake.calls, [])
+    def test_the_pivot_side_is_written_with_the_offset(self):
+        self.use(FakeOnshape())
+        rows = {r.name: r for t in oc.wanted_rows(DESIGN).values() for r in t}
+        self.assertEqual(rows["carriage_pivot_side"].new_expression, "1")
+        inverted = {r.name: r for t in oc.wanted_rows(replace(DESIGN, pivot_inverted=True)).values() for r in t}
+        self.assertEqual(inverted["carriage_pivot_side"].new_expression, "-1")
+        self.assertEqual(inverted["carriage_pivot_offset"].new_expression, "4 mm")   # still a distance
+        out = oc.apply(replace(DESIGN, pivot_inverted=True), ["carriage_pivot_side"], target=TARGET)
+        self.assertEqual(self.fake.expression("cam_sim_carriage", "carriage_pivot_side"), "-1")
+        self.assertEqual({v["name"]: v["type"] for v in self.fake.table("cam_sim_carriage")}["carriage_pivot_side"], "NUMBER")
+        self.assertIsNone(out["write_error"])
 
     def test_nothing_ticked_creates_nothing(self):
         fake = self.use(FakeOnshape())
@@ -165,8 +171,9 @@ class CompliantEndpointsTests(unittest.TestCase):
             self.assertEqual(res.status_code, 200, res.text)
             self.assertEqual(fake.expression("cam_sim_compliant", "cb_junction_x"), "-5.5 mm")
             self.assertEqual(self.client.post("/api/compliant/onshape/apply", json={**body, "names": "x"}).status_code, 422)
-            res = self.client.post("/api/compliant/onshape/apply", json={**body, "pivot_inverted": True, "names": []})
-            self.assertEqual(res.status_code, 409)
+            res = self.client.post("/api/compliant/onshape/apply", json={**body, "pivot_inverted": True, "names": ["carriage_pivot_side"]})
+            self.assertEqual(res.status_code, 200, res.text)
+            self.assertEqual(fake.expression("cam_sim_carriage", "carriage_pivot_side"), "-1")
 
 
 if __name__ == "__main__":

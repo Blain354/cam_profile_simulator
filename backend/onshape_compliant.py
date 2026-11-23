@@ -5,7 +5,8 @@ The CAD keeps one variable per quantity, grouped by what it belongs to:
 
   cam_sim_compliant   what is specific to compliant bars: anchor, junction, tip height, the six
                       Bézier handles (u, v), the three in-plane thicknesses
-  cam_sim_carriage    the carriage the bars hang on: pivot height at Y = 0, pivot offset
+  cam_sim_carriage    the carriage the bars hang on: pivot height at Y = 0, pivot offset, pivot side
+                      (1 far side of the screw, -1 its tube's side: an inverted pivot)
   cam_sim_pinch       the pinch, shared by every mechanism: closed gap of the tube, preload
 
 Each table holds plain numbers only; the formulas (handle coordinates, pinch pad) are variables of
@@ -42,19 +43,14 @@ _SHAPE = (
 # {table name: {Onshape variable: simulator value key}}, in the order the window shows them.
 TABLES: dict[str, dict[str, str]] = {
     "cam_sim_compliant": {f"cb_{key}": key for key in _SHAPE},
-    "cam_sim_carriage": {"carriage_closed_height": "closed_carriage_height", "carriage_pivot_offset": "pivot_offset"},
+    "cam_sim_carriage": {"carriage_closed_height": "closed_carriage_height", "carriage_pivot_offset": "pivot_offset",
+                         "carriage_pivot_side": "pivot_side"},
     "cam_sim_pinch": {"pinch_closed_gap": "closed_gap", "pinch_preload": "preload"},
 }
 
 
 def wanted_rows(params: CompliantParams, constraints: Optional[CompliantConstraints] = None) -> dict[str, list[ov.Row]]:
     """One row per variable, per table, with the value of the design on screen."""
-    if params.pivot_inverted:
-        # carriage_pivot_offset is a distance: the Part Studio puts the pivot on the far side of the screw.
-        raise ov.LinkageOnshapeError(
-            "This design has the carriage pivot on its tube's side (inverted), which the Part Studio cannot draw: "
-            "its sketch puts the pivot on the far side of the screw. Nothing was sent."
-        )
     c = constraints or CompliantConstraints()
     p = _apply_pinch_goal(params, c)   # the tip height the geometry is built with
     result = compute_compliant(p, fast=True, constraints=c)
@@ -62,6 +58,8 @@ def wanted_rows(params: CompliantParams, constraints: Optional[CompliantConstrai
         raise ov.LinkageOnshapeError(f"This geometry cannot be built, nothing to send: {result.message}")
     values = dict(asdict(p))
     values["closed_gap"] = float(result.closed_gap)
+    # carriage_pivot_offset stays a distance; the side places the pivot and the carriage pin holes in the Part Studio.
+    values["pivot_side"] = -1.0 if p.pivot_inverted else 1.0
     out: dict[str, list[ov.Row]] = {}
     for table, mapping in TABLES.items():
         rows = []

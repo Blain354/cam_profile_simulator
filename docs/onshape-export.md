@@ -409,7 +409,7 @@ Variable Studios of the document, so that no quantity exists twice in the CAD (`
 | Table | Variables | Holds |
 |-------|-----------|-------|
 | `cam_sim_compliant` | `cb_anchor_distance`, `cb_junction_x`, `cb_junction_y`, `cb_pinch_y`, `cb_{l,r,f}_{u,v}{1,2}`, `cb_{l,r,f}_thickness` | what is specific to compliant bars. The owner adds the CAD-only inputs by hand (`cb_member_depth`, `cb_eye_diameter`, `cb_pin_hole_diameter`, `cb_pad_*`, `cb_sketch_datum`); a write keeps them. |
-| `cam_sim_carriage` | `carriage_closed_height`, `carriage_pivot_offset` | the carriage, shared by every mechanism |
+| `cam_sim_carriage` | `carriage_closed_height`, `carriage_pivot_offset`, `carriage_pivot_side` (1 far side of the screw, -1 the tube's side: `pivot_inverted`) | the carriage, shared by every mechanism. The side places the pivot and the carriage pin holes in the Part Studio. |
 | `cam_sim_pinch` | `pinch_closed_gap` (the tube model's closed gap), `pinch_preload` | the pinch, shared by every mechanism |
 
 `cb_pinch_y` is the tip height the geometry is built with: with a target pinch height in the constraints,
@@ -422,7 +422,7 @@ The tables hold plain numbers; every formula (handle coordinates, pinch pad) is 
   Variable Studios, one more reads each table that exists, one per measured input, one read-back.
   Reply: `{tables: [{table_name, table_exists, element_id, table_url, rows}], api_calls, input_check, cad_check}`.
 - `POST /api/compliant/onshape/apply`, same body plus `names`: refused (HTTP 409) when the measured
-  inputs differ from the design or when the pivot is inverted; then each table is read, merged and
+  inputs differ from the design; then each table is read, merged and
   written back whole like the linkage tables (created when missing, untouched when nothing ticked in it
   changes). The reply adds `write_error`, the first failure of any table.
 

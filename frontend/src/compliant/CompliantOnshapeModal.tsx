@@ -30,7 +30,7 @@ export interface CompliantOnshapeReply {
 /** What each table holds: the window says it so the split is visible. */
 const TABLE_ROLE: Record<string, string> = {
   cam_sim_compliant: 'Specific to compliant bars: anchor, junction, tip height, handles, thicknesses.',
-  cam_sim_carriage: 'The carriage, shared with the other mechanisms: pivot height and offset.',
+  cam_sim_carriage: 'The carriage, shared with the other mechanisms: pivot height, offset and side (-1: on the tube side).',
   cam_sim_pinch: 'The pinch, shared with the other mechanisms: closed gap of the tube, preload.',
 };
 
