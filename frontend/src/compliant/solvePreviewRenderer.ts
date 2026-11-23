@@ -22,6 +22,7 @@ export const SHORT_REASON_LABELS: Record<string, string> = {
   seal_y0: 'Y=0 seal',
   tube: 'Tube hit',
   crossing: 'Crossing',
+  buckling: 'Buckling',
   shell: 'Shell hit',
   pivot: 'Pivot hit',
   pinch: 'Pinch margin',

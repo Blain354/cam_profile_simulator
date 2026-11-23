@@ -948,17 +948,33 @@ def _pinch_force(p: LinkageParams, gap: np.ndarray, st: np.ndarray, ct: np.ndarr
     half = p.pad_length / 2.0 if p.linkage_type == TYPE_PENDULUM else 0.0
     if fast and half == 0.0 and p.pin_diameter > 0.0:
         uses_fem = tube_law.uses_fem(p)
-        gs, f0, f1, f2 = _round_pin_force_table(
-            float(p.tube_od), float(p.tube_id), float(p.input_pressure_kpa),
-            0.0 if uses_fem else float(p.compliance),
-            p.tube_model, float(p.tube_shore_a) if uses_fem else 0.0,
-            float(p.pin_diameter),
-        )
-        return [
-            np.interp(gap, gs, f0, left=float(f0[0]), right=0.0),
-            np.interp(gap, gs, f1, left=float(f1[0]), right=0.0),
-            np.interp(gap, gs, f2, left=float(f2[0]), right=0.0),
-        ]
+
+        def table(pin_diameter: float):
+            gs, f0, f1, f2 = _round_pin_force_table(
+                float(p.tube_od), float(p.tube_id), float(p.input_pressure_kpa),
+                0.0 if uses_fem else float(p.compliance),
+                p.tube_model, float(p.tube_shore_a) if uses_fem else 0.0,
+                float(pin_diameter),
+            )
+            return [
+                np.interp(gap, gs, f0, left=float(f0[0]), right=0.0),
+                np.interp(gap, gs, f1, left=float(f1[0]), right=0.0),
+                np.interp(gap, gs, f2, left=float(f2[0]), right=0.0),
+            ]
+
+        # fast=True tabulates at the exact pin diameter. A float is a pin-diameter grid step (mm): the two
+        # tables that bracket the diameter are blended, so a search that varies the diameter keeps hitting
+        # the cache instead of integrating a new table (about 20 ms) for every candidate.
+        step = float(fast) if (isinstance(fast, float) and fast > 0.0) else 0.0
+        if step <= 0.0:
+            return table(p.pin_diameter)
+        cell = float(p.pin_diameter) / step
+        lower = int(np.floor(cell + 1e-9))
+        share = cell - lower
+        if lower < 1 or share < 1e-9:
+            return table(round(max(lower, 1) * step, 9)) if lower >= 1 else table(p.pin_diameter)
+        low, high = table(round(lower * step, 9)), table(round((lower + 1) * step, 9))
+        return [(1.0 - share) * a + share * b for a, b in zip(low, high)]
     return _pinch_force_slices(p, gap, st, ct, n_foot=n_foot)
 
 

@@ -110,7 +110,7 @@ test('unchecking Fixed on a Context variable opens the Solver section with range
   expect(body.bounds.closed_carriage_height).toEqual([6, 12]);
   expect(body.bounds.stroke).toEqual([1.5, 1.5]);
   expect(body.constraints.pinch_ceiling_margin_mm).toBe(2.0);
-  expect(body.method).toBe('hybrid');
+  expect(body.method).toBe('cmaes');
 });
 
 test('right-hand panel renders the uniform multi-chart grid layout', () => {

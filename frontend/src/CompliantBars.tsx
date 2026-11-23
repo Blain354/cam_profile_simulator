@@ -67,6 +67,7 @@ export function CompliantProfilePreview({ payload }: { payload: Record<string, u
     ['Shell clearance', mm(c.min_shell_clearance_mm)],
     ['Pivot clearance', mm(c.min_pivot_clearance_mm)],
     ['Max rotation', `${c.max_rotation_deg}°`],
+    ['Min buckling margin', (c.min_buckling_margin ?? 0) > 0 ? `× ${(c.min_buckling_margin ?? 0).toFixed(1)}` : 'off'],
     ['Max stress factor', `${Math.round((c.stress_limit_factor ?? 1) * 100)}% (${(p.member_strength_mpa * (c.stress_limit_factor ?? 1)).toFixed(1)} MPa)`],
     ['Motor & screw', `${p.motor_torque_mnm} mN·m · M${p.screw_diameter}×${p.lead_screw_pitch} (μ=${p.screw_friction})`],
     ['Stall-safe stress', c.motor_limited_stress !== false ? 'Yes (stall before yield)' : 'Off (infinite torque)'],

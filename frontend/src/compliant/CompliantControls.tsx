@@ -5,7 +5,7 @@ import { Accordion, ParameterSlider, StatRow } from '../components';
 import { TubeModelControls } from '../TubeModel';
 import { PassFreqBwTooltip } from './PassFreqBwTooltip';
 import {
-  ALL_SOLVER_GOALS, CONTEXT_LIMITS, CONTEXT_VAR_KEYS, LIMITS, MEMBERS, SOLVER_GOAL_META,
+  ALL_SOLVER_GOALS, CONTEXT_LIMITS, CONTEXT_VAR_KEYS, EFFICIENT_VALVE_GOALS, LIMITS, MEMBERS, SOLVER_GOAL_META,
   TIME_BUDGET_PRESETS, allowableStressMpa, anchorSymmetricRange, effectivePinchY, memberChords, mm,
   screwThrustAvailableN, worldQuadrantsToUV,
 } from './types';
@@ -430,6 +430,16 @@ export function SolverConstraintsContent({
           secondaryValue={constraints.max_rotation_deg === 0 ? 'no cap' : `≤ ${constraints.max_rotation_deg}°`}
           description="Cap peak beam rotation (linear beam theory is most accurate under ~15°). 0 disables the cap."
           onChange={(v) => onConstraintsChange({ max_rotation_deg: v })}
+        />
+        <ParameterSlider
+          label="Min buckling margin (×)"
+          value={constraints.min_buckling_margin ?? 0}
+          min={0}
+          max={6}
+          step={0.1}
+          secondaryValue={(constraints.min_buckling_margin ?? 0) === 0 ? 'off' : `≥ × ${(constraints.min_buckling_margin ?? 0).toFixed(1)}`}
+          description="Euler critical load of the weakest member (pin-ended, over its free length) divided by its largest compression in the stroke. The beam model is linear and cannot see buckling, so a search for thin members needs this floor. 0 disables it."
+          onChange={(v) => onConstraintsChange({ min_buckling_margin: v })}
         />
         <ParameterSlider
           label="Max stress factor"
@@ -1306,6 +1316,14 @@ export function SolverGoalBudgetControls({
           <span className="text-xs font-semibold text-neutral-300">
             Solving goals ({selected.length})
           </span>
+          <button
+            type="button"
+            title="Max airflow, min dead band and min motor torque, weighted equally: each is a share between 0 and 1, so they trade like for like."
+            onClick={() => onGoalConfigChange({ ...goalConfig, selected: [...EFFICIENT_VALVE_GOALS], useWeights: false })}
+            className="rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/25"
+          >
+            Efficient valve
+          </button>
           {multi && (
             <label className="flex items-center gap-1.5 text-[11px] text-amber-300 cursor-pointer select-none">
               <input
@@ -1581,6 +1599,15 @@ export function ResultsAccordion({
               ? '—'
               : `${result.energy_cycle_mj.toFixed(1)} mJ`
           }
+        />
+        <StatRow
+          label="Buckling margin (Euler, pin-ended)"
+          value={
+            result?.buckling_margin == null
+              ? '—'
+              : `× ${result.buckling_margin >= 100 ? '100+' : result.buckling_margin.toFixed(1)}`
+          }
+          highlight={result?.buckling_margin != null && result.buckling_margin < 2}
         />
         <StatRow
           label="Max reachable flow"

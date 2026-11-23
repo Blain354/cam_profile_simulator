@@ -37,6 +37,7 @@ ANCHOR_EMBED = 2.0     # mm, L may cross the shell at the anchor
 RIGID = 40.0           # overlap spans: stiffness and section both scale, so stress stays honest
 EYE_FACTOR = 1.6       # R nodes this many pin-diameters from the pivot are the eye
 MIN_CHORD = 0.6        # mm
+PIN_GRID = 0.05        # mm, pin-diameter step of the cached tube force tables (see linkage._pinch_force)
 
 
 def _left_normal(s: np.ndarray, e: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -67,6 +68,17 @@ def sample_bezier(s, e, u1, v1, u2, v2, n: int = N_SPAN) -> Tuple[np.ndarray, np
     pts = omt ** 3 * s + 3 * omt ** 2 * t * p1 + 3 * omt * t ** 2 * p2 + t ** 3 * e
     pts[0], pts[-1] = s, e
     return pts, p1, p2
+
+
+def _polyline_distances(pts: np.ndarray, poly: np.ndarray) -> np.ndarray:
+    """Distance from each point of pts to the polyline poly."""
+    a = poly[:-1]
+    d = poly[1:] - a
+    span2 = np.maximum(np.einsum("mj,mj->m", d, d), 1e-24)
+    rel = pts[:, None, :] - a[None, :, :]
+    t = np.clip(np.einsum("nmj,mj->nm", rel, d) / span2, 0.0, 1.0)
+    off = rel - t[:, :, None] * d[None, :, :]
+    return np.sqrt(np.min(np.einsum("nmj,nmj->nm", off, off), axis=1))
 
 
 def _nearest_on_polyline(pt: np.ndarray, poly: np.ndarray) -> Tuple[float, float]:
@@ -162,6 +174,7 @@ class CompliantConstraints:
     min_tube_clearance_mm: float = 0.0
     max_y0_flex_mm: float = 0.0
     max_rotation_deg: float = 0.0
+    min_buckling_margin: float = 0.0   # 0 = not checked
     stress_limit_factor: float = 1.0
     junction_exclude_x: Optional[Tuple[float, float]] = None
     junction_exclude_y: Optional[Tuple[float, float]] = None
@@ -183,7 +196,7 @@ def _constraints_from_mapping(data: Optional[dict]) -> CompliantConstraints:
     scalar_names = {
         "pinch_ceiling_margin_mm", "pinch_floor_margin_mm",
         "min_shell_clearance_mm", "min_pivot_clearance_mm",
-        "min_tube_clearance_mm", "max_y0_flex_mm", "max_rotation_deg",
+        "min_tube_clearance_mm", "max_y0_flex_mm", "max_rotation_deg", "min_buckling_margin",
     }
     cleaned: Dict[str, object] = {}
     for k in scalar_names:
@@ -264,6 +277,7 @@ class CompliantResult:
     junction_ok: bool = True
     tube_ok: bool = True
     crossing_ok: bool = True
+    buckling_ok: bool = True
     tube_clearance_mm: Optional[float] = None
     kinematic_gain: Optional[float] = None
     attack_angle_deg: Optional[float] = None
@@ -305,6 +319,7 @@ class CompliantResult:
     max_stress_to_stall_mpa: Optional[float] = None
     energy_stroke_mj: Optional[float] = None
     energy_cycle_mj: Optional[float] = None
+    buckling_margin: Optional[float] = None
     overtravel_y: List[float] = None
     overtravel_thrust: List[Optional[float]] = None
     overtravel_force_a: List[Optional[float]] = None
@@ -393,16 +408,16 @@ def _overlap_nodes(samples: Dict[str, np.ndarray], thickness: Dict[str, float], 
     for i, a in enumerate(names):
         for b in names[i + 1:]:
             reach = max(thickness[a], thickness[b])
-            for ia, pt in enumerate(samples[a]):
-                if float(np.hypot(*(pt - junction))) <= reach:
-                    continue
-                dist, _along = _nearest_on_polyline(pt, samples[b])
-                if dist < (thickness[a] + thickness[b]) / 2.0 and dist > 1e-6:
-                    flags[a][ia] = True
-                    # Mark the nearest vertex of b as well, so the whole crossed span fuses.
-                    ib = int(np.argmin(np.hypot(samples[b][:, 0] - pt[0], samples[b][:, 1] - pt[1])))
-                    if float(np.hypot(*(samples[b][ib] - junction))) > reach:
-                        flags[b][ib] = True
+            away = np.hypot(samples[a][:, 0] - junction[0], samples[a][:, 1] - junction[1]) > reach
+            dists = _polyline_distances(samples[a], samples[b])
+            inside = away & (dists < (thickness[a] + thickness[b]) / 2.0) & (dists > 1e-6)
+            for ia in np.flatnonzero(inside):
+                pt = samples[a][ia]
+                flags[a][ia] = True
+                # Mark the nearest vertex of b as well, so the whole crossed span fuses.
+                ib = int(np.argmin(np.hypot(samples[b][:, 0] - pt[0], samples[b][:, 1] - pt[1])))
+                if float(np.hypot(*(samples[b][ib] - junction))) > reach:
+                    flags[b][ib] = True
     for name in flags:
         flags[name][0] = False
         flags[name][-1] = False
@@ -664,6 +679,29 @@ def _member_segment_pairs(member_indices: List[List[int]]) -> Tuple[np.ndarray, 
     )
 
 
+def _merged_run_nodes(samples: Dict[str, np.ndarray], thickness: Dict[str, float], node_of: dict) -> np.ndarray:
+    """Node indices where two members leave the junction side by side, inside each other's thickness.
+
+    Walking each member outward from the junction, the run lasts while its samples stay inside
+    another member's width. Those spans print as one solid, so their centre lines weaving over
+    each other is not a crossing. A crossing further out is not connected to the junction and stays one.
+    """
+    merged = set()
+    names = list(samples)
+    for a in names:
+        pts = samples[a]
+        outward = range(len(pts) - 1, -1, -1) if a == "l" else range(len(pts))
+        for b in names:
+            if b == a:
+                continue
+            near = _polyline_distances(pts, samples[b]) < (thickness[a] + thickness[b]) / 2.0
+            for i in outward:
+                if not near[i]:
+                    break
+                merged.add(node_of[(a, i)])
+    return np.array(sorted(merged), dtype=int)
+
+
 def _has_member_crossing(
     xy: np.ndarray,
     a1: np.ndarray,
@@ -863,7 +901,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     # (= closed_gap - preload when the foot tip is the contact point), independent of beam geometry.
     # The unloaded rest gap is pre-biased inward by pre_flex_y0 = compliance * F_tube(gap0) so the
     # loaded equilibrium at Y = 0 lands exactly on gap0 regardless of how the nodes are configured.
-    parts_y0 = _pinch_force(tube, np.array([gap0]), np.ones(1), np.ones(1), fast=True)
+    parts_y0 = _pinch_force(tube, np.array([gap0]), np.ones(1), np.ones(1), fast=PIN_GRID)
     f_y0 = float(sum(parts_y0)[0])
     pre_flex_y0 = float(compliance * f_y0) if (p.member_modulus_mpa > 0 and compliance > 1e-9) else 0.0
     # Vertical force the carriage applies to Part A along +Y:
@@ -887,10 +925,10 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     op_sl = slice(n_ext, n_ext + n_y)
     gap_rigid_full = (gap0 - pre_flex_y0) + u_y[i_contact, 0] * y_full
     ones_full = np.ones_like(y_full)
-    parts0_full = _pinch_force(tube, gap_rigid_full, ones_full, ones_full, fast=True)
+    parts0_full = _pinch_force(tube, gap_rigid_full, ones_full, ones_full, fast=PIN_GRID)
     if p.member_modulus_mpa > 0 and compliance > 1e-9:
         c_safe = np.full_like(y_full, compliance)
-        pushed_full, parts_full = _solve_contact_flex(tube, gap_rigid_full, ones_full, ones_full, c_safe, parts0_full, fast=True)
+        pushed_full, parts_full = _solve_contact_flex(tube, gap_rigid_full, ones_full, ones_full, c_safe, parts0_full, fast=PIN_GRID)
         force_full = sum(parts_full)
     else:
         pushed_full = np.zeros_like(y_full)
@@ -910,6 +948,22 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     stress_full = np.where(real[:, None], stress_full, 0.0)
     stress_y_full = np.nanmax(stress_full, axis=0) if stress_full.size else np.zeros_like(y_full)
     stress_pair_full = np.maximum(stress_y_full, stress_y_full[::-1])
+
+    # Euler margin. The beam model is linear, so it cannot see a member buckle: for each member, the
+    # critical load of a pin-ended strut as long as its free (unfused) length, over the largest compression
+    # it carries inside the stroke. An indication: a built-in end is stiffer than a pin, a free tip weaker.
+    seg_len = np.array([float(np.hypot(*(xy[b] - xy[a]))) for a, b in elems])
+    compression = np.max(-axial_full[:, n_ext:n_ext + n_y], axis=1)
+    buckling_margin: Optional[float] = None
+    for name in ("l", "r", "f"):
+        free_span = np.array([o == name and not fused for o, fused in zip(owner, _rigid)])
+        if not np.any(free_span):
+            continue
+        load = float(np.max(compression[free_span]))
+        if load <= 1e-9:
+            continue
+        critical = float(np.pi ** 2 * np.min(ei[free_span]) / float(np.sum(seg_len[free_span])) ** 2)
+        buckling_margin = critical / load if buckling_margin is None else min(buckling_margin, critical / load)
 
     gap_rigid = gap_rigid_full[op_sl]
     gap_air = gap_air_full[op_sl]
@@ -1033,6 +1087,10 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     shell_ok = bool(shell_clearance > c.min_shell_clearance_mm)
     member_indices = [[node_of[(name, i)] for i in range(len(samples[name]))] for name in ("l", "r", "f")]
     seg_a1, seg_a2, seg_b1, seg_b2 = _member_segment_pairs(member_indices)
+    in_merged = np.zeros(n, dtype=bool)
+    in_merged[_merged_run_nodes(samples, thickness, node_of)] = True
+    apart = ~(in_merged[seg_a1] & in_merged[seg_a2] & in_merged[seg_b1] & in_merged[seg_b2])
+    seg_a1, seg_a2, seg_b1, seg_b2 = seg_a1[apart], seg_a2[apart], seg_b1[apart], seg_b2[apart]
     crossing_ok = not (
         _has_member_crossing(pose_rest, seg_a1, seg_a2, seg_b1, seg_b2)
         or _has_member_crossing(pose_open, seg_a1, seg_a2, seg_b1, seg_b2)
@@ -1081,9 +1139,9 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     y_probe = np.array([0.0, min(0.25, effective_stroke_mm)])
     gap_rigid_probe = (gap0 - pre_flex_y0) + u_y[i_contact, 0] * y_probe
     ones_p = np.ones_like(y_probe)
-    parts_p0 = _pinch_force(tube, gap_rigid_probe, ones_p, ones_p, fast=True)
+    parts_p0 = _pinch_force(tube, gap_rigid_probe, ones_p, ones_p, fast=PIN_GRID)
     if p.member_modulus_mpa > 0 and compliance > 1e-9:
-        pushed_p, _ = _solve_contact_flex(tube, gap_rigid_probe, ones_p, ones_p, np.full_like(y_probe, compliance), parts_p0, fast=True)
+        pushed_p, _ = _solve_contact_flex(tube, gap_rigid_probe, ones_p, ones_p, np.full_like(y_probe, compliance), parts_p0, fast=PIN_GRID)
     else:
         pushed_p = np.zeros_like(y_probe)
     gap_air_probe = gap_rigid_probe + pushed_p
@@ -1227,9 +1285,15 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         )
     if not crossing_ok:
         notes.append("Members cross each other.")
+    buckling_ok = bool(c.min_buckling_margin <= 0.0 or buckling_margin is None or buckling_margin >= c.min_buckling_margin - 1e-9)
+    if not buckling_ok:
+        notes.append(
+            "A member carries %.0f%% of its Euler buckling load (margin %.2f, min %.2f): the linear model no longer holds."
+            % (100.0 / buckling_margin, buckling_margin, c.min_buckling_margin)
+        )
     passes = bool(
         opens and flow_ok and plastic_ok and motor_ok and shell_ok and pivot_ok and pinch_ok
-        and rotation_ok and junction_ok and sealed_at_y0 and tube_ok and crossing_ok
+        and rotation_ok and junction_ok and sealed_at_y0 and tube_ok and crossing_ok and buckling_ok
     )
     message = "ok" if passes else " ".join(notes) or "This shape does not pass."
 
@@ -1285,6 +1349,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         passes=passes,
         tube_ok=tube_ok,
         crossing_ok=crossing_ok,
+        buckling_ok=buckling_ok,
         tube_clearance_mm=tube_clearance,
         kinematic_gain=kinematic_gain,
         attack_angle_deg=attack_angle_deg,
@@ -1326,6 +1391,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         max_stress_to_stall_mpa=max_stress_to_stall,
         energy_stroke_mj=energy_stroke_mj,
         energy_cycle_mj=energy_cycle_mj,
+        buckling_margin=buckling_margin,
         overtravel_y=overtravel_y,
         overtravel_thrust=overtravel_thrust,
         overtravel_force_a=overtravel_force_a,
@@ -1335,11 +1401,35 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     )
 
 
-SOLVER_GOALS = ("dx_at_025", "pass_freq_bw", "min_energy", "min_open_stroke", "flow_slope", "trajectory_target")
+SOLVER_GOALS = (
+    "dx_at_025", "pass_freq_bw", "min_energy", "min_open_stroke", "flow_slope", "trajectory_target",
+    "max_flow", "min_dead_band", "min_torque",
+)
+# Each is a share between 0 and 1 of a physical quantity, so a weighted sum of them trades like for like.
+PHYSICAL_GOALS = ("max_flow", "min_dead_band", "min_torque")
 
 
 def _goal_utility(result: CompliantResult, c: CompliantConstraints, goal: str) -> float:
     """Normalized comparable utility (~0..2, higher is better) for combining multiple goals."""
+    if goal == "max_flow":
+        # Share of the full bore flow reached at the end of the reachable stroke.
+        frac = result.max_flow_frac
+        return float(np.clip(frac, 0.0, 1.0)) if (frac is not None and np.isfinite(frac)) else 0.0
+    if goal == "min_dead_band":
+        # Share of the stroke that moves air: 1 with no dead band, 0 when the tube never opens.
+        stroke = max((abs(v) for v in result.Y_positions), default=0.0)
+        if result.y_open_mm is None or not np.isfinite(result.y_open_mm) or stroke <= 1e-9:
+            return 0.0
+        return float(np.clip(1.0 - float(result.y_open_mm) / stroke, 0.0, 1.0))
+    if goal == "min_torque":
+        # Share of the motor left unused at the peak of the stroke: 1 with no load, 0 at the stall torque.
+        peak = result.peak_thrust_op_n
+        if peak is None or not np.isfinite(peak):
+            return 0.0
+        avail = result.thrust_available_n
+        if avail is None or avail <= 1e-9:
+            return float(1.0 / (1.0 + float(peak) / 25.0))
+        return float(np.clip(1.0 - float(peak) / float(avail), -1.0, 1.0))
     if goal == "dx_at_025":
         dx = result.dx_at_025_mm
         if dx is None or not np.isfinite(dx):
@@ -1451,6 +1541,8 @@ def admission_score(
             pen += max(0.0, c.min_tube_clearance_mm - result.tube_clearance_mm) * 200.0
         if not getattr(result, "crossing_ok", True):
             pen += 300.0
+        if not getattr(result, "buckling_ok", True) and result.buckling_margin is not None:
+            pen += 20.0 + max(0.0, c.min_buckling_margin / max(float(result.buckling_margin), 1e-6) - 1.0) * 100.0
         if not result.sealed_at_y0:
             # Penalize smoothly by both leak past closed_gap and excess Y=0 flex past max_y0_flex_mm.
             leak = 0.0
@@ -1467,6 +1559,9 @@ def admission_score(
         if len(weights) > 1:
             return float(sum(w * _goal_utility(result, c, g) for g, w in weights.items()))
         goal = next(iter(weights))
+
+    if goal in PHYSICAL_GOALS:
+        return _goal_utility(result, c, goal)
 
     if goal == "min_energy":
         e = result.energy_cycle_mj

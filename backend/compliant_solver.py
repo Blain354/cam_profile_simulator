@@ -1,5 +1,12 @@
 """Time-budgeted multi-stage optimizer & async job manager for Compliant Bars.
 
+The "cmaes" method is the one to reach for: a covariance-matrix-adaptation evolution strategy
+started on the current design, with restarts. It learns which variables move together (thickness
+against handle offsets, say), which the other methods cannot. With a seed and an evaluation
+budget it returns the same design every time.
+
+The older methods, kept:
+
 Replaces the 36-point uniform random search with:
   1. Latin Hypercube Sampling (LHS) waves for stratified global space coverage.
   2. Multi-start projected gradient ascent (SPSA + coordinate pattern search) that
@@ -13,6 +20,8 @@ warnings, convergence history, and auto-persists completed experiments to SQLite
 
 from dataclasses import asdict, replace
 import datetime
+import multiprocessing
+import os
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -66,9 +75,24 @@ except ImportError:
     from . import tube_model as tube_law
 
 
-CONSTRAINT_KEYS = ("stress", "stall_no_flow", "motor_stall", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
+CONSTRAINT_KEYS = (
+    "stress", "stall_no_flow", "motor_stall", "seal_y0", "tube", "crossing", "buckling", "shell", "pivot", "pinch",
+    "rotation", "junction_forbidden", "no_open", "geometry",
+)
 
-SOLVER_METHODS = ("hybrid", "brute_force", "evolutionary", "local_refine")
+SOLVER_METHODS = ("cmaes", "hybrid", "brute_force", "evolutionary", "local_refine")
+
+
+def _score_candidate(job: Tuple[CompliantParams, CompliantConstraints, str, Dict[str, float]]) -> Tuple[CompliantResult, float]:
+    """One evaluation, in a worker process: no shared state, so a generation can be scored on several cores."""
+    params, constraints, goal, weights = job
+    result = compute_compliant(params, fast=True, constraints=constraints)
+    return result, admission_score(result, constraints, goal=goal, goal_weights=weights)
+
+
+def _default_workers() -> int:
+    # Half the cores, six at most: the server runs other things, and a search can last hours.
+    return int(max(1, min(6, (os.cpu_count() or 2) // 2)))
 
 
 def _classify_rejections(result: CompliantResult) -> List[str]:
@@ -97,6 +121,8 @@ def _classify_rejections(result: CompliantResult) -> List[str]:
         reasons.append("tube")
     if not getattr(result, "crossing_ok", True):
         reasons.append("crossing")
+    if not getattr(result, "buckling_ok", True):
+        reasons.append("buckling")
     if not result.shell_ok:
         reasons.append("shell")
     if not result.pivot_ok:
@@ -234,6 +260,7 @@ def _runner_brief(params: CompliantParams, result: CompliantResult, score: float
         "chamber_bandwidth_hz": result.chamber_bandwidth_hz,
         "energy_cycle_mj": result.energy_cycle_mj,
         "energy_stroke_mj": result.energy_stroke_mj,
+        "buckling_margin": result.buckling_margin,
         "peak_thrust_op_n": result.peak_thrust_op_n,
         "peak_torque_op_mnm": result.peak_torque_op_mnm,
         "thrust_available_n": result.thrust_available_n,
@@ -276,6 +303,11 @@ def run_time_budgeted_solve(
     mp: Dict[str, Any] = dict(method_params or {})
     norm_weights = normalize_goal_weights(goal, goal_weights)
     time_budget_s = float(max(0.5, time_budget_s))
+    # A run that stops on a count of evaluations, with a seed, is repeatable. One that stops on the clock is not.
+    # method_params: "max_evals" is a count, "max_evals_k" the same in thousands (the slider in the page).
+    max_evals = int(max(0, int(float(mp.get("max_evals") or 0)) or int(round(1000.0 * float(mp.get("max_evals_k") or 0)))))
+    if seed is None and mp.get("seed") not in (None, "", 0, "0"):
+        seed = int(float(mp["seed"]))
     keys = ALL_SOLVER_KEYS
     lows_l, highs_l = [], []
     for key in keys:
@@ -352,6 +384,8 @@ def run_time_budgeted_solve(
 
     def time_up() -> bool:
         if cancel_event is not None and cancel_event.is_set():
+            return True
+        if max_evals > 0 and tested >= max_evals:
             return True
         return (time.monotonic() - t_start) >= time_budget_s
 
@@ -430,6 +464,9 @@ def run_time_budgeted_solve(
                 lambda it: -abs((it[2].attack_angle_deg if it[2].attack_angle_deg is not None else 180.0) - c.target_attack_angle_deg),
                 lambda it: -(it[2].max_stress_mpa if it[2].max_stress_mpa is not None else 1e9),
                 lambda it: -(it[2].energy_cycle_mj if it[2].energy_cycle_mj is not None else 1e9),
+                lambda it: it[2].max_flow_frac if it[2].max_flow_frac is not None else -1e9,
+                lambda it: -(it[2].peak_torque_op_mnm if it[2].peak_torque_op_mnm is not None else 1e9),
+                lambda it: -(it[2].y_open_mm if it[2].y_open_mm is not None else 1e9),
             ]
             for key_fn in axis_keys:
                 if len(runners) >= 24:
@@ -506,7 +543,9 @@ def run_time_budgeted_solve(
             "rejected": rejected_total,
             "elapsed_s": round(elapsed, 2),
             "time_budget_s": time_budget_s,
-            "progress": 1.0 if final else min(0.99, elapsed / time_budget_s),
+            "max_evals": max_evals or None,
+            "seed": seed,
+            "progress": 1.0 if final else min(0.99, max(elapsed / time_budget_s, (tested / max_evals) if max_evals > 0 else 0.0)),
             "evals_per_sec": round(tested / elapsed, 1),
             "best_score": round(float(best_sc), 4) if best_sc is not None else None,
             "best_dx_at_025_mm": round(float(best_r.dx_at_025_mm), 4) if (best_r and best_r.dx_at_025_mm is not None) else None,
@@ -540,6 +579,7 @@ def run_time_budgeted_solve(
                 "pinch_ceiling_margin_mm": c.pinch_ceiling_margin_mm,
                 "pinch_floor_margin_mm": c.pinch_floor_margin_mm,
                 "max_rotation_deg": c.max_rotation_deg,
+                "min_buckling_margin": c.min_buckling_margin,
                 "stroke_fixed": "stroke" in fixed_vars,
                 "stroke_mm": base.stroke,
                 "anchor_symmetric": anchor_sym,
@@ -555,13 +595,44 @@ def run_time_budgeted_solve(
             snap["preview_timeline"] = preview_timeline
         return snap
 
-    def evaluate(z: np.ndarray, side_base: CompliantParams) -> Tuple[float, CompliantParams, CompliantResult]:
+    pool = None   # worker processes, opened by the methods that score a whole generation at once
+
+    def candidate(z: np.ndarray, side_base: CompliantParams) -> CompliantParams:
+        row = z_to_row(z, side_base)
+        return _apply_pinch_goal(_row_to_params(side_base, row, clip_lows, clip_highs, keys), c)
+
+    def evaluate_many(zs: np.ndarray, side_base: CompliantParams) -> List[float]:
+        """Score candidates in order, stopping at the budget. Same results with or without workers."""
+        if max_evals > 0:
+            zs = zs[: max(0, max_evals - tested)]
+        scores: List[float] = []
+        if pool is None:
+            for z in zs:
+                if time_up():
+                    break
+                scores.append(evaluate(z, side_base)[0])
+            return scores
+        if time_up() or len(zs) == 0:
+            return scores
+        prms = [candidate(z, side_base) for z in zs]
+        scored = pool.map(_score_candidate, [(prm, c, goal, norm_weights) for prm in prms])
+        for z, prm, (res, sc) in zip(zs, prms, scored):
+            scores.append(evaluate(z, side_base, (prm, res, sc))[0])
+        return scores
+
+    def evaluate(
+        z: np.ndarray,
+        side_base: CompliantParams,
+        scored: Optional[Tuple[CompliantParams, CompliantResult, float]] = None,
+    ) -> Tuple[float, CompliantParams, CompliantResult]:
         nonlocal tested, feasible_count, best_overall, best_feasible, last_emit
         nonlocal best_preview, last_live_invalid_t, last_live_valid_t
-        row = z_to_row(z, side_base)
-        params = _apply_pinch_goal(_row_to_params(side_base, row, clip_lows, clip_highs, keys), c)
-        result = compute_compliant(params, fast=True, constraints=c)
-        score = admission_score(result, c, goal=goal, goal_weights=norm_weights)
+        if scored is None:
+            params = candidate(z, side_base)
+            result = compute_compliant(params, fast=True, constraints=c)
+            score = admission_score(result, c, goal=goal, goal_weights=norm_weights)
+        else:
+            params, result, score = scored
         tested += 1
         now = time.monotonic()
         elapsed_now = now - t_start
@@ -840,6 +911,75 @@ def run_time_budgeted_solve(
         best_i = int(np.argmax(scores))
         return simplex[best_i], scores[best_i]
 
+    def cma_es_run(z0: np.ndarray, sigma0: float, lam: int, side_base: CompliantParams, label: str) -> None:
+        """One (mu/mu_w, lambda)-CMA-ES run in the unit box, until it converges, stalls or the budget ends.
+
+        Hansen's standard strategy parameters. A sample outside the box is scored at its nearest point
+        inside, plus a penalty that grows with the distance, so the mean is pulled back in.
+        """
+        nonlocal phase, wave
+        n = d
+        mu = lam // 2
+        w = np.log(mu + 0.5) - np.log(np.arange(1, mu + 1))
+        w = w / np.sum(w)
+        mueff = 1.0 / float(np.sum(w ** 2))
+        cc = (4.0 + mueff / n) / (n + 4.0 + 2.0 * mueff / n)
+        cs = (mueff + 2.0) / (n + mueff + 5.0)
+        c1 = 2.0 / ((n + 1.3) ** 2 + mueff)
+        cmu = min(1.0 - c1, 2.0 * (mueff - 2.0 + 1.0 / mueff) / ((n + 2.0) ** 2 + mueff))
+        damps = 1.0 + 2.0 * max(0.0, np.sqrt((mueff - 1.0) / (n + 1.0)) - 1.0) + cs
+        chi_n = np.sqrt(n) * (1.0 - 1.0 / (4.0 * n) + 1.0 / (21.0 * n * n))
+        mean = np.clip(z0.astype(float), 0.0, 1.0)
+        sigma = float(sigma0)
+        pc, ps = np.zeros(n), np.zeros(n)
+        b_mat, d_vec, c_mat = np.eye(n), np.ones(n), np.eye(n)
+        inv_sqrt_c = np.eye(n)
+        eigen_every = max(1, int(1.0 / ((c1 + cmu) * n * 10.0)))
+        gen = 0
+        gen_best: List[float] = []
+        stall_window = 25 + int(30 * n / lam)
+        while not time_up():
+            wave += 1
+            phase = f"{label}: generation {gen + 1} (λ = {lam}, step {sigma:.3f})"
+            arz = rng.standard_normal((lam, n))
+            arx = mean + sigma * (arz * d_vec) @ b_mat.T
+            inside = np.clip(arx, 0.0, 1.0)
+            scores = evaluate_many(inside, side_base)
+            if len(scores) < lam:
+                return                      # budget ended inside this generation
+            fit = -np.array(scores) + 10.0 * np.sum((arx - inside) ** 2, axis=1)
+            order = np.argsort(fit, kind="stable")
+            old = mean
+            chosen = arx[order[:mu]]
+            mean = np.clip(w @ chosen, 0.0, 1.0)
+            y_w = (mean - old) / sigma
+            ps = (1.0 - cs) * ps + np.sqrt(cs * (2.0 - cs) * mueff) * (inv_sqrt_c @ y_w)
+            hsig = float(np.linalg.norm(ps) / np.sqrt(1.0 - (1.0 - cs) ** (2.0 * (gen + 1))) / chi_n < 1.4 + 2.0 / (n + 1.0))
+            pc = (1.0 - cc) * pc + hsig * np.sqrt(cc * (2.0 - cc) * mueff) * y_w
+            steps = (chosen - old) / sigma
+            c_mat = (
+                (1.0 - c1 - cmu) * c_mat
+                + c1 * (np.outer(pc, pc) + (1.0 - hsig) * cc * (2.0 - cc) * c_mat)
+                + cmu * (steps.T * w) @ steps
+            )
+            sigma = float(min(0.5, sigma * np.exp((cs / damps) * (np.linalg.norm(ps) / chi_n - 1.0))))
+            gen += 1
+            if gen % eigen_every == 0:
+                c_mat = np.triu(c_mat) + np.triu(c_mat, 1).T
+                eig, b_mat = np.linalg.eigh(c_mat)
+                d_vec = np.sqrt(np.maximum(eig, 1e-20))
+                inv_sqrt_c = (b_mat / d_vec) @ b_mat.T
+            gen_best.append(float(fit[order[0]]))
+            if sigma * float(np.max(d_vec)) < 2e-4:
+                return                      # converged: every direction is below 0.02 % of its range
+            if float(np.max(d_vec)) > 1e7 * float(np.min(d_vec)):
+                return                      # degenerate covariance
+            if len(gen_best) >= 2 * stall_window:
+                recent = min(gen_best[-stall_window:])
+                before = min(gen_best[-2 * stall_window:-stall_window])
+                if recent >= before - 1e-6 * max(1.0, abs(before)):
+                    return                  # no gain over a whole window
+
     # ── Main time-budgeted loop dispatched by selected search method ────────
     # Evaluate starting point(s) first
     start_evals: List[Tuple[np.ndarray, float, bool]] = []
@@ -850,7 +990,44 @@ def run_time_budgeted_solve(
         sc_cur, _, _ = evaluate(z_cur, side_base)
         start_evals.append((z_cur, sc_cur, inv))
 
-    if method == "brute_force":
+    if method == "cmaes":
+        lam0 = int(float(mp.get("pop_size") or 0))
+        if lam0 <= 0:
+            lam0 = 2 * (4 + int(3.0 * np.log(max(d, 1))))
+        lam0 = int(np.clip(lam0, 6, 200))
+        sigma_start = float(np.clip(float(mp.get("sigma0") or 0.2), 0.02, 0.5))
+        workers = int(float(mp.get("workers") or 0)) or _default_workers()
+        if workers > 1 and d > 0 and not multiprocessing.current_process().daemon:
+            # "spawn": the server runs threads, and a forked child would inherit their locks.
+            pool = multiprocessing.get_context("spawn").Pool(int(min(workers, 32)))
+        restart = 0
+        lam_global = lam0
+        try:
+            while d > 0 and not time_up():
+                if restart < len(start_evals):
+                    # First, one run per pivot side from the design on screen.
+                    z_from, _sc, inv = start_evals[restart]
+                    cma_es_run(z_from, sigma_start, lam0, replace(base, pivot_inverted=inv), f"Run {restart + 1} from the current design")
+                elif (restart - len(start_evals)) % 2 == 0 and admissible_pool:
+                    # Then alternate: tighten around the leader...
+                    admissible_pool.sort(key=lambda item: item[0], reverse=True)
+                    _sc, prm_top, _res, z_top = admissible_pool[0]
+                    cma_es_run(z_top, 0.3 * sigma_start, lam0, replace(base, pivot_inverted=prm_top.pivot_inverted), f"Run {restart + 1} around the leader")
+                else:
+                    # ...and look elsewhere with a larger population each time.
+                    lam_global = int(min(200, lam_global * 2))
+                    inv = sides[restart % len(sides)]
+                    side_base = replace(base, pivot_inverted=inv)
+                    z_far = clamp_pinch_in_z(rng.random(d), side_base)
+                    cma_es_run(z_far, 0.3, lam_global, side_base, f"Run {restart + 1} from elsewhere")
+                restart += 1
+        finally:
+            if pool is not None:
+                pool.terminate()
+                pool.join()
+                pool = None
+
+    elif method == "brute_force":
         conservative_rate = 45.0  # conservative eval/s floor so planned sweep fits inside time budget
         sampling = str(mp.get("sampling", "lhs"))
         if sampling == "grid" and d > 0:
@@ -1215,7 +1392,7 @@ class CompliantSolveJobManager:
                     method_params=method_params,
                     constraints=cons,
                     pivot_side=pivot_side,
-                    seed=None,
+                    seed=None,                      # method_params["seed"], when set, makes the run repeatable
                     cancel_event=cancel_ev,
                     on_progress=_on_progress,
                 )

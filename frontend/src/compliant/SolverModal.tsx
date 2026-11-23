@@ -22,6 +22,7 @@ const CONSTRAINT_LABELS: Record<string, string> = {
   seal_y0: 'Y = 0 pinch geometry / pre-flex',
   tube: 'Member L/R hits tube (< clearance)',
   crossing: 'Members cross each other',
+  buckling: 'Member too close to its Euler buckling load',
   shell: 'Shell housing clearance',
   pivot: 'Carriage pivot clearance',
   pinch: 'Pinch floor / ceiling margin',
@@ -50,6 +51,9 @@ type RankMetricKey = SolverGoal | 'low_stress';
 type RankWeights = Record<RankMetricKey, number>;
 
 const RANK_METRICS: { key: RankMetricKey; label: string; hint: string }[] = [
+  { key: 'max_flow', label: 'Max flow', hint: 'Larger share of full-bore flow at the end of the stroke' },
+  { key: 'min_dead_band', label: 'Dead band', hint: 'Smaller carriage travel before air starts to flow' },
+  { key: 'min_torque', label: 'Low torque', hint: 'Lower peak motor torque over the stroke, as a share of the stall torque' },
   { key: 'dx_at_025', label: 'ΔX @ 0.25', hint: 'Larger horizontal pinch opening at Y = 0.25 mm' },
   { key: 'pass_freq_bw', label: 'Pass freq / BW', hint: 'Higher chamber cycle frequency & -3 dB bandwidth (faster 0→100% inflation)' },
   { key: 'min_energy', label: 'Low energy', hint: 'Lower actuation energy per full valve cycle (mJ)' },
@@ -61,6 +65,9 @@ const RANK_METRICS: { key: RankMetricKey; label: string; hint: string }[] = [
 
 function initialRankWeights(job: SolveJobState | null): RankWeights {
   const base: RankWeights = {
+    max_flow: 0,
+    min_dead_band: 0,
+    min_torque: 0,
     dx_at_025: 0,
     pass_freq_bw: 0,
     min_energy: 0,
@@ -76,7 +83,7 @@ function initialRankWeights(job: SolveJobState | null): RankWeights {
   const gw = job.summary?.goal_weights ?? job.goal_weights;
   let assigned = false;
   if (gw) {
-    for (const k of ['dx_at_025', 'pass_freq_bw', 'min_energy', 'trajectory_target', 'min_open_stroke', 'flow_slope'] as const) {
+    for (const k of ['max_flow', 'min_dead_band', 'min_torque', 'dx_at_025', 'pass_freq_bw', 'min_energy', 'trajectory_target', 'min_open_stroke', 'flow_slope'] as const) {
       const w = gw[k];
       if (typeof w === 'number' && Number.isFinite(w) && w > 0) {
         base[k] = Math.max(5, Math.round(w * 20) * 5);
@@ -97,6 +104,19 @@ function runnerUtility(
   constraints: SolverConstraints,
   strengthMpa: number,
 ): number {
+  // The three physical goals mirror backend/compliant_bars.py::_goal_utility.
+  if (metric === 'max_flow') {
+    return r.max_flow_frac != null && Number.isFinite(r.max_flow_frac) ? Math.min(1, Math.max(0, r.max_flow_frac)) : 0;
+  }
+  if (metric === 'min_dead_band') {
+    if (r.y_open_mm == null || !Number.isFinite(r.y_open_mm) || !r.stroke || r.stroke <= 0) return 0;
+    return Math.min(1, Math.max(0, 1 - r.y_open_mm / r.stroke));
+  }
+  if (metric === 'min_torque') {
+    if (r.peak_thrust_op_n == null || !Number.isFinite(r.peak_thrust_op_n)) return 0;
+    if (r.thrust_available_n == null || r.thrust_available_n <= 1e-9) return 1 / (1 + r.peak_thrust_op_n / 25);
+    return Math.min(1, Math.max(-1, 1 - r.peak_thrust_op_n / r.thrust_available_n));
+  }
   if (metric === 'dx_at_025') {
     if (r.dx_at_025_mm == null || !Number.isFinite(r.dx_at_025_mm)) return -1;
     const openPen = 0.05 * (r.y_open_mm != null && Number.isFinite(r.y_open_mm) ? r.y_open_mm : 1.0);
@@ -241,6 +261,16 @@ function MethodParamsPanel({
           <RotateCcw className="w-3 h-3" /> Reset
         </button>
       </div>
+
+      {m === 'cmaes' && (
+        <div className="space-y-3">
+          {numField('max_evals_k', 'Evaluation budget (thousands, 0 = time budget only)', 0, 200, 5, 'Stops after this many thousand designs. With a seed, the same budget gives the same answer; the time budget stays as a ceiling.')}
+          {numField('seed', 'Seed (0 = random)', 0, 20, 1, 'Same seed, same evaluation budget, same result. Change it to explore another path.')}
+          {numField('sigma0', 'First step (fraction of each range)', 0.05, 0.5, 0.05, 'How far the first run looks around your current design.')}
+          {numField('pop_size', 'Population (0 = automatic)', 0, 120, 4, 'Designs per generation. Automatic is 2 × (4 + 3 ln d), doubled at each far restart.')}
+          {numField('workers', 'Worker processes (0 = automatic)', 0, 12, 1, 'Cores that score a generation in parallel. Automatic is half the server cores, six at most. The result does not depend on it.')}
+        </div>
+      )}
 
       {m === 'hybrid' && (
         <div className="space-y-3">
@@ -1073,6 +1103,9 @@ export function SolverModal({
                           type="button"
                           onClick={() =>
                             setRankWeights({
+                              max_flow: 0,
+                              min_dead_band: 0,
+                              min_torque: 0,
                               dx_at_025: 0,
                               pass_freq_bw: 0,
                               min_energy: 0,

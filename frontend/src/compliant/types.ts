@@ -224,6 +224,8 @@ export interface SolverConstraints {
   min_tube_clearance_mm: number;
   max_y0_flex_mm: number;
   max_rotation_deg: number;
+  /** Euler critical load over the largest compression of the weakest member. 0 = not checked. */
+  min_buckling_margin?: number;
   stress_limit_factor: number;
   motor_limited_stress?: boolean;
   require_no_stall_in_stroke?: boolean;
@@ -243,6 +245,7 @@ export const DEFAULT_CONSTRAINTS: SolverConstraints = {
   min_tube_clearance_mm: 0.5,
   max_y0_flex_mm: 0,
   max_rotation_deg: 15,
+  min_buckling_margin: 2,
   stress_limit_factor: 0.85,
   motor_limited_stress: true,
   require_no_stall_in_stroke: false,
@@ -444,6 +447,8 @@ export interface CompliantResult {
   max_stress_to_stall_mpa?: number | null;
   energy_stroke_mj?: number | null;
   energy_cycle_mj?: number | null;
+  /** Euler critical load of the weakest member over its largest compression in the stroke; the beam model is linear. */
+  buckling_margin?: number | null;
   overtravel_y?: number[];
   overtravel_thrust?: (number | null)[];
   overtravel_force_a?: (number | null)[];
@@ -494,13 +499,21 @@ export interface Runner {
   params: Partial<CompliantParams>;
 }
 
-export type SolverGoal = 'dx_at_025' | 'pass_freq_bw' | 'min_energy' | 'min_open_stroke' | 'flow_slope' | 'trajectory_target';
+export type SolverGoal =
+  | 'max_flow' | 'min_dead_band' | 'min_torque'
+  | 'dx_at_025' | 'pass_freq_bw' | 'min_energy' | 'min_open_stroke' | 'flow_slope' | 'trajectory_target';
 
-export const ALL_SOLVER_GOALS: SolverGoal[] = ['dx_at_025', 'pass_freq_bw', 'min_energy', 'trajectory_target', 'min_open_stroke', 'flow_slope'];
+export const ALL_SOLVER_GOALS: SolverGoal[] = [
+  'max_flow', 'min_dead_band', 'min_torque',
+  'dx_at_025', 'pass_freq_bw', 'min_energy', 'trajectory_target', 'min_open_stroke', 'flow_slope',
+];
 
-export type SolverMethod = 'hybrid' | 'brute_force' | 'evolutionary' | 'local_refine';
+/** Each of these is a share between 0 and 1 of a physical quantity, so equal weights trade them like for like. */
+export const EFFICIENT_VALVE_GOALS: SolverGoal[] = ['max_flow', 'min_dead_band', 'min_torque'];
 
-export const ALL_SOLVER_METHODS: SolverMethod[] = ['hybrid', 'brute_force', 'evolutionary', 'local_refine'];
+export type SolverMethod = 'cmaes' | 'hybrid' | 'brute_force' | 'evolutionary' | 'local_refine';
+
+export const ALL_SOLVER_METHODS: SolverMethod[] = ['cmaes', 'hybrid', 'brute_force', 'evolutionary', 'local_refine'];
 
 export const BRUTE_FORCE_CONSERVATIVE_RATE = 45; // evals/s conservative floor for upper-bound time estimates
 
@@ -510,6 +523,12 @@ export const SOLVER_METHOD_META: Record<SolverMethod, {
   description: string;
   defaults: Record<string, number | string>;
 }> = {
+  cmaes: {
+    label: 'CMA-ES (adaptive, repeatable)',
+    short: 'CMA-ES',
+    description: 'Starts on your current design and learns which variables move together (thickness against handle offsets, say), then restarts elsewhere with a larger population. Same seed and evaluation budget, same answer.',
+    defaults: { max_evals_k: 0, seed: 1, sigma0: 0.2, pop_size: 0, workers: 0 },
+  },
   hybrid: {
     label: 'Hybrid (LHS + Gradient + Nelder-Mead)',
     short: 'Hybrid',
@@ -542,8 +561,9 @@ export interface SolverMethodConfig {
 }
 
 export const DEFAULT_SOLVER_METHOD_CONFIG: SolverMethodConfig = {
-  method: 'hybrid',
+  method: 'cmaes',
   params: {
+    cmaes: { ...SOLVER_METHOD_META.cmaes.defaults },
     hybrid: { ...SOLVER_METHOD_META.hybrid.defaults },
     brute_force: { ...SOLVER_METHOD_META.brute_force.defaults },
     evolutionary: { ...SOLVER_METHOD_META.evolutionary.defaults },
@@ -561,6 +581,9 @@ export const DEFAULT_SOLVER_GOAL_CONFIG: SolverGoalConfig = {
   selected: ['dx_at_025'],
   useWeights: false,
   weights: {
+    max_flow: 50,
+    min_dead_band: 50,
+    min_torque: 50,
     dx_at_025: 50,
     pass_freq_bw: 50,
     min_energy: 50,
@@ -571,6 +594,21 @@ export const DEFAULT_SOLVER_GOAL_CONFIG: SolverGoalConfig = {
 };
 
 export const SOLVER_GOAL_META: Record<SolverGoal, { label: string; short: string; description: string }> = {
+  max_flow: {
+    label: 'Max airflow at full stroke',
+    short: 'Max flow',
+    description: 'Maximizes the share of full-bore flow reached at the end of the reachable stroke (0 to 100 %).',
+  },
+  min_dead_band: {
+    label: 'Min dead band',
+    short: 'Dead band',
+    description: 'Maximizes the share of the stroke that moves air: the carriage travel before 2 % flow is the dead band.',
+  },
+  min_torque: {
+    label: 'Min motor torque',
+    short: 'Min torque',
+    description: 'Maximizes the share of the motor left unused at the peak of the stroke (1 at no load, 0 at the stall torque).',
+  },
   dx_at_025: {
     label: 'Max ΔX @ Y = 0.25 mm',
     short: 'ΔX @ 0.25',
@@ -858,6 +896,7 @@ function resolveMethodConfig(raw: unknown): SolverMethodConfig {
   const base: SolverMethodConfig = {
     method: DEFAULT_SOLVER_METHOD_CONFIG.method,
     params: {
+      cmaes: { ...SOLVER_METHOD_META.cmaes.defaults },
       hybrid: { ...SOLVER_METHOD_META.hybrid.defaults },
       brute_force: { ...SOLVER_METHOD_META.brute_force.defaults },
       evolutionary: { ...SOLVER_METHOD_META.evolutionary.defaults },
@@ -972,7 +1011,7 @@ export function fromCompliantProfilePayload(raw: Record<string, unknown>): Compl
     const numKeys = [
       'pinch_ceiling_margin_mm', 'pinch_floor_margin_mm',
       'min_shell_clearance_mm', 'min_pivot_clearance_mm', 'min_tube_clearance_mm', 'max_y0_flex_mm', 'max_rotation_deg',
-      'stress_limit_factor',
+      'min_buckling_margin', 'stress_limit_factor',
       'target_pinch_from_top_mm', 'target_attack_angle_deg',
     ] as const;
     for (const key of numKeys) {
