@@ -11,7 +11,7 @@ from backend.compliant_bars import (
     _polyline_distances, admission_score, compute_compliant,
 )
 from backend.compliant_bars import _constraints_from_mapping
-from backend.compliant_solver import SOLVER_METHODS, _classify_rejections, run_time_budgeted_solve
+from backend.compliant_solver import PARETO_CAP, SOLVER_METHODS, _classify_rejections, _pareto_insert, _trade_axes, run_time_budgeted_solve
 from backend.linkage import _pinch_force
 
 # A design drawn by hand on 2026-11-23: L and R leave the junction side by side for about 4 mm,
@@ -114,6 +114,38 @@ class BucklingTests(unittest.TestCase):
                                       constraints=CompliantConstraints(min_buckling_margin=2.0))
         self.assertEqual(out["summary"]["active_constraints"]["min_buckling_margin"], 2.0)
         self.assertIn("buckling", [s["key"] for s in out["summary"]["rejection_stats"]])
+
+
+class TradeOffTests(unittest.TestCase):
+    def fake(self, flow, torque, dead_band):
+        res = replace(compute_compliant(CompliantParams(), fast=True), max_flow_frac=flow, peak_torque_op_mnm=torque, y_open_mm=dead_band)
+        return (flow, CompliantParams(), res, np.zeros(1))
+
+    def test_the_front_keeps_what_nothing_beats_on_every_axis(self):
+        front = []
+        _pareto_insert(front, self.fake(0.5, 10.0, 0.3))
+        _pareto_insert(front, self.fake(0.8, 20.0, 0.3))     # more flow, more torque: a trade, kept
+        _pareto_insert(front, self.fake(0.4, 12.0, 0.4))     # worse everywhere: dropped
+        self.assertEqual(sorted(it[4][0] for it in front), [0.5, 0.8])
+        _pareto_insert(front, self.fake(0.9, 9.0, 0.2))      # better everywhere: replaces both
+        self.assertEqual([it[4] for it in front], [(0.9, -9.0, -0.2)])
+        self.assertEqual(_trade_axes(front[0][2]), (0.9, -9.0, -0.2))
+        for k in range(3 * PARETO_CAP):                       # a long front is thinned, not grown without bound
+            _pareto_insert(front, self.fake(0.9 + 0.001 * (k + 1), 9.0 + 0.1 * (k + 1), 0.2))
+        self.assertEqual(len(front), PARETO_CAP)
+
+    def test_a_converged_search_still_returns_designs_to_trade(self):
+        out = run_time_budgeted_solve(
+            CompliantParams(), BOUNDS, time_budget_s=600.0, goal="max_flow", goal_weights=TRIO, method="cmaes",
+            method_params={"max_evals": 1200, "seed": 5, "workers": 1},
+            constraints=CompliantConstraints(motor_limited_stress=False),
+        )
+        runners = out["runners"]
+        self.assertGreater(len(runners), 4)
+        torques = [r["peak_torque_op_mnm"] for r in runners]
+        flows = [r["max_flow_frac"] for r in runners]
+        self.assertGreater(max(torques) - min(torques), 1.0)
+        self.assertGreater(max(flows) - min(flows), 0.02)
 
 
 class RouteTests(unittest.TestCase):

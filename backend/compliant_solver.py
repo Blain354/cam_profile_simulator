@@ -95,6 +95,45 @@ def _default_workers() -> int:
     return int(max(1, min(6, (os.cpu_count() or 2) // 2)))
 
 
+PARETO_CAP = 60
+
+
+def _trade_axes(result: CompliantResult) -> Tuple[float, float, float]:
+    """What a valve trades, each larger-is-better: flow at full stroke, motor torque, dead band."""
+    torque = result.peak_torque_op_mnm if result.peak_torque_op_mnm is not None else result.peak_thrust_op_n
+    return (
+        float(result.max_flow_frac) if result.max_flow_frac is not None else 0.0,
+        -float(torque) if torque is not None else -1.0e9,
+        -float(result.y_open_mm) if result.y_open_mm is not None else -1.0e9,
+    )
+
+
+def _pareto_insert(front: List[tuple], item: tuple) -> None:
+    """Keep `front` the set of admissible designs no other design beats on all three axes at once.
+
+    item is (score, params, result, z); its axes are appended. Past PARETO_CAP the front is thinned
+    where it is most crowded, keeping the better score of the closest pair.
+    """
+    axes = _trade_axes(item[2])
+    kept = []
+    for other in front:
+        o = other[4]
+        if o[0] >= axes[0] and o[1] >= axes[1] and o[2] >= axes[2]:
+            return                              # another design is at least as good everywhere
+        if not (axes[0] >= o[0] and axes[1] >= o[1] and axes[2] >= o[2]):
+            kept.append(other)
+    kept.append(item + (axes,))
+    if len(kept) > PARETO_CAP:
+        pts = np.array([k[4] for k in kept], dtype=float)
+        span = np.maximum(pts.max(axis=0) - pts.min(axis=0), 1e-9)
+        unit = (pts - pts.min(axis=0)) / span
+        dist = np.sum((unit[:, None, :] - unit[None, :, :]) ** 2, axis=2)
+        np.fill_diagonal(dist, np.inf)
+        i, j = np.unravel_index(int(np.argmin(dist)), dist.shape)
+        del kept[i if kept[i][0] < kept[j][0] else j]
+    front[:] = kept
+
+
 def _classify_rejections(result: CompliantResult) -> List[str]:
     """Return all constraint keys violated by an inadmissible evaluation."""
     if result.passes:
@@ -375,6 +414,7 @@ def run_time_budgeted_solve(
     last_live_invalid_t = -1.0
     last_live_valid_t = -1.0
     admissible_pool: List[Tuple[float, CompliantParams, CompliantResult, np.ndarray]] = []
+    pareto_front: List[tuple] = []   # admissible designs on the flow / torque / dead-band front, see _pareto_insert
     near_pool: List[Tuple[float, CompliantParams, CompliantResult, np.ndarray, bool]] = []
     best_overall: Optional[Tuple[float, CompliantParams, CompliantResult]] = None
     best_feasible: Optional[Tuple[float, CompliantParams, CompliantResult]] = None
@@ -450,8 +490,33 @@ def run_time_budgeted_solve(
             if not _is_distinct(prm):
                 continue
             runners.append((sc, prm, res))
-            if len(runners) == 16:
+            if len(runners) == 12:
                 break
+
+        # Then the trade-off front, spread from the lowest torque to the highest: a search that has converged
+        # leaves one shape at the top of the pool, and the page re-ranks these to trade torque against flow.
+        # Two designs on the front may share their nodes and differ by thickness alone, so thickness counts here.
+        def _is_new_trade(prm: CompliantParams) -> bool:
+            return not any(
+                abs(prm.anchor_distance - o.anchor_distance) < 0.05
+                and abs(prm.junction_x - o.junction_x) < 0.05
+                and abs(prm.junction_y - o.junction_y) < 0.05
+                and abs(prm.pinch_y - o.pinch_y) < 0.05
+                and abs(prm.l_thickness - o.l_thickness) < 0.05
+                and abs(prm.r_thickness - o.r_thickness) < 0.05
+                and abs(prm.f_thickness - o.f_thickness) < 0.05
+                and prm.pivot_inverted == o.pivot_inverted
+                for _s, o, _r in runners
+            )
+
+        front = sorted(pareto_front, key=lambda it: it[4][1])
+        room = 20 - len(runners)
+        if front and room > 0:
+            picks = sorted({int(round(k)) for k in np.linspace(0, len(front) - 1, min(room, len(front)))})
+            for k in picks:
+                sc, prm, res = front[k][0], front[k][1], front[k][2]
+                if _is_new_trade(prm):
+                    runners.append((sc, prm, res))
 
         # Also include top distinct tradeoff leaders (up to 24 total) so live weight re-ranking
         # in the UI can surface strong alternatives along every objective axis.
@@ -653,6 +718,7 @@ def run_time_budgeted_solve(
         if result.passes:
             feasible_count += 1
             admissible_pool.append((score, params, result, z.copy()))
+            _pareto_insert(pareto_front, (score, params, result, z.copy()))
             # Keep pool bounded so sorting stays O(1)
             if len(admissible_pool) > 400:
                 admissible_pool.sort(key=lambda item: item[0], reverse=True)
