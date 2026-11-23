@@ -6,7 +6,7 @@ import type { TubeSweep } from '../lib/tubeSweep';
 import { applyFrostedBackdrop } from './solvePreviewRenderer';
 import {
   CARRIAGE_SPEED_MM_S, MEMBERS, activeStallY, buildConstantSpeedCycle, deflected, deflectedPoint, interp,
-  interpNullable, isCarriageStalled, nearestToWall, pinchContactX, strokeOutlinePath,
+  interpNullable, isCarriageStalled, nearestToWall, physicalCarriageY, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
   CompliantParams, CompliantResult, Member, Pt, SolverConstraints,
@@ -102,6 +102,7 @@ export function drawMechanismFrame(
     constraints: SolverConstraints;
     tubeSweep: TubeSweep | null;
     yPose: number;
+    yCommand?: number;
     stalled?: boolean;
     includeDetails: boolean;
     includeParticles: boolean;
@@ -110,7 +111,7 @@ export function drawMechanismFrame(
   },
 ) {
   const {
-    params, result, constraints, tubeSweep, yPose, stalled = false,
+    params, result, constraints, tubeSweep, yPose, yCommand, stalled = false,
     includeDetails, includeParticles, particlePhaseA, particlePhaseB,
   } = opts;
 
@@ -551,12 +552,16 @@ export function drawMechanismFrame(
     }
 
     // Live carriage Y readout at top-left
+    const cmdY = yCommand ?? yPose;
+    const yLabel = stalled
+      ? `Y = ${cmdY >= 0 ? '+' : ''}${cmdY.toFixed(2)} mm (stall ${yPose >= 0 ? '+' : ''}${yPose.toFixed(2)})`
+      : `Y = ${cmdY >= 0 ? '+' : ''}${cmdY.toFixed(2)} mm`;
     drawOutlinedText(
       ctx,
-      `Y = ${yPose >= 0 ? '+' : ''}${yPose.toFixed(2)} mm`,
+      yLabel,
       14,
       16,
-      COLORS.mutedText,
+      stalled ? COLORS.stallText : COLORS.mutedText,
       'left',
       11,
     );
@@ -584,10 +589,7 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
 
   const speed = carriageSpeed && carriageSpeed > 0 ? carriageSpeed : CARRIAGE_SPEED_MM_S;
   const stallY = activeStallY(result, constraints, params.stroke);
-  const effectiveAmp = stallY != null ? Math.max(0.05, stallY) : params.stroke;
-  const steps = stallY != null && stallY <= 1e-6
-    ? [{ y: 0, delayMs: 600, dir: 1 as const }]
-    : buildConstantSpeedCycle(effectiveAmp, speed, 120);
+  const steps = buildConstantSpeedCycle(params.stroke, speed, 120);
   const maxFlow = Math.max(1e-6, ...result.flow_a.map((f) => f ?? 0));
 
   const frames: GifFrameInput[] = [];
@@ -596,11 +598,12 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const yPose = stallY != null ? Math.max(-stallY, Math.min(stallY, step.y)) : step.y;
-    const isStalled = isCarriageStalled(yPose, stallY);
-    const delayMs = isStalled ? Math.max(step.delayMs, 600) : step.delayMs;
-    const flowA = Math.max(0, interp(yPose, result.Y_positions, result.flow_a));
-    const flowB = Math.max(0, interp(-yPose, result.Y_positions, result.flow_a));
+    const yCmd = step.y;
+    const yActual = physicalCarriageY(yCmd, stallY);
+    const isStalled = isCarriageStalled(yCmd, stallY);
+    const delayMs = step.delayMs;
+    const flowA = Math.max(0, interp(yActual, result.Y_positions, result.flow_a));
+    const flowB = Math.max(0, interp(-yActual, result.Y_positions, result.flow_a));
     const fracA = Math.min(1, flowA / maxFlow);
     const fracB = Math.min(1, flowB / maxFlow);
 
@@ -609,7 +612,8 @@ export async function buildMechanismGif(options: MechanismGifOptions): Promise<B
       result,
       constraints,
       tubeSweep,
-      yPose,
+      yPose: yActual,
+      yCommand: yCmd,
       stalled: isStalled,
       includeDetails,
       includeParticles,

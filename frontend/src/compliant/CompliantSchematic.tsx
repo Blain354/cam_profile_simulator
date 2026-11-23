@@ -9,7 +9,7 @@ import { buildMechanismGif } from './mechanismGif';
 import {
   LOAD_FACTOR, MEMBERS, MOTOR_RPM, activeStallY, anchorPoint, anchorSymmetricRange, bezier, deflected,
   deflectedPoint, effectivePinchY, interp, interpNullable, isCarriageStalled,
-  leftNormal, nearestToWall, pinchContactX, strokeOutlinePath,
+  leftNormal, nearestToWall, physicalCarriageY, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
   CompliantParams, CompliantResult, HoveredBoundTarget, Member, Pt, QuadrantKey, QuadrantMap,
@@ -195,8 +195,11 @@ export function CompliantSchematic({
     ? pinchContactX(params, tubeSweep)
     : (hasSolvedLines && result?.pinch_contact_x != null ? result.pinch_contact_x : pinchContactX(params, tubeSweep));
   const pinch: Pt = [pinchContactXPos + params.f_thickness / 2, effectivePinchY(params, constraints)];
-  const force = hasSolvedLines && result ? interp(yPose, result.Y_positions, result.force_a) : 0;
-  const atRestPose = Math.abs(yPose) < 1e-9;
+  const stallY = activeStallY(result, constraints, params.stroke);
+  const stalled = isCarriageStalled(yPose, stallY);
+  const yActual = physicalCarriageY(yPose, stallY);
+  const force = hasSolvedLines && result ? interp(yActual, result.Y_positions, result.force_a) : 0;
+  const atRestPose = Math.abs(yActual) < 1e-9;
   const useLiveRest = !hasSolvedLines || isDragging || atRestPose;
 
   const restLines = useMemo(() => ({
@@ -208,11 +211,11 @@ export function CompliantSchematic({
   const lines = useMemo(() => {
     if (useLiveRest || !result?.lines) return restLines;
     return {
-      l: deflected(result.lines.l, yPose, force),
-      r: deflected(result.lines.r, yPose, force),
-      f: deflected(result.lines.f, yPose, force),
+      l: deflected(result.lines.l, yActual, force),
+      r: deflected(result.lines.r, yActual, force),
+      f: deflected(result.lines.f, yActual, force),
     };
-  }, [result, yPose, force, restLines, useLiveRest]);
+  }, [result, yActual, force, restLines, useLiveRest]);
 
   const chords: Record<Member, [Pt, Pt]> = { l: [anchor, junction], r: [junction, pivot], f: [junction, pinch] };
   const handleOf = (member: Member, index: 0 | 1): Pt => {
@@ -264,9 +267,7 @@ export function CompliantSchematic({
     </g>
   );
 
-  const carriageY = h0 + (result?.travel_sign ?? 1) * yPose;
-  const stallY = activeStallY(result, constraints, params.stroke);
-  const stalled = isCarriageStalled(yPose, stallY);
+  const carriageY = h0 + (result?.travel_sign ?? 1) * yActual;
   const hw = params.pivot_offset + 1;
   const carriagePoly = [
     [-hw, carriageY + 0.9], [-hw + 0.9, carriageY + 1.5], [hw - 0.9, carriageY + 1.5], [hw, carriageY + 0.9],
@@ -274,9 +275,9 @@ export function CompliantSchematic({
   ].map(([px, py]) => `${px},${-py}`).join(' ');
   const mirror = (pts: Pt[]): Pt[] => pts.map(([x, yy]) => [-x, ceiling - yy]);
   const mirroredLines: Record<Member, Pt[]> = {
-    l: !useLiveRest && result ? mirror(deflected(result.lines.l, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.l),
-    r: !useLiveRest && result ? mirror(deflected(result.lines.r, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.r),
-    f: !useLiveRest && result ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.f),
+    l: !useLiveRest && result ? mirror(deflected(result.lines.l, -yActual, interp(-yActual, result.Y_positions, result.force_a))) : mirror(lines.l),
+    r: !useLiveRest && result ? mirror(deflected(result.lines.r, -yActual, interp(-yActual, result.Y_positions, result.force_a))) : mirror(lines.r),
+    f: !useLiveRest && result ? mirror(deflected(result.lines.f, -yActual, interp(-yActual, result.Y_positions, result.force_a))) : mirror(lines.f),
   };
   const mirroredOutlines: Record<Member, Pt[]> = {
     l: strokeOutlinePath(mirroredLines.l, params.l_thickness),
@@ -321,17 +322,17 @@ export function CompliantSchematic({
   );
 
   const footB = !useLiveRest && result
-    ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a)))
+    ? mirror(deflected(result.lines.f, -yActual, interp(-yActual, result.Y_positions, result.force_a)))
     : mirror(lines.f);
   const contactA = nearestToWall(lines.f, -1);
   const contactB = nearestToWall(footB, 1);
-  const gapA = result ? interpNullable(yPose, result.Y_positions, result.gap_a) : null;
+  const gapA = result ? interpNullable(yActual, result.Y_positions, result.gap_a) : null;
   const gapB = result
-    ? interpNullable(yPose, result.Y_positions, result.gap_b) ?? interpNullable(-yPose, result.Y_positions, result.gap_a)
+    ? interpNullable(yActual, result.Y_positions, result.gap_b) ?? interpNullable(-yActual, result.Y_positions, result.gap_a)
     : null;
-  const forceA = result ? interpNullable(yPose, result.Y_positions, result.force_a) : null;
+  const forceA = result ? interpNullable(yActual, result.Y_positions, result.force_a) : null;
   const forceB = result
-    ? interpNullable(yPose, result.Y_positions, result.force_b) ?? interpNullable(-yPose, result.Y_positions, result.force_a)
+    ? interpNullable(yActual, result.Y_positions, result.force_b) ?? interpNullable(-yActual, result.Y_positions, result.force_a)
     : null;
   const newtons = (f: number | null) => (f == null ? '' : `, ${f.toFixed(f < 10 ? 2 : 1)} N`);
   const overlayLabel = (x: number, yy: number, text: string, color: string, textAnchor: 'start' | 'middle' | 'end' = 'middle') => (
@@ -444,10 +445,10 @@ export function CompliantSchematic({
             {stalled && stallY != null && (
               <span
                 role="status"
-                title={`Motor reached max torque (${params.motor_torque_mnm.toFixed(0)} mN·m) and stalled at ±${stallY.toFixed(2)} mm`}
+                title={`Motor reached max torque (${params.motor_torque_mnm.toFixed(0)} mN·m); carriage held at ${yActual >= 0 ? '+' : ''}${yActual.toFixed(2)} mm while cursor is in stall zone`}
                 className="rounded border border-red-500/45 bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-300"
               >
-                Motor stalled · max torque
+                Motor stalled · held at {yActual >= 0 ? '+' : ''}{yActual.toFixed(2)} mm
               </span>
             )}
           </div>
@@ -597,8 +598,8 @@ export function CompliantSchematic({
             const tubeArgs = { rPin, wall, od: params.tube_od, id: params.tube_id, top: ceiling, maxFlow, sweep: tubeSweep, stale: tubeStale };
             return (
               <>
-                {pinchedTube({ ...tubeArgs, sign: -1, name: 'A  supply', contact: contactA, flow: result ? interp(yPose, result.Y_positions, result.flow_a) : 0 })}
-                {pinchedTube({ ...tubeArgs, sign: 1, name: 'B  exhaust', contact: contactB, flow: result ? interp(-yPose, result.Y_positions, result.flow_a) : 0 })}
+                {pinchedTube({ ...tubeArgs, sign: -1, name: 'A  supply', contact: contactA, flow: result ? interp(yActual, result.Y_positions, result.flow_a) : 0 })}
+                {pinchedTube({ ...tubeArgs, sign: 1, name: 'B  exhaust', contact: contactB, flow: result ? interp(-yActual, result.Y_positions, result.flow_a) : 0 })}
               </>
             );
           })()}
@@ -637,6 +638,7 @@ export function CompliantSchematic({
           <polygon
             data-carriage="main"
             data-stalled={stalled ? 'true' : 'false'}
+            data-actual-y={yActual.toFixed(4)}
             points={carriagePoly}
             fill={stalled ? '#ef4444' : 'var(--bui-muted)'}
             fillOpacity={stalled ? 0.48 : 0.42}

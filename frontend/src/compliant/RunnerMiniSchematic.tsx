@@ -6,8 +6,8 @@ import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import {
   LOAD_FACTOR, MOTOR_RPM, SCREW_PITCH_MM, activeStallY, anchorPoint, bezier, deflected, deflectedPoint,
-  effectivePinchY, initialDirectionForPlay, interp, isCarriageStalled, nearestToWall, pinchContactX,
-  stepCarriageMotion, strokeOutlinePath,
+  effectivePinchY, interp, isCarriageStalled, nearestToWall, physicalCarriageY, pinchContactX,
+  strokeOutlinePath,
 } from './types';
 import type {
   CompliantParams, CompliantResult, Member, Pt, Runner, SolverConstraints,
@@ -98,36 +98,28 @@ export function RunnerMiniSchematic({
   const backdropBlurId = `mini-backdrop-blur-${filterUid}`;
   const carriageClipId = `mini-carriage-clip-${filterUid}`;
   const primaryMaskId = `mini-primary-mask-${filterUid}`;
-  const motion = useRef<{
-    y: number;
-    dir: 1 | -1;
-    speed: number;
-    stroke: number;
-    stallY: number | null;
-  }>({ y: 0, dir: 1, speed: (MOTOR_RPM * LOAD_FACTOR * (params.lead_screw_pitch || SCREW_PITCH_MM)) / 60, stroke: params.stroke, stallY: null });
+  const motion = useRef({
+    d: 0,
+    speed: (MOTOR_RPM * LOAD_FACTOR * (params.lead_screw_pitch || SCREW_PITCH_MM)) / 60,
+    stroke: params.stroke,
+  });
 
   const stallY = activeStallY(simResult, constraints, params.stroke);
   const stalled = isCarriageStalled(yPose, stallY);
+  const yActual = physicalCarriageY(yPose, stallY);
 
   // Reset playback and pick up cached simulation whenever the card displays a different runner.
   useEffect(() => {
     setPlaying(false);
     setYPose(0);
     setLoading(false);
-    motion.current.y = 0;
-    motion.current.dir = 1;
+    motion.current.d = 0;
     motion.current.stroke = params.stroke;
     motion.current.speed = (MOTOR_RPM * LOAD_FACTOR * (params.lead_screw_pitch || SCREW_PITCH_MM)) / 60;
-    const cached = resultCache.current.get(runnerKey) ?? null;
-    motion.current.stallY = activeStallY(cached, constraints, params.stroke);
-    setSimResult(cached);
-  }, [runnerKey, params.stroke, params.lead_screw_pitch, constraints, resultCache]);
+    setSimResult(resultCache.current.get(runnerKey) ?? null);
+  }, [runnerKey, params.stroke, params.lead_screw_pitch, resultCache]);
 
-  useEffect(() => {
-    motion.current.stallY = stallY;
-  }, [stallY]);
-
-  // Triangle-wave oscillation loop matching the main schematic's carriage speed, stopping at ±stallY.
+  // Continuous triangle-wave oscillation across the full ±stroke; physical carriage clamps at ±stallY in red.
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
@@ -139,19 +131,12 @@ export function RunnerMiniSchematic({
         setPlaying(false);
         return;
       }
-      const dt = last != null ? Math.min(0.1, (now - last) / 1000) : 0;
+      if (last != null) m.d = (m.d + ((now - last) / 1000) * m.speed) % (4 * m.stroke);
       last = now;
-      const next = stepCarriageMotion(m.y, m.dir, dt, m.speed, m.stroke, m.stallY);
-      m.y = next.y;
-      m.dir = next.dir;
-      if (next.stalled) {
-        setYPose(next.y);
-        setPlaying(false);
-        return;
-      }
       if (now - shown > 28) {
         shown = now;
-        setYPose(m.y);
+        const s = m.stroke;
+        setYPose(m.d <= s ? m.d : m.d <= 3 * s ? 2 * s - m.d : m.d - 4 * s);
       }
       raf = requestAnimationFrame(step);
     };
@@ -163,25 +148,13 @@ export function RunnerMiniSchematic({
     if (playing) {
       setPlaying(false);
       setYPose(0);
-      motion.current.y = 0;
-      motion.current.dir = 1;
+      motion.current.d = 0;
       return;
     }
-    const startWithResult = (resObj: CompliantResult) => {
-      const activeS = activeStallY(resObj, constraints, params.stroke);
-      motion.current.stroke = params.stroke;
-      motion.current.stallY = activeS;
-      if (activeS != null && activeS <= 1e-6) {
-        motion.current.y = 0;
-        setYPose(0);
-        return;
-      }
-      motion.current.y = yPose;
-      motion.current.dir = initialDirectionForPlay(yPose, activeS);
-      setPlaying(true);
-    };
     if (simResult) {
-      startWithResult(simResult);
+      motion.current.d = 0;
+      motion.current.stroke = params.stroke;
+      setPlaying(true);
       return;
     }
     setLoading(true);
@@ -196,7 +169,9 @@ export function RunnerMiniSchematic({
         const parsed = data as CompliantResult;
         resultCache.current.set(runnerKey, parsed);
         setSimResult(parsed);
-        startWithResult(parsed);
+        motion.current.d = 0;
+        motion.current.stroke = params.stroke;
+        setPlaying(true);
       }
     } finally {
       setLoading(false);
@@ -221,17 +196,17 @@ export function RunnerMiniSchematic({
     f: bezier(junction, pinch, params.f_u1, params.f_v1, params.f_u2, params.f_v2),
   }), [anchor[0], anchor[1], junction[0], junction[1], pivot[0], pivot[1], pinch[0], pinch[1], params]);
 
-  const forceA = hasSolvedLines && simResult ? interp(yPose, simResult.Y_positions, simResult.force_a) : 0;
-  const forceB = hasSolvedLines && simResult ? interp(-yPose, simResult.Y_positions, simResult.force_a) : 0;
+  const forceA = hasSolvedLines && simResult ? interp(yActual, simResult.Y_positions, simResult.force_a) : 0;
+  const forceB = hasSolvedLines && simResult ? interp(-yActual, simResult.Y_positions, simResult.force_a) : 0;
 
   const primaryLines = useMemo(() => {
     if (!hasSolvedLines || !simResult?.lines) return restLines;
     return {
-      l: deflected(simResult.lines.l, yPose, forceA),
-      r: deflected(simResult.lines.r, yPose, forceA),
-      f: deflected(simResult.lines.f, yPose, forceA),
+      l: deflected(simResult.lines.l, yActual, forceA),
+      r: deflected(simResult.lines.r, yActual, forceA),
+      f: deflected(simResult.lines.f, yActual, forceA),
     };
-  }, [simResult, yPose, forceA, restLines]);
+  }, [simResult, yActual, forceA, restLines]);
 
   const mirror = (pts: Pt[]): Pt[] => pts.map(([x, yy]) => [-x, ceiling - yy]);
 
@@ -244,14 +219,14 @@ export function RunnerMiniSchematic({
       };
     }
     return {
-      l: mirror(deflected(simResult.lines.l, -yPose, forceB)),
-      r: mirror(deflected(simResult.lines.r, -yPose, forceB)),
-      f: mirror(deflected(simResult.lines.f, -yPose, forceB)),
+      l: mirror(deflected(simResult.lines.l, -yActual, forceB)),
+      r: mirror(deflected(simResult.lines.r, -yActual, forceB)),
+      f: mirror(deflected(simResult.lines.f, -yActual, forceB)),
     };
-  }, [simResult, yPose, forceB, restLines, ceiling]);
+  }, [simResult, yActual, forceB, restLines, ceiling]);
 
   const poly = (pts: Pt[]) => pts.map(([x, yy]) => `${x.toFixed(3)},${(-yy).toFixed(3)}`).join(' ');
-  const carriageY = h0 + (simResult?.travel_sign ?? 1) * yPose;
+  const carriageY = h0 + (simResult?.travel_sign ?? 1) * yActual;
   const hw = params.pivot_offset + 1;
   const carriagePoly = [
     [-hw, carriageY + 0.85], [-hw + 0.85, carriageY + 1.4], [hw - 0.85, carriageY + 1.4],
@@ -305,9 +280,8 @@ export function RunnerMiniSchematic({
   const contactB = nearestToWall(secondaryLines.f, 1);
   const rPin = Math.max(params.f_thickness / 2, 0.18);
   const maxFlow = simResult ? Math.max(0, ...simResult.flow_a.map((f) => f ?? 0)) : 0;
-  const showActiveFlow = playing || Math.abs(yPose) > 1e-6;
-  const flowA = simResult && showActiveFlow ? interp(yPose, simResult.Y_positions, simResult.flow_a) : 0;
-  const flowB = simResult && showActiveFlow ? interp(-yPose, simResult.Y_positions, simResult.flow_a) : 0;
+  const flowA = simResult && playing ? interp(yActual, simResult.Y_positions, simResult.flow_a) : 0;
+  const flowB = simResult && playing ? interp(-yActual, simResult.Y_positions, simResult.flow_a) : 0;
 
   const attackAngleDeg = simResult?.attack_angle_deg ?? runner.attack_angle_deg ?? null;
 
@@ -403,14 +377,14 @@ export function RunnerMiniSchematic({
           />
         ))}
 
-        {/* Tubes A & B with flow particles (shown during playback or while held at stall) */}
+        {/* Tubes A & B with flow particles (shown during playback) */}
         {miniTube({
           sign: -1, contact: contactA, rPin, wall, od: params.tube_od, id: params.tube_id,
-          top: ceiling, flow: flowA, maxFlow, sweep: tubeSweep, showParticles: playing || stalled,
+          top: ceiling, flow: flowA, maxFlow, sweep: tubeSweep, showParticles: playing,
         })}
         {miniTube({
           sign: 1, contact: contactB, rPin, wall, od: params.tube_od, id: params.tube_id,
-          top: ceiling, flow: flowB, maxFlow, sweep: tubeSweep, showParticles: playing || stalled,
+          top: ceiling, flow: flowB, maxFlow, sweep: tubeSweep, showParticles: playing,
         })}
 
         {/* Back plane: minimal vertical lead-screw axis + dashed hollow outline & ultra-faint dashed skeleton */}

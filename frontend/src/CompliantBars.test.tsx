@@ -6,8 +6,8 @@ import { SolverGoalBudgetControls } from './compliant/CompliantControls';
 import {
   COMPLIANT_DEFAULTS, DEFAULT_CONSTRAINTS, DEFAULT_SOLVER_GOAL_CONFIG, DEFAULT_SOLVER_METHOD_CONFIG,
   activeStallY, allowableStressMpa, anchorPoint, deflected, deflectedPoint, fromCompliantProfilePayload,
-  initialDirectionForPlay, isCarriageStalled, memberChords, pinchContactX, pinchX,
-  screwThrustAvailableN, stepCarriageMotion,
+  isCarriageStalled, memberChords, physicalCarriageY, pinchContactX, pinchX,
+  screwThrustAvailableN,
 } from './compliant/types';
 import type { Runner, SolveJobState } from './compliant/types';
 
@@ -729,31 +729,25 @@ test('fromCompliantProfilePayload migrates legacy v1 max_y0_flex_mm=0.05 and req
   expect(v2.constraints.require_no_stall_in_stroke).toBe(true);
 });
 
-test('carriage stall motion helpers stop at exact ±stallY and reverse on replay', () => {
+test('carriage stall helpers clamp physical Y to ±stallY only outside the non-stall zone', () => {
   expect(activeStallY({ stall_y_mm: 0.65 }, { motor_limited_stress: true }, 1.5)).toBeCloseTo(0.65, 6);
   expect(activeStallY({ stall_y_mm: 1.8 }, { motor_limited_stress: true }, 1.5)).toBeNull();
   expect(activeStallY({ stall_y_mm: 0.65 }, { motor_limited_stress: false }, 1.5)).toBeNull();
 
-  // Approaching +stallY clamps cleanly to exact stallY and flags stalled = true.
-  const hitPos = stepCarriageMotion(0.6, 1, 0.2, 0.7, 1.5, 0.65);
-  expect(hitPos.stalled).toBe(true);
-  expect(hitPos.y).toBeCloseTo(0.65, 6);
-  expect(isCarriageStalled(hitPos.y, 0.65)).toBe(true);
+  // Inside (-0.65, +0.65): carriage follows commanded Y normally and is not stalled.
+  expect(isCarriageStalled(0.4, 0.65)).toBe(false);
+  expect(physicalCarriageY(0.4, 0.65)).toBeCloseTo(0.4, 6);
+  expect(isCarriageStalled(-0.4, 0.65)).toBe(false);
+  expect(physicalCarriageY(-0.4, 0.65)).toBeCloseTo(-0.4, 6);
 
-  // Replaying from +stallY reverses direction (-1) and moves cleanly away from stall until -stallY.
-  expect(initialDirectionForPlay(0.65, 0.65)).toBe(-1);
-  const backedOff = stepCarriageMotion(0.65, -1, 0.1, 0.7, 1.5, 0.65);
-  expect(backedOff.stalled).toBe(false);
-  expect(backedOff.y).toBeCloseTo(0.58, 6);
-  expect(isCarriageStalled(backedOff.y, 0.65)).toBe(false);
-
-  const hitNeg = stepCarriageMotion(-0.6, -1, 0.2, 0.7, 1.5, 0.65);
-  expect(hitNeg.stalled).toBe(true);
-  expect(hitNeg.y).toBeCloseTo(-0.65, 6);
-  expect(initialDirectionForPlay(-0.65, 0.65)).toBe(1);
+  // Outside ±0.65: carriage freezes at ±0.65 and flags stalled = true.
+  expect(isCarriageStalled(1.2, 0.65)).toBe(true);
+  expect(physicalCarriageY(1.2, 0.65)).toBeCloseTo(0.65, 6);
+  expect(isCarriageStalled(-1.2, 0.65)).toBe(true);
+  expect(physicalCarriageY(-1.2, 0.65)).toBeCloseTo(-0.65, 6);
 });
 
-test('carriage oscillation stops at exact stall Y and tints the carriage red', async () => {
+test('carriage oscillation keeps running across ±stroke while clamping carriage red at ±stallY in the stall zone', async () => {
   const line = {
     x: [-8, -6], y: [10, 10.5],
     x_per_y: [0, 0.2], y_per_y: [0, 0],
@@ -796,36 +790,49 @@ test('carriage oscillation stops at exact stall Y and tints the carriage red', a
     if (idx >= 0) rafQueue.splice(idx, 1);
   });
 
-  const { container, findByText, getByRole, queryByText } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
+  const { container, findByText, getByLabelText, getByRole, queryByText } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
   expect(await findByText('gap 0.850, 4.56 N')).toBeTruthy();
 
   const carriage = () => container.querySelector('polygon[data-carriage="main"]')!;
+  const slider = () => getByLabelText('Carriage Y') as HTMLInputElement;
   expect(carriage().getAttribute('data-stalled')).toBe('false');
-  expect(queryByText('Motor stalled · max torque')).toBeNull();
+  expect(queryByText(/Motor stalled/)).toBeNull();
 
-  // Start oscillating from Y = 0; advance frames past Y = 0.65 mm (at ~0.708 mm/s, 100 ms steps reach 0.65 in ~10 frames).
+  // Start oscillating from Y = 0; advance frames past Y = 0.65 mm into the stall zone (around Y ≈ 1.13 mm).
   const oscBtn = getByRole('button', { name: /Oscillate/ });
   fireEvent.click(oscBtn);
   expect(oscBtn.getAttribute('aria-pressed')).toBe('true');
 
   let t = 0;
-  for (let i = 0; i < 20 && rafQueue.length > 0; i++) {
-    const batch = rafQueue.splice(0, rafQueue.length);
-    for (const item of batch) item.cb(t);
-    t += 100;
-  }
+  const advanceFrames = (count: number, stepMs = 100) => {
+    for (let i = 0; i < count && rafQueue.length > 0; i++) {
+      const batch = rafQueue.splice(0, rafQueue.length);
+      for (const item of batch) item.cb(t);
+      t += stepMs;
+    }
+  };
+
+  // At ~0.708 mm/s, 17 frames * 100 ms ≈ 1.13 mm (well past +0.65 stall, before +1.5 peak).
+  advanceFrames(17, 100);
 
   await waitFor(() => {
     expect(carriage().getAttribute('data-stalled')).toBe('true');
   });
+  // Animation keeps running across ±stroke; slider is past 0.65 while physical carriage is held at +0.65 in red.
+  expect(getByRole('button', { name: /Stop/ }).getAttribute('aria-pressed')).toBe('true');
+  expect(parseFloat(slider().value)).toBeGreaterThan(0.9);
+  expect(carriage().getAttribute('data-actual-y')).toBe('0.6500');
   expect(carriage().getAttribute('fill')).toBe('#ef4444');
-  expect(getByRole('button', { name: /Oscillate/ }).getAttribute('aria-pressed')).toBe('false');
-  expect(container.textContent).toContain('0.65 mm');
-  expect(container.textContent).toContain('Motor stalled · max torque');
+  expect(container.textContent).toContain('Motor stalled · held at +0.65 mm');
   expect(container.querySelector('[data-layer="stall-indicator"]')?.textContent).toContain('Stall · max torque');
 
-  // Clicking Center returns carriage to Y = 0 and clears the red stall tint.
-  fireEvent.click(getByRole('button', { name: 'Center' }));
-  expect(carriage().getAttribute('data-stalled')).toBe('false');
-  expect(queryByText('Motor stalled · max torque')).toBeNull();
+  // Advance until the triangle wave turns around at +1.5 and re-enters (-0.65, +0.65) (around d ≈ 2.65 mm -> Y ≈ +0.35 mm).
+  advanceFrames(21, 100);
+
+  await waitFor(() => {
+    expect(carriage().getAttribute('data-stalled')).toBe('false');
+  });
+  expect(getByRole('button', { name: /Stop/ }).getAttribute('aria-pressed')).toBe('true');
+  expect(Math.abs(parseFloat(carriage().getAttribute('data-actual-y')!))).toBeLessThan(0.65);
+  expect(queryByText(/Motor stalled/)).toBeNull();
 });
