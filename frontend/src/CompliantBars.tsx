@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import { Button } from '@blain-projects/ui';
-import { RefreshCw, Settings, Target } from 'lucide-react';
+import { RefreshCw, Settings, Target, UploadCloud } from 'lucide-react';
 import { useTubeSweep } from './lib/tubeSweep';
 import { sameDomainSettings } from './lib/chartDomain';
 import { formatKpa } from './lib/pressure';
@@ -30,6 +30,7 @@ import {
 } from './compliant/CompliantControls';
 import type { MeasureState } from './compliant/CompliantControls';
 import { SolverModal } from './compliant/SolverModal';
+import { CompliantOnshapeModal } from './compliant/CompliantOnshapeModal';
 
 export { COMPLIANT_DEFAULTS };
 export type { CompliantParams };
@@ -127,6 +128,7 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
 
   const [materials, setMaterials] = useState<Material[]>(BUILTIN_MATERIALS);
   const [measure, setMeasure] = useState<MeasureState>({ busy: false, ok: true, text: null });
+  const [onshapeOpen, setOnshapeOpen] = useState(false);
 
   const [y, setY] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -502,6 +504,18 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
             <RefreshCw className={`w-3.5 h-3.5 ${measure.busy ? 'animate-spin' : ''}`} />
             {measure.busy ? 'Loading from Onshape…' : 'Load CAD values from Onshape'}
           </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => setOnshapeOpen(true)}
+            title="Write this design to the Onshape variable tables (cam_sim_compliant, cam_sim_carriage, cam_sim_pinch)"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300"
+          >
+            <UploadCloud className="w-3.5 h-3.5" />
+            Write to Onshape variables
+          </Button>
+          <CompliantOnshapeModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params} constraints={constraints}
+            onSyncMeasured={() => { void syncMeasured(); }} />
           {measure.text && (
             <p className={`text-[10px] leading-snug ${measure.ok ? 'text-emerald-400' : 'text-red-300'}`} role="status">
               {measure.text}

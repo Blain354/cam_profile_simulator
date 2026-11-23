@@ -125,7 +125,7 @@ export function ContextControls({
                   type="button"
                   onClick={() => onSyncMeasured('member_depth')}
                   disabled={measure.busy}
-                  title="Load out-of-plane depth from Onshape (#pend_bar_thickness)"
+                  title="Load out-of-plane depth from Onshape (#cb_member_depth)"
                   className="inline-flex items-center gap-1 rounded-lg border border-neutral-700 px-2 py-1 text-[11px] text-neutral-200 disabled:opacity-40"
                 >
                   <RefreshCw className={`w-3 h-3 ${measure.busy ? 'animate-spin' : ''}`} />

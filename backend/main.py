@@ -25,6 +25,7 @@ from storage import (
 
 import onshape_export
 import onshape_variables
+import onshape_compliant
 from legacy_units import legacy_psi_to_kpa
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
 from compliant_bars import compute_compliant, solve_compliant
@@ -944,6 +945,23 @@ def compliant_solve(body: CompliantSolveBody):
 def compliant_onshape_measured():
     """The inputs the CAD decides for compliant bars, as Onshape computes them now. Reads only."""
     return _onshape_variables(lambda: onshape_variables.read_measured("compliant"))
+
+
+@app.post("/api/compliant/onshape/preview")
+def compliant_onshape_preview(payload: dict = Body(...)):
+    """What writing this design to its Onshape tables (compliant, carriage, pinch) would change. Reads only."""
+    return _onshape_variables(lambda: onshape_compliant.preview(
+        _compliant_params(payload), _compliant_constraints(payload.get("constraints"))))
+
+
+@app.post("/api/compliant/onshape/apply")
+def compliant_onshape_apply(payload: dict = Body(...)):
+    """Write the named variables, each into its own table, after checking the inputs the CAD decides."""
+    names = payload.get("names")
+    if not isinstance(names, list) or len(names) > 100 or not all(isinstance(n, str) for n in names):
+        raise HTTPException(status_code=422, detail="names must be a list of at most 100 variable names")
+    return _onshape_variables(lambda: onshape_compliant.apply(
+        _compliant_params(payload), names, _compliant_constraints(payload.get("constraints"))))
 
 
 class CompliantSolveJobBody(BaseModel):

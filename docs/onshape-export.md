@@ -366,16 +366,19 @@ measured input. With the id set, an elbow or a lever is checked the same way.
 Some inputs are set by the CAD, not by the simulator. The Part Studio measures them, and the
 simulator reads them back. The defaults live in `DEFAULT_MEASURED` (`backend/onshape_variables.py`).
 The pendulum reads its tube centre (`tube_center_x`, the tube-axis distance from the screw axis)
-from `#pend_CALC_tube_center`. Compliant Bars reads that same variable, and its out-of-plane depth
-(`member_depth`) from `#pend_bar_thickness`. The pendulum table still writes that second name as
-bar thickness (`member_thickness`); this tab only reads it. The Part Studio is the element id in
-`ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`, on the table's document and branch. It is not chosen by name.
-A measured input is never written to the table: the pendulum export has no `pend_tube_center`, so the
-CAD places the tube itself and the simulator follows its measure. Compliant Bars has no write route.
+from `#pend_CALC_tube_center`, in the Part Studio `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`.
+Compliant Bars reads its own Part Studio, `ONSHAPE_COMPLIANT_PART_STUDIO_ID` (no fallback): the tube
+centre from `#pend_CALC_tube_center`, the out-of-plane depth (`member_depth`) from `#cb_member_depth`,
+and the tube size (`tube_od`, `tube_id`) from `#pinch_tube_OD` and `#pinch_tube_ID`. A Part Studio is an
+element id on the table's document and branch, never chosen by name.
+A measured input is never written to a table: the pendulum export has no `pend_tube_center`, so the
+CAD places the tube itself and the simulator follows its measure. Compliant Bars writes its own tables
+(**Compliant Bars: three tables** below).
 
 | Env | Meaning |
 |-----|---------|
 | `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` | Part Studio on the table's document and branch. It holds the measured variables, and it is the one whose resolved variables are compared with the simulator. Unset: nothing is read or checked. |
+| `ONSHAPE_COMPLIANT_PART_STUDIO_ID` | Part Studio of the compliant bars (MINIVALVE: *SMART_VALVE_MOTOR_V3_compliant links_splines*). Measured inputs and the read-back of Compliant Bars. Unset: that tab reads and checks nothing. |
 | `ONSHAPE_LINKAGE_MEASURED` | Optional JSON `{kind: {simulator value key: variable name}}` replacing `DEFAULT_MEASURED` for a kind. |
 
 - **Sync from Onshape** (under Tube centre, on the pendulum) calls `POST /api/linkage/onshape/measured`:
@@ -385,9 +388,8 @@ CAD places the tube itself and the simulator follows its measure. Compliant Bars
   (on the tube centre and on the out-of-plane depth) call `POST /api/compliant/onshape/measured`: the same
   read-only evaluation, one call per variable. Load CAD values copies every value returned;
   a per-field Sync from Onshape copies only that field.
-  It does not gate a table write, because this tab does not write one. If `ONSHAPE_LINKAGE_MEASURED`
-  is set, has no `compliant` object, and does have a `pendulum` object, that pendulum map is what
-  this read uses (`measured_for`). An object under `compliant` replaces the defaults for this tab only.
+  The same values gate the Compliant Bars write. An object under `compliant` in `ONSHAPE_LINKAGE_MEASURED`
+  replaces the defaults for this tab; the pendulum map is never used for it.
 - **Export check.** Opening the write window, and **Look up**, also reads the measured values and says
   whether the export is valid: every measured input must equal the simulator's within 0.001 in that
   value's unit (millimetres for the tube centre). If one differs, the write button is disabled and reads
@@ -398,4 +400,29 @@ CAD places the tube itself and the simulator follows its measure. Compliant Bars
   call per measured variable. With the id unset, or for a linkage kind that has no measured input,
   this check reads nothing and the write is not gated. The read-back in **What the Part Studio uses**
   is separate: it still runs when the id is set, including for an elbow or a lever.
+
+## Compliant Bars: three tables
+
+**Write to Onshape variables** (under Load CAD values, Compliant Bars tab) writes the design into three
+Variable Studios of the document, so that no quantity exists twice in the CAD (`backend/onshape_compliant.py`):
+
+| Table | Variables | Holds |
+|-------|-----------|-------|
+| `cam_sim_compliant` | `cb_anchor_distance`, `cb_junction_x`, `cb_junction_y`, `cb_pinch_y`, `cb_{l,r,f}_{u,v}{1,2}`, `cb_{l,r,f}_thickness` | what is specific to compliant bars. The owner adds the CAD-only inputs by hand (`cb_member_depth`, `cb_eye_diameter`, `cb_pin_hole_diameter`, `cb_pad_*`, `cb_sketch_datum`); a write keeps them. |
+| `cam_sim_carriage` | `carriage_closed_height`, `carriage_pivot_offset` | the carriage, shared by every mechanism |
+| `cam_sim_pinch` | `pinch_closed_gap` (the tube model's closed gap), `pinch_preload` | the pinch, shared by every mechanism |
+
+`cb_pinch_y` is the tip height the geometry is built with: with a target pinch height in the constraints,
+it is `2 x closed_carriage_height - target`. Not written, because the CAD decides them: the tube size
+(`#pinch_tube_OD`, `#pinch_tube_ID`, table *VARIABLES-MODULAR-VALVE-MOTOR*), the tube position
+(`#pend_CALC_tube_center`, and `#pinch_CALC_tube_wall` measured in the Part Studio) and `#cb_member_depth`.
+The tables hold plain numbers; every formula (handle coordinates, pinch pad) is a variable of the Part Studio.
+
+- `POST /api/compliant/onshape/preview`, body = the `/api/compliant/simulate` body: one call lists the
+  Variable Studios, one more reads each table that exists, one per measured input, one read-back.
+  Reply: `{tables: [{table_name, table_exists, element_id, table_url, rows}], api_calls, input_check, cad_check}`.
+- `POST /api/compliant/onshape/apply`, same body plus `names`: refused (HTTP 409) when the measured
+  inputs differ from the design or when the pivot is inverted; then each table is read, merged and
+  written back whole like the linkage tables (created when missing, untouched when nothing ticked in it
+  changes). The reply adds `write_error`, the first failure of any table.
 

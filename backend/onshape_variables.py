@@ -26,6 +26,8 @@ Environment:
   ONSHAPE_DOCUMENT_ID, ONSHAPE_WORKSPACE_ID      the document (shared with the STL export)
   ONSHAPE_LINKAGE_MAPPING                        JSON {kind: {onshape_name: value_key}}, replaces
                                                  the default names of that kind
+  ONSHAPE_COMPLIANT_PART_STUDIO_ID               Part Studio the Compliant Bars inputs are measured in
+                                                 and checked against (onshape_compliant.py writes its tables)
 """
 
 from __future__ import annotations
@@ -73,6 +75,17 @@ VALUES = {
     "pin_gap_y0": ("Pin (or pad) to the wall the tube rests on, at Y = 0, part at rest", "mm"),
     # Not in the default names: the sketches put the carriage pivot on the far side of the screw.
     "pivot_side": ("Carriage pivot side: 1 far side of the screw, -1 its tube's side (inverted)", ""),
+    # Compliant Bars (onshape_compliant.py). Handles: u along the chord, v to its left.
+    "junction_x": ("Junction of the three members, x from the screw axis", "mm"),
+    "junction_y": ("Junction of the three members, y from the anchor wall", "mm"),
+    "pinch_y": ("Foot tip, y from the anchor wall", "mm"),
+    **{f"{m}_{q}{i}": (f"{name} handle {i}, {'fraction along the chord' if q == 'u' else 'offset left of the chord'}", "" if q == "u" else "mm")
+       for m, name in (("l", "L"), ("r", "R"), ("f", "Foot")) for i in (1, 2) for q in ("u", "v")},
+    "l_thickness": ("L, in-plane thickness", "mm"),
+    "r_thickness": ("R, in-plane thickness", "mm"),
+    "f_thickness": ("Foot, in-plane thickness (round tip of this diameter)", "mm"),
+    "closed_carriage_height": ("Carriage pivot height at Y = 0, from the anchor wall", "mm"),
+    "closed_gap": ("Wall-to-foot gap that closes the tube under pressure (tube model)", "mm"),
 }
 
 _TUBE = {"pinch_tube_OD": "tube_od", "pinch_tube_ID": "tube_id"}
@@ -109,9 +122,12 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
 # in the same document and branch as the table; ONSHAPE_LINKAGE_MEASURED (same JSON shape) replaces a kind's names.
 DEFAULT_MEASURED: dict[str, dict[str, str]] = {
     "pendulum": {"tube_center_x": "pend_CALC_tube_center"},
+    # Read from ONSHAPE_COMPLIANT_PART_STUDIO_ID: the tube and the depth are never written by this tab.
     "compliant": {
         "tube_center_x": "pend_CALC_tube_center",
-        "member_depth": "pend_bar_thickness",
+        "member_depth": "cb_member_depth",
+        "tube_od": "pinch_tube_OD",
+        "tube_id": "pinch_tube_ID",
     },
 }
 # Written values carry 4 decimals and the slider moves by 0.05 mm: a match within a micrometre is the same input.
@@ -193,8 +209,6 @@ def mapping_for(kind: str) -> dict[str, str]:
         if isinstance(custom, dict):
             if isinstance(custom.get(kind), dict):
                 mapping = {str(k): str(v) for k, v in custom[kind].items()}
-            elif kind == "compliant" and isinstance(custom.get("pendulum"), dict):
-                mapping = {str(k): str(v) for k, v in custom["pendulum"].items()}
     unknown = sorted(set(mapping.values()) - set(VALUES))
     if unknown:
         raise LinkageOnshapeError(f"ONSHAPE_LINKAGE_MAPPING names values the simulator does not have: {', '.join(unknown)}")
@@ -267,21 +281,23 @@ def measured_for(kind: str) -> dict[str, str]:
         if isinstance(custom, dict):
             if isinstance(custom.get(kind), dict):
                 mapping = {str(k): str(v) for k, v in custom[kind].items()}
-            elif kind == "compliant" and isinstance(custom.get("pendulum"), dict):
-                mapping = {str(k): str(v) for k, v in custom["pendulum"].items()}
     for key, var in mapping.items():
         if key not in VALUES or not _VARIABLE.match(var):
             raise LinkageOnshapeError(f"Measured input {key!r} -> {var!r} is not usable: unknown simulator value or odd variable name.")
     return mapping
 
 
-def _measure_source() -> Optional[str]:
-    eid = os.environ.get("ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID", "").strip()
+def _measure_source(kind: Optional[str] = None) -> Optional[str]:
+    """The Part Studio a kind's inputs are measured in. Compliant Bars has its own (no fallback)."""
+    var = "ONSHAPE_COMPLIANT_PART_STUDIO_ID" if kind == "compliant" else "ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID"
+    eid = os.environ.get(var, "").strip()
     return _checked_id(eid, "Part Studio") if eid else None
 
 
 def _fs_value(result: Any, var: str, unit: str) -> float:
     """A FeatureScript value in the simulator's unit: lengths come back in metres, angles in radians."""
+    if isinstance(result, (int, float)) and not isinstance(result, bool):
+        result = {"value": result}   # a plain number, already unwrapped (`_fs_plain`): no unit
     if not isinstance(result, dict) or not isinstance(result.get("value"), (int, float)):
         raise LinkageOnshapeError(f"Onshape gave no value for #{var}: is the variable defined, before the rollback bar, in that Part Studio?")
     value, powers = float(result["value"]), result.get("unitToPower") or {}
@@ -296,7 +312,7 @@ def read_measured(kind: str, target: Optional[Target] = None) -> dict:
 
     `configured` is False, and nothing is called, when this kind has no measured input or no Part Studio is set.
     """
-    mapping, eid = measured_for(kind), _measure_source()
+    mapping, eid = measured_for(kind), _measure_source(kind)
     if not mapping or not eid:
         return {"configured": False, "values": [], "api_calls": 0, "part_studio_url": None}
     t = target or target_from_env()
@@ -345,13 +361,13 @@ def _fs_plain(v: Any) -> Any:
     return v
 
 
-def cad_check(rows: list[Row], t: Target) -> tuple[dict, int]:
+def cad_check(rows: list[Row], t: Target, kind: Optional[str] = None) -> tuple[dict, int]:
     """What the Part Studio actually uses for each variable the simulator writes. One read-only call.
 
     Onshape is the reference: a value the Part Studio does not use as written means the CAD does not
     follow the table (not referenced there, or replaced by a local variable of the same name).
     """
-    eid = _measure_source()
+    eid = _measure_source(kind)
     if not eid or not rows:
         return {"configured": False, "coherent": True, "rows": [], "error": None}, 0
     names = [r.name for r in rows]
