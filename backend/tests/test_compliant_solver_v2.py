@@ -116,6 +116,26 @@ class BucklingTests(unittest.TestCase):
         self.assertIn("buckling", [s["key"] for s in out["summary"]["rejection_stats"]])
 
 
+class RouteTests(unittest.TestCase):
+    def test_the_job_route_takes_every_goal_and_method_the_solver_has(self):
+        import os
+        import sys
+
+        from pydantic import ValidationError
+
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # main imports its siblings by name
+        import main
+
+        for goal in SOLVER_GOALS:
+            self.assertEqual(main.CompliantSolveJobBody(params={}, goal=goal).goal, goal)
+        for method in SOLVER_METHODS:
+            self.assertEqual(main.CompliantSolveJobBody(params={}, method=method).method, method)
+        self.assertEqual(main.CompliantSolveJobBody(params={}).method, "cmaes")
+        for bad in ({"goal": "max_flows"}, {"method": "cma"}):
+            with self.assertRaises(ValidationError):
+                main.CompliantSolveJobBody(params={}, **bad)
+
+
 class PinGridTests(unittest.TestCase):
     def test_grid_tables_agree_with_the_exact_one(self):
         gaps = np.linspace(0.4, 3.2, 60)

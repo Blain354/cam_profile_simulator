@@ -31,6 +31,8 @@ from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_link
 from compliant_bars import compute_compliant, solve_compliant
 from compliant_bars import _constraints_from_mapping as _compliant_constraints
 from compliant_bars import _params_from_mapping as _compliant_params
+from compliant_bars import SOLVER_GOALS as _COMPLIANT_GOALS
+from compliant_solver import SOLVER_METHODS as _COMPLIANT_METHODS
 from compliant_solver import CompliantSolveJobManager
 import tube_model as tube_law
 
@@ -969,9 +971,10 @@ class CompliantSolveJobBody(BaseModel):
     bounds: dict = Field(default_factory=dict)
     constraints: Optional[dict] = None
     pivot_side: str = Field("current", pattern="^(current|normal|inverted|both)$")
-    goal: str = Field("dx_at_025", pattern="^(dx_at_025|pass_freq_bw|min_open_stroke|flow_slope|trajectory_target|min_energy)$")
+    # The lists live with the solver, so a goal or a method added there is accepted here.
+    goal: str = Field("dx_at_025", pattern="^(%s)$" % "|".join(_COMPLIANT_GOALS))
     goal_weights: Optional[dict] = None
-    method: str = Field("hybrid", pattern="^(hybrid|brute_force|evolutionary|local_refine)$")
+    method: str = Field("cmaes", pattern="^(%s)$" % "|".join(_COMPLIANT_METHODS))
     method_params: Optional[dict] = None
     time_budget_s: float = Field(30.0, ge=1.0)
     name: Optional[str] = None
