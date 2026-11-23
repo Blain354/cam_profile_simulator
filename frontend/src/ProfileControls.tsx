@@ -1,18 +1,19 @@
 import { Button, Input, Modal, Textarea } from '@blain-projects/ui';
 import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Import, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Import, RefreshCw, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PROFILE_TYPE_LABEL, formatProfileDate, getProfile, listProfiles, nameIsOptional, removeProfile, setDefaultProfile } from './lib/profiles';
 import type { ProfilePayload, ProfileState, ProfileSummary, ProfileType, StoredProfile } from './lib/profiles';
 
 // ─── Header pill ─────────────────────────────────────────────────
 
-export function ProfilePill({ state, onImport, onSaveAsNew, onUpdate }: {
+export function ProfilePill({ state, onImport, onSaveAsNew, onUpdate, onRevert }: {
   state: ProfileState;
   onImport: () => void;
   onSaveAsNew: () => void;
   onUpdate: () => void;
+  onRevert: () => void;
 }) {
   const { name, dirty, canSave } = state;
   const label = name ?? 'Unsaved';
@@ -41,15 +42,51 @@ export function ProfilePill({ state, onImport, onSaveAsNew, onUpdate }: {
       </div>
       <AnimatePresence>
         {canSave && dirty && (
-          <motion.button type="button" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
-            onClick={name ? onUpdate : onSaveAsNew}
-            className="relative shrink-0 cursor-pointer px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center gap-1.5 transition-all font-bold text-[10px]"
-            title={name ? `Overwrite ${name}` : 'Save as a new profile'}>
-            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-100" />
-            </span>
-            <RefreshCw className="w-3 h-3" /> {name ? 'Update' : 'Save'}
-          </motion.button>
+          name ? (
+            <motion.div
+              key="dirty-actions"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              className="flex flex-col gap-0.5 shrink-0"
+            >
+              <button
+                type="button"
+                onClick={onUpdate}
+                className="relative w-full cursor-pointer px-2 py-[2px] bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center justify-center gap-1 transition-all font-bold text-[10px] leading-3"
+                title={`Overwrite ${name}`}
+              >
+                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-100" />
+                </span>
+                <RefreshCw className="w-2.5 h-2.5 shrink-0" aria-hidden /> Update
+              </button>
+              <button
+                type="button"
+                onClick={onRevert}
+                className="w-full cursor-pointer px-2 py-[2px] bg-neutral-800/70 hover:bg-neutral-700/80 text-neutral-400 hover:text-neutral-100 border border-neutral-700 rounded-full flex items-center justify-center gap-1 transition-all font-semibold text-[10px] leading-3"
+                title={`Revert to saved ${name}`}
+              >
+                <RotateCcw className="w-2.5 h-2.5 shrink-0" aria-hidden /> Revert
+              </button>
+            </motion.div>
+          ) : (
+            <motion.button
+              key="dirty-save"
+              type="button"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              onClick={onSaveAsNew}
+              className="relative shrink-0 cursor-pointer px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-neutral-900 border border-amber-400 rounded-full flex items-center gap-1.5 transition-all font-bold text-[10px]"
+              title="Save as a new profile"
+            >
+              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-100" />
+              </span>
+              <RefreshCw className="w-3 h-3" aria-hidden /> Save
+            </motion.button>
+          )
         )}
       </AnimatePresence>
     </div>

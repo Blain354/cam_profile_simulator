@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/re
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 import { profileTypeOf, suggestNextProfileName } from './lib/profiles'
-import { ProfileImportModal } from './ProfileControls'
+import { ProfileImportModal, ProfilePill } from './ProfileControls'
 import { CamProfilePreview } from './components'
 import { FinderProfilePreview } from './ProfileBuilder'
 import { LinkageProfilePreview } from './LinkageExplorer'
@@ -411,4 +411,85 @@ test('Save as new pre-fills the incremented numeric suffix so clicking Save crea
   await waitFor(() => expect(getByTestId('profile-name').textContent).toBe('beam-02'))
   expect(calls.some((c) => c.method === 'PUT' && c.url === '/api/profiles/compliant/beam-02')).toBe(true)
   expect(store.some((p) => p.type === 'compliant' && p.name === 'beam-02')).toBe(true)
+})
+
+test('ProfilePill stacks Update above Revert when a named profile is dirty, and hides Revert when unsaved', () => {
+  const onUpdate = vi.fn()
+  const onRevert = vi.fn()
+  const onSaveAsNew = vi.fn()
+
+  const named = render(
+    <ProfilePill
+      state={{ name: 'beam-01', dirty: true, canSave: true }}
+      onImport={() => {}} onSaveAsNew={onSaveAsNew} onUpdate={onUpdate} onRevert={onRevert}
+    />,
+  )
+  const updateBtn = named.getByRole('button', { name: /Update/ })
+  const revertBtn = named.getByRole('button', { name: /Revert/ })
+  expect(updateBtn.parentElement).toBe(revertBtn.parentElement)
+  expect(updateBtn.parentElement?.className).toContain('flex-col')
+  expect(updateBtn.compareDocumentPosition(revertBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  fireEvent.click(updateBtn)
+  fireEvent.click(revertBtn)
+  expect(onUpdate).toHaveBeenCalledTimes(1)
+  expect(onRevert).toHaveBeenCalledTimes(1)
+  named.unmount()
+
+  const unsaved = render(
+    <ProfilePill
+      state={{ name: null, dirty: true, canSave: true }}
+      onImport={() => {}} onSaveAsNew={onSaveAsNew} onUpdate={onUpdate} onRevert={onRevert}
+    />,
+  )
+  expect(unsaved.getByRole('button', { name: /Save$/ })).toBeTruthy()
+  expect(unsaved.queryByRole('button', { name: /Revert/ })).toBeNull()
+})
+
+test('Revert reloads the saved Cam Explorer profile and clears dirty edits without writing', async () => {
+  const { calls, defaults } = stubStore(allProfiles)
+  defaults.cam = '20260326_233901_11.json'
+  const { getByTestId, getByPlaceholderText, findByRole, queryByRole } = render(<App />)
+  await waitFor(() => expect(getByTestId('profile-name').textContent).toBe('20260326_233901_11.json'))
+  const noteBox = getByPlaceholderText('Describe this profile...') as HTMLTextAreaElement
+  expect(noteBox.value).toBe('startup one')
+
+  fireEvent.change(noteBox, { target: { value: 'temp edit' } })
+  expect(noteBox.value).toBe('temp edit')
+  const revertBtn = await findByRole('button', { name: /Revert/ })
+  expect(await findByRole('button', { name: /Update/ })).toBeTruthy()
+
+  fireEvent.click(revertBtn)
+  await waitFor(() => expect(noteBox.value).toBe('startup one'))
+  await waitFor(() => expect(queryByRole('button', { name: /Revert/ })).toBeNull())
+  expect(queryByRole('button', { name: /Update/ })).toBeNull()
+  expect(calls.some((c) => c.method === 'PUT' || c.method === 'POST')).toBe(false)
+})
+
+test('Revert reloads a linkage profile and reports an error without losing edits if fetch fails', async () => {
+  stubStore(allProfiles)
+  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'pendulum', sub: { pendulum: 'explorer' } }))
+  const { getByRole, getByTestId, findByText, findByRole, queryByRole, getByText } = render(<App />)
+  fireEvent.click(getByRole('button', { name: 'Import profile' }))
+  fireEvent.doubleClick(await findByText('custom-interessant'))
+  await waitFor(() => expect(getByTestId('profile-name').textContent).toBe('custom-interessant'))
+
+  fireEvent.click(getByText('Pneumatic system'))
+  const box = getByText('Pressure (kPa)').closest('.space-y-2')!.querySelector('input[type=number]') as HTMLInputElement
+  expect(box.value).toBe('100')
+
+  fireEvent.change(box, { target: { value: '130' } })
+  expect(box.value).toBe('130')
+  fireEvent.click(await findByRole('button', { name: /Revert/ }))
+  await waitFor(() => expect(box.value).toBe('100'))
+  await waitFor(() => expect(queryByRole('button', { name: /Revert/ })).toBeNull())
+
+  // If reading the saved profile fails, edits stay on screen and the toast reports it.
+  fireEvent.change(box, { target: { value: '145' } })
+  const revertBtn = await findByRole('button', { name: /Revert/ })
+  const real = vi.mocked(fetch).getMockImplementation()!
+  vi.mocked(fetch).mockImplementation(async (input, init) =>
+    (!init?.method && String(input).includes('/api/profiles/pendulum/custom-interessant') ? new Response('{}', { status: 500 }) : real(input, init)))
+  fireEvent.click(revertBtn)
+  await findByText(/Could not revert/)
+  expect(box.value).toBe('145')
 })

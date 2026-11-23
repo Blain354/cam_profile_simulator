@@ -317,6 +317,8 @@ export default function App() {
 
   // ─── Saved profiles: one pill, one import window, one save dialog for every tab ───
   const profileType = profileTypeOf(activeTab, subTab);
+  const profileTypeRef = useRef(profileType);
+  useEffect(() => { profileTypeRef.current = profileType; }, [profileType]);
   const camProfile: ProfileState = { name: activeConfigName, dirty: hasChanges, canSave: true, note: params.note };
   const camHandle: ProfileHandle = {
     type: 'cam',
@@ -371,6 +373,22 @@ export default function App() {
       showToast(`Profile ${name} updated`);
     } catch (err) {
       showToast(`Not saved: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
+  /** Reload the loaded profile from the store, discarding unsaved edits. */
+  const revertProfile = async () => {
+    const type = profileType;
+    const handle = profileHandle();
+    const name = profileState.name;
+    if (!handle || !name) return;
+    try {
+      const saved = await getProfile(type, name);
+      if (profileTypeRef.current !== type) return;
+      handle.apply(saved);
+      showToast(`Reverted to ${name}`);
+    } catch (err) {
+      showToast(`Could not revert: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -615,7 +633,8 @@ export default function App() {
               <SubTabs label="Mode" value={subTab} options={activeTab === 'compliant' ? SOLVER_SUB_TABS : SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
               <div className="ml-auto sm:ml-0 max-w-full flex justify-end sm:justify-start">
                 <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
-                  onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }} />
+                  onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }}
+                  onRevert={() => { void revertProfile(); }} />
               </div>
             </div>
           </div>
