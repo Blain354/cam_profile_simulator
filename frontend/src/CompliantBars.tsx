@@ -91,6 +91,21 @@ export function CompliantProfilePreview({ payload }: { payload: Record<string, u
   );
 }
 
+const MAX_UNDO_HISTORY = 100;
+
+interface ShapeHistorySnapshot {
+  params: CompliantParams;
+  target_pinch_from_top_mm: number | null | undefined;
+}
+
+function sameShapeSnapshot(a: ShapeHistorySnapshot, b: ShapeHistorySnapshot): boolean {
+  if (a.target_pinch_from_top_mm !== b.target_pinch_from_top_mm) return false;
+  for (const key of SHAPE_KEYS) {
+    if (a.params[key] !== b.params[key]) return false;
+  }
+  return true;
+}
+
 export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChange, profileRef }: {
   mode: SubTab;
   onOpenExplorer: () => void;
@@ -132,6 +147,141 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
 
   const [y, setY] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
+  const undoStackRef = useRef<ShapeHistorySnapshot[]>([]);
+  const redoStackRef = useRef<ShapeHistorySnapshot[]>([]);
+  const dragSessionRef = useRef<{ active: boolean; committed: boolean; before: ShapeHistorySnapshot | null }>({
+    active: false,
+    committed: false,
+    before: null,
+  });
+  const sliderEditRef = useRef<{ key: string | null; ts: number }>({ key: null, ts: 0 });
+  const paramsRef = useRef(params);
+  const constraintsRef = useRef(constraints);
+  paramsRef.current = params;
+  constraintsRef.current = constraints;
+
+  const currentSnapshot = useCallback((): ShapeHistorySnapshot => ({
+    params: { ...paramsRef.current },
+    target_pinch_from_top_mm: constraintsRef.current.target_pinch_from_top_mm,
+  }), []);
+
+  const syncHistoryCounts = useCallback(() => {
+    setHistoryCounts({ undo: undoStackRef.current.length, redo: redoStackRef.current.length });
+  }, []);
+
+  const pushUndoSnapshot = useCallback((snap: ShapeHistorySnapshot) => {
+    const stack = undoStackRef.current;
+    if (stack.length > 0 && sameShapeSnapshot(stack[stack.length - 1], snap)) return;
+    stack.push(snap);
+    if (stack.length > MAX_UNDO_HISTORY) stack.shift();
+    redoStackRef.current = [];
+    syncHistoryCounts();
+  }, [syncHistoryCounts]);
+
+  const clearHistory = useCallback(() => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    dragSessionRef.current = { active: false, committed: false, before: null };
+    sliderEditRef.current = { key: null, ts: 0 };
+    syncHistoryCounts();
+  }, [syncHistoryCounts]);
+
+  const handleNodeDragStart = useCallback(() => {
+    dragSessionRef.current = {
+      active: true,
+      committed: false,
+      before: currentSnapshot(),
+    };
+  }, [currentSnapshot]);
+
+  const handleNodeDragEnd = useCallback(() => {
+    dragSessionRef.current = { active: false, committed: false, before: null };
+  }, []);
+
+  const recordShapeEditIfNeeded = useCallback((sourceKey: string) => {
+    const drag = dragSessionRef.current;
+    if (drag.active) {
+      if (!drag.committed && drag.before) {
+        drag.committed = true;
+        pushUndoSnapshot(drag.before);
+      }
+      return;
+    }
+    const now = Date.now();
+    const last = sliderEditRef.current;
+    if (last.key !== sourceKey || now - last.ts > 600) {
+      pushUndoSnapshot(currentSnapshot());
+    }
+    sliderEditRef.current = { key: sourceKey, ts: now };
+  }, [currentSnapshot, pushUndoSnapshot]);
+
+  const undoShapeEdit = useCallback(() => {
+    const prev = undoStackRef.current.pop();
+    if (!prev) return;
+    redoStackRef.current.push(currentSnapshot());
+    if (redoStackRef.current.length > MAX_UNDO_HISTORY) redoStackRef.current.shift();
+    dragSessionRef.current = { active: false, committed: false, before: null };
+    sliderEditRef.current = { key: null, ts: 0 };
+    paramsRef.current = prev.params;
+    setParams(prev.params);
+    setConstraints((c) => {
+      if (c.target_pinch_from_top_mm === prev.target_pinch_from_top_mm) return c;
+      const next = { ...c, target_pinch_from_top_mm: prev.target_pinch_from_top_mm };
+      constraintsRef.current = next;
+      return next;
+    });
+    syncHistoryCounts();
+  }, [currentSnapshot, syncHistoryCounts]);
+
+  const redoShapeEdit = useCallback(() => {
+    const nextSnap = redoStackRef.current.pop();
+    if (!nextSnap) return;
+    undoStackRef.current.push(currentSnapshot());
+    if (undoStackRef.current.length > MAX_UNDO_HISTORY) undoStackRef.current.shift();
+    dragSessionRef.current = { active: false, committed: false, before: null };
+    sliderEditRef.current = { key: null, ts: 0 };
+    paramsRef.current = nextSnap.params;
+    setParams(nextSnap.params);
+    setConstraints((c) => {
+      if (c.target_pinch_from_top_mm === nextSnap.target_pinch_from_top_mm) return c;
+      const next = { ...c, target_pinch_from_top_mm: nextSnap.target_pinch_from_top_mm };
+      constraintsRef.current = next;
+      return next;
+    });
+    syncHistoryCounts();
+  }, [currentSnapshot, syncHistoryCounts]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (modalOpen || onshapeOpen) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (target.isContentEditable || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (tag === 'INPUT') {
+          const inputType = (target as HTMLInputElement).type;
+          if (inputType !== 'range' && inputType !== 'checkbox' && inputType !== 'button') return;
+        }
+      }
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey) {
+        if (undoStackRef.current.length > 0) {
+          e.preventDefault();
+          undoShapeEdit();
+        }
+      } else if ((key === 'z' && e.shiftKey) || (key === 'y' && e.ctrlKey && !e.metaKey && !e.shiftKey)) {
+        if (redoStackRef.current.length > 0) {
+          e.preventDefault();
+          redoShapeEdit();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [modalOpen, onshapeOpen, undoShapeEdit, redoShapeEdit]);
+
   const motion = useRef({ d: 0, speed: 0, stroke: COMPLIANT_DEFAULTS.stroke });
   const { drawn: tubeSweep, stale: tubeStale } = useTubeSweep(params);
 
@@ -178,6 +328,7 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
     getPayload: () => ({ params, bounds, quadrantMap, contextBounds, contextFixed, constraints, chartSettings, chartScales }),
     apply: (profile) => {
       const f = fromCompliantProfilePayload(profile.payload);
+      clearHistory();
       setPlaying(false);
       setParams(f.params);
       setBounds(f.bounds);
@@ -239,24 +390,40 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
   }, [params, constraints]);
 
   const setShape = useCallback((key: ShapeKey, value: number) => {
+    if (paramsRef.current[key] === value) return;
+    recordShapeEditIfNeeded(`shape:${key}`);
     setParams((prev) => {
       if (key === 'pinch_y') {
         const nextFromTop = Math.max(0, Number((2 * prev.closed_carriage_height - value).toFixed(2)));
-        setConstraints((c) => (c.target_pinch_from_top_mm != null ? { ...c, target_pinch_from_top_mm: nextFromTop } : c));
+        setConstraints((c) => {
+          if (c.target_pinch_from_top_mm == null) return c;
+          const next = { ...c, target_pinch_from_top_mm: nextFromTop };
+          constraintsRef.current = next;
+          return next;
+        });
       }
-      return { ...prev, [key]: value };
+      const next = { ...prev, [key]: value };
+      paramsRef.current = next;
+      return next;
     });
-  }, []);
+  }, [recordShapeEditIfNeeded]);
 
   const patchParams = useCallback((patch: Partial<CompliantParams>) => {
+    const keys = Object.keys(patch) as (keyof CompliantParams)[];
+    const hasShapeKey = keys.some((k) => (SHAPE_KEYS as readonly string[]).includes(k));
+    if (hasShapeKey) {
+      const changed = keys.some((k) => paramsRef.current[k] !== patch[k]);
+      if (changed) recordShapeEditIfNeeded(`patch:${keys.sort().join(',')}`);
+    }
     setParams((prev) => {
       const next = { ...prev, ...patch };
       if (patch.closed_carriage_height !== undefined && constraints.target_pinch_from_top_mm != null) {
         next.pinch_y = Number((2 * patch.closed_carriage_height - constraints.target_pinch_from_top_mm).toFixed(2));
       }
+      paramsRef.current = next;
       return next;
     });
-  }, [constraints.target_pinch_from_top_mm]);
+  }, [constraints.target_pinch_from_top_mm, recordShapeEditIfNeeded]);
 
   const toggleContextFixed = useCallback((key: ContextToggleKey, fixed: boolean) => {
     setContextFixed((prev) => ({ ...prev, [key]: fixed }));
@@ -476,7 +643,12 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
   };
 
   const applyRunner = (runner: Runner) => {
-    setParams((prev) => ({ ...prev, ...runner.params }));
+    pushUndoSnapshot(currentSnapshot());
+    setParams((prev) => {
+      const next = { ...prev, ...runner.params };
+      paramsRef.current = next;
+      return next;
+    });
     setModalOpen(false);
     onOpenExplorer();
   };
@@ -702,6 +874,12 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
         onCenter={() => { setPlaying(false); setY(0); }}
         onSetShape={setShape}
         onPatchParams={patchParams}
+        onDragStart={handleNodeDragStart}
+        onDragEnd={handleNodeDragEnd}
+        canUndo={historyCounts.undo > 0}
+        canRedo={historyCounts.redo > 0}
+        onUndo={undoShapeEdit}
+        onRedo={redoShapeEdit}
       />
 
       {/* Panel 3: charts */}

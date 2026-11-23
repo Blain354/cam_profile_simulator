@@ -836,3 +836,109 @@ test('carriage oscillation keeps running across ±stroke while clamping carriage
   expect(Math.abs(parseFloat(carriage().getAttribute('data-actual-y')!))).toBeLessThan(0.65);
   expect(queryByText(/Motor stalled/)).toBeNull();
 });
+
+test('Ctrl+Z / Ctrl+Shift+Z undoes and redoes drag-and-drop edits on position nodes (A, J, P) and Bezier direction handles', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })));
+
+  const { container, getByRole } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
+  const svg = container.querySelector('svg[aria-label="Compliant bars"]') as SVGSVGElement;
+  expect(svg).toBeTruthy();
+
+  // Mock identity SVG screen CTM so clientX/clientY map 1:1 to SVG coords (world x = clientX, world y = -clientY).
+  (svg as unknown as { createSVGPoint: () => { x: number; y: number; matrixTransform: () => { x: number; y: number } } }).createSVGPoint = () => {
+    const pt = { x: 0, y: 0, matrixTransform: () => ({ x: pt.x, y: pt.y }) };
+    return pt;
+  };
+  (svg as unknown as { getScreenCTM: () => { inverse: () => object } }).getScreenCTM = () => ({ inverse: () => ({}) });
+
+  const readStore = () => JSON.parse(localStorage.getItem('cam-sim.compliant.v1')!);
+  const undoBtn = () => getByRole('button', { name: 'Undo node edit' }) as HTMLButtonElement;
+  const redoBtn = () => getByRole('button', { name: 'Redo node edit' }) as HTMLButtonElement;
+
+  expect(undoBtn().disabled).toBe(true);
+  expect(redoBtn().disabled).toBe(true);
+
+  const dragNode = (selector: string, points: [number, number][]) => {
+    const el = svg.querySelector(selector)!;
+    expect(el).toBeTruthy();
+    fireEvent(el, new MouseEvent('pointerdown', { bubbles: true, clientX: points[0][0], clientY: -points[0][1] }));
+    for (let i = 1; i < points.length; i++) {
+      fireEvent(svg, new MouseEvent('pointermove', { bubbles: true, clientX: points[i][0], clientY: -points[i][1] }));
+    }
+    fireEvent(svg, new MouseEvent('pointerup', { bubbles: true }));
+  };
+
+  // Click without moving should NOT push an undo step.
+  dragNode('[data-drag-node="junction"]', [[-5.5, 12]]);
+  expect(undoBtn().disabled).toBe(true);
+
+  // 1) Drag Junction J across multiple pointerMove events -> coalesced into ONE undo step.
+  const initJx = COMPLIANT_DEFAULTS.junction_x;
+  const initJy = COMPLIANT_DEFAULTS.junction_y;
+  dragNode('[data-drag-node="junction"]', [[-5.5, 12], [-4.5, 13], [-3.2, 14.5]]);
+  expect(readStore().params.junction_x).toBeCloseTo(-3.2, 4);
+  expect(readStore().params.junction_y).toBeCloseTo(14.5, 4);
+  expect(undoBtn().disabled).toBe(false);
+
+  // 2) Drag Bezier direction control handle L1 across multiple moves -> ONE undo step.
+  const initLU1 = COMPLIANT_DEFAULTS.l_u1;
+  const initLV1 = COMPLIANT_DEFAULTS.l_v1;
+  dragNode('[data-drag-node="handle-l-1"]', [[-4, 5], [-2, 8], [-1.5, 9.5]]);
+  const draggedLU1 = readStore().params.l_u1;
+  const draggedLV1 = readStore().params.l_v1;
+  expect(draggedLU1).not.toBeCloseTo(initLU1, 2);
+
+  // 3) Drag Anchor A -> ONE undo step.
+  const initAnchor = COMPLIANT_DEFAULTS.anchor_distance;
+  dragNode('[data-drag-node="anchor"]', [[-4.8, 0.5], [-2.5, 0.5]]);
+  expect(readStore().params.anchor_distance).toBeCloseTo(2.5, 4);
+
+  // 4) Drag Pinch P -> updates both pinch_y and constraints.target_pinch_from_top_mm.
+  const initPinchY = COMPLIANT_DEFAULTS.pinch_y;
+  const initFromTop = DEFAULT_CONSTRAINTS.target_pinch_from_top_mm;
+  dragNode('[data-drag-node="pinch"]', [[-8, 10.5], [-8, 12.2]]);
+  expect(readStore().params.pinch_y).toBeCloseTo(12.2, 4);
+  expect(readStore().constraints.target_pinch_from_top_mm).toBeCloseTo(3.8, 2);
+
+  // Ctrl+Z inside a numeric/text input must NOT intercept schematic undo.
+  const fakeTextInput = document.createElement('input');
+  fakeTextInput.type = 'text';
+  document.body.appendChild(fakeTextInput);
+  fireEvent.keyDown(fakeTextInput, { key: 'z', ctrlKey: true });
+  expect(readStore().params.pinch_y).toBeCloseTo(12.2, 4);
+  document.body.removeChild(fakeTextInput);
+
+  // Ctrl+Z #1: undoes Pinch P (restores both pinch_y and target_pinch_from_top_mm).
+  fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+  expect(readStore().params.pinch_y).toBeCloseTo(initPinchY, 4);
+  expect(readStore().constraints.target_pinch_from_top_mm).toBeCloseTo(initFromTop!, 2);
+  expect(redoBtn().disabled).toBe(false);
+
+  // Ctrl+Shift+Z redoes Pinch P, then Ctrl+Z undoes it again.
+  fireEvent.keyDown(window, { key: 'Z', ctrlKey: true, shiftKey: true });
+  expect(readStore().params.pinch_y).toBeCloseTo(12.2, 4);
+  fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+  expect(readStore().params.pinch_y).toBeCloseTo(initPinchY, 4);
+
+  // Ctrl+Z #2: undoes Anchor A.
+  fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+  expect(readStore().params.anchor_distance).toBeCloseTo(initAnchor, 4);
+
+  // Ctrl+Z #3: undoes Bezier handle L1.
+  fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+  expect(readStore().params.l_u1).toBeCloseTo(initLU1, 4);
+  expect(readStore().params.l_v1).toBeCloseTo(initLV1, 4);
+
+  // Ctrl+Y redoes Bezier handle L1, then Ctrl+Z undoes it again.
+  fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+  expect(readStore().params.l_u1).toBeCloseTo(draggedLU1, 4);
+  expect(readStore().params.l_v1).toBeCloseTo(draggedLV1, 4);
+  fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+  expect(readStore().params.l_u1).toBeCloseTo(initLU1, 4);
+
+  // Ctrl+Z #4: undoes Junction J in a single step despite 3 drag points.
+  fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+  expect(readStore().params.junction_x).toBeCloseTo(initJx, 4);
+  expect(readStore().params.junction_y).toBeCloseTo(initJy, 4);
+  expect(undoBtn().disabled).toBe(true);
+});

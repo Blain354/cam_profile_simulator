@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '@blain-projects/ui';
-import { Download, Film, Loader2, Pause, Play } from 'lucide-react';
+import { Download, Film, Loader2, Pause, Play, Redo2, Undo2 } from 'lucide-react';
 import { FlowParticles, FlowParticlesSwitch } from '../FlowParticles';
 import { useFlowParticlesOn } from '../lib/flowParticles';
 import { sideBore, tubeProfile } from '../lib/tubeSide';
@@ -85,6 +85,12 @@ export function CompliantSchematic({
   onCenter,
   onSetShape,
   onPatchParams,
+  onDragStart,
+  onDragEnd,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }: {
   params: CompliantParams;
   result: CompliantResult | null;
@@ -104,6 +110,12 @@ export function CompliantSchematic({
   onCenter: () => void;
   onSetShape: (key: ShapeKey, value: number) => void;
   onPatchParams: (patch: Partial<CompliantParams>) => void;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const gifPopoverRef = useRef<HTMLDivElement>(null);
@@ -257,10 +269,26 @@ export function CompliantSchematic({
     }
   };
 
+  const endDrag = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    setIsDragging(false);
+    onDragEnd?.();
+  };
+
   const margin = 2;
   const poly = (pts: Pt[]) => pts.map(([x, yy]) => `${x.toFixed(3)},${(-yy).toFixed(3)}`).join(' ');
   const dot = (p: Pt, color: string, kind: 'anchor' | 'junction' | 'pinch', label: string) => (
-    <g className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind }; setIsDragging(true); svgRef.current?.setPointerCapture(e.pointerId); }}>
+    <g
+      data-drag-node={kind}
+      className="cursor-grab touch-none"
+      onPointerDown={(e) => {
+        drag.current = { kind };
+        setIsDragging(true);
+        onDragStart?.();
+        svgRef.current?.setPointerCapture?.(e.pointerId);
+      }}
+    >
       <circle cx={p[0]} cy={-p[1]} r={1.05} fill="transparent" />
       <circle cx={p[0]} cy={-p[1]} r={0.45} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />
       <text x={p[0] + 0.5} y={-p[1] - 0.45} fill={color} fontSize={0.55} fontWeight="bold">{label}</text>
@@ -357,6 +385,32 @@ export function CompliantSchematic({
       <div className="flex flex-wrap items-center gap-2 mb-3 shrink-0 min-w-0">
         <h3 className="text-sm font-semibold text-neutral-300 min-w-0 flex-1 truncate">Schematic</h3>
         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+          {onUndo && (
+            <Button
+              variant="ghost"
+              type="button"
+              disabled={!canUndo}
+              onClick={onUndo}
+              aria-label="Undo node edit"
+              title="Undo node or handle edit (Ctrl+Z)"
+              className="shrink-0 p-1.5 rounded-md transition-colors border shadow-sm bg-neutral-800 border-neutral-600 text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
+          {onRedo && (
+            <Button
+              variant="ghost"
+              type="button"
+              disabled={!canRedo}
+              onClick={onRedo}
+              aria-label="Redo node edit"
+              title="Redo node or handle edit (Ctrl+Shift+Z)"
+              className="shrink-0 p-1.5 rounded-md transition-colors border shadow-sm bg-neutral-800 border-neutral-600 text-neutral-300 hover:bg-neutral-700 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             type="button"
@@ -506,9 +560,9 @@ export function CompliantSchematic({
           role="img"
           aria-label="Compliant bars"
           onPointerMove={onPointerMove}
-          onPointerUp={() => { drag.current = null; setIsDragging(false); }}
-          onPointerCancel={() => { drag.current = null; setIsDragging(false); }}
-          onPointerLeave={() => { drag.current = null; setIsDragging(false); }}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onPointerLeave={endDrag}
         >
           <defs>
             {/* True frosted-glass backdrop blur (~2.6px screen blur) clipped strictly inside upper layers */}
@@ -776,7 +830,17 @@ export function CompliantSchematic({
                 const end = index === 0 ? chords[member.id][0] : chords[member.id][1];
                 const isHovered = hoveredBound === `${member.id}_${index + 1}`;
                 return (
-                  <g key={`${member.id}-${index}`} className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind: 'handle', member: member.id, index }; setIsDragging(true); svgRef.current?.setPointerCapture(e.pointerId); }}>
+                  <g
+                    key={`${member.id}-${index}`}
+                    data-drag-node={`handle-${member.id}-${index + 1}`}
+                    className="cursor-grab touch-none"
+                    onPointerDown={(e) => {
+                      drag.current = { kind: 'handle', member: member.id, index };
+                      setIsDragging(true);
+                      onDragStart?.();
+                      svgRef.current?.setPointerCapture?.(e.pointerId);
+                    }}
+                  >
                     <line x1={end[0]} y1={-end[1]} x2={h[0]} y2={-h[1]} stroke={member.color} strokeOpacity={isHovered ? 1 : 0.7} strokeWidth={isHovered ? 0.14 : 0.06} />
                     <circle cx={h[0]} cy={-h[1]} r={1.05} fill="transparent" />
                     {isHovered && (
