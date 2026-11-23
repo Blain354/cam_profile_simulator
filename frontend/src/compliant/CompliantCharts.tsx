@@ -9,7 +9,7 @@ import { ChartCard } from '../ChartCard';
 import { TubeSectionCard } from '../TubeModel';
 import { chartDomain, sameDomainSettings } from '../lib/chartDomain';
 import {
-  DEFAULT_CHART_SETTINGS, allowableStressMpa, interpNullable,
+  DEFAULT_CHART_SETTINGS, allowableStressMpa, interpNullable, screwTorquePerNewtonMnm,
 } from './types';
 import type {
   ChartScaleSettings, CompliantChartKey, CompliantChartSettings, CompliantParams, CompliantResult, SolverConstraints,
@@ -62,6 +62,7 @@ export function CompliantCharts({
     }));
   }, [result]);
 
+  const stroke = params.stroke;
   const motorLimited = constraints?.motor_limited_stress ?? true;
   const stallY = motorLimited && result?.stall_y_mm != null && Number.isFinite(result.stall_y_mm)
     ? result.stall_y_mm
@@ -82,6 +83,69 @@ export function CompliantCharts({
       thrust: th?.[i] != null && th[i]! > 0.05 ? th[i] : null,
     }));
   }, [result]);
+
+  const torquePerN = useMemo(() => screwTorquePerNewtonMnm(params), [
+    params.screw_diameter, params.lead_screw_pitch, params.screw_friction,
+  ]);
+
+  const torqueData = useMemo(() => {
+    const ys = result?.overtravel_y && result.overtravel_y.length > 0
+      ? result.overtravel_y
+      : (result?.Y_positions ?? []);
+    const hasOver = Boolean(result?.overtravel_y && result.overtravel_y.length > 0);
+    const th = hasOver ? result?.overtravel_thrust : result?.thrust;
+    return ys.map((y, i) => ({
+      y,
+      torque: th?.[i] != null && torquePerN != null ? th[i]! * torquePerN : null,
+    }));
+  }, [result, torquePerN]);
+
+  const flowData = useMemo(() => {
+    const ys = result?.Y_positions ?? [];
+    const fa = result?.flow_a ?? [];
+    const fb = result?.flow_b ?? [];
+    const basePts = ys.map((y, i) => ({
+      y,
+      a: fa[i] ?? null,
+      b: fb[i] ?? null,
+    }));
+    const stallInStroke = stallY != null && stallY < stroke - 1e-4;
+    if (!stallInStroke || basePts.length === 0) {
+      return basePts.map((pt) => ({
+        y: pt.y,
+        flowAReach: pt.a,
+        flowBReach: pt.b,
+        flowAOver: null as number | null,
+        flowBOver: null as number | null,
+      }));
+    }
+    const merged = [...basePts];
+    for (const bound of [-stallY, stallY]) {
+      const minY = basePts[0].y;
+      const maxY = basePts[basePts.length - 1].y;
+      if (bound < minY - 1e-9 || bound > maxY + 1e-9) continue;
+      if (merged.some((pt) => Math.abs(pt.y - bound) < 1e-6)) continue;
+      merged.push({
+        y: bound,
+        a: interpNullable(bound, ys, fa),
+        b: interpNullable(bound, ys, fb),
+      });
+    }
+    merged.sort((p, q) => p.y - q.y);
+    const eps = 1e-6;
+    return merged.map((pt) => {
+      const absY = Math.abs(pt.y);
+      const reachable = absY <= stallY + eps;
+      const beyond = absY >= stallY - eps;
+      return {
+        y: pt.y,
+        flowAReach: reachable ? pt.a : null,
+        flowBReach: reachable ? pt.b : null,
+        flowAOver: beyond ? pt.a : null,
+        flowBOver: beyond ? pt.b : null,
+      };
+    });
+  }, [result, stallY, stroke]);
 
   const stressData = useMemo(() => {
     const ys = result?.overtravel_y && result.overtravel_y.length > 0
@@ -146,8 +210,6 @@ export function CompliantCharts({
       y: result?.y_time?.[i] ?? 0,
     }));
   }, [result]);
-
-  const stroke = params.stroke;
 
   const xAxisY = (c: ChartDomainSettings) => {
     // Per-card manual X overrides shared X scale; otherwise shared lockX keeps all charts aligned.
@@ -301,7 +363,7 @@ export function CompliantCharts({
         <ChartCard title="Static flow vs carriage Y" {...cardProps('flow')}>
           {({ settings: c }) => (
             <FitChart>
-              <LineChart data={chartData} margin={MARGIN}>
+              <LineChart data={flowData} margin={MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#333" />
                 {xAxisY(c)}
                 <YAxis
@@ -313,14 +375,72 @@ export function CompliantCharts({
                   label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
                 />
                 {safeStrokeMarkers()}
+                {stallY != null && stallY < stroke - 1e-4 && (
+                  <>
+                    <ReferenceLine
+                      x={stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                      label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+                    />
+                    <ReferenceLine
+                      x={-stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                    />
+                    {result?.max_flow_l_min != null && (
+                      <ReferenceLine
+                        y={result.max_flow_l_min}
+                        stroke={VIOLET}
+                        strokeDasharray="4 3"
+                        label={{
+                          value: `max @ stall (${result.max_flow_l_min.toFixed(1)} L/min)`,
+                          fill: VIOLET,
+                          fontSize: 10,
+                          position: 'insideTopRight',
+                        }}
+                      />
+                    )}
+                  </>
+                )}
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
                   formatter={(v) => `${Number(v).toFixed(3)} L/min`}
                   labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
                 />
                 <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="linear" dataKey="flowA" name="Tube A (supply)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="flowB" name="Tube B (exhaust)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="flowAReach" name="Tube A (supply)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+                <Line type="linear" dataKey="flowBReach" name="Tube B (exhaust)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+                {stallY != null && stallY < stroke - 1e-4 && (
+                  <>
+                    <Line
+                      type="linear"
+                      dataKey="flowAOver"
+                      name="Tube A (beyond stall)"
+                      legendType="none"
+                      stroke={ORANGE}
+                      strokeOpacity={0.32}
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="flowBOver"
+                      name="Tube B (beyond stall)"
+                      legendType="none"
+                      stroke={CYAN}
+                      strokeOpacity={0.32}
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </>
+                )}
                 <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
               </LineChart>
             </FitChart>
@@ -484,6 +604,64 @@ export function CompliantCharts({
                 <Line type="linear" dataKey="forceA" name="Foot on tube A" stroke={ORANGE} strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 <Line type="linear" dataKey="forceB" name="Foot on tube B" stroke={CYAN} strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 <Line type="linear" dataKey="thrust" name="Screw thrust" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
+              </LineChart>
+            </FitChart>
+          )}
+        </ChartCard>
+
+        <ChartCard title="Motor torque vs carriage Y" {...cardProps('torque')}>
+          {({ settings: c }) => (
+            <FitChart>
+              <LineChart data={torqueData} margin={MARGIN}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                {xAxisY(c)}
+                <YAxis
+                  type="number"
+                  stroke="#888"
+                  domain={chartDomain(c, 'y')}
+                  allowDataOverflow={!c.autoY}
+                  tickFormatter={(v) => Number(v).toFixed(1)}
+                  label={{ value: 'Torque (mN·m)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+                />
+                {safeStrokeMarkers()}
+                {params.motor_torque_mnm > 0 && (
+                  <ReferenceLine
+                    y={params.motor_torque_mnm}
+                    stroke="#ef4444"
+                    strokeDasharray="4 3"
+                    label={{
+                      value: `max torque (${params.motor_torque_mnm.toFixed(1)} mN·m)`,
+                      fill: '#ef4444',
+                      fontSize: 10,
+                      position: 'insideTopRight',
+                    }}
+                  />
+                )}
+                {stallY != null && (
+                  <>
+                    <ReferenceLine
+                      x={stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                      label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+                    />
+                    <ReferenceLine
+                      x={-stallY}
+                      stroke={VIOLET}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.8}
+                    />
+                  </>
+                )}
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                  formatter={(v) => `${Number(v).toFixed(2)} mN·m`}
+                  labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
+                />
+                <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                <Line type="linear" dataKey="torque" name="Motor torque (A + B)" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
               </LineChart>
             </FitChart>

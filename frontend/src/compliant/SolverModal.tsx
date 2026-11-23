@@ -17,8 +17,8 @@ import { SolvePreviewPanel } from './SolvePreviewPanel';
 
 const CONSTRAINT_LABELS: Record<string, string> = {
   stress: 'Stress > limit (before motor stall)',
-  motor_stall: 'Motor stalls inside ±stroke',
-  seal_y0: 'Not sealed at Y = 0 (preload lost)',
+  motor_stall: 'Motor stalls inside ±stroke (optional)',
+  seal_y0: 'Y = 0 pinch geometry / pre-flex',
   tube: 'Member L/R hits tube (< clearance)',
   crossing: 'Members cross each other',
   shell: 'Shell housing clearance',

@@ -5,7 +5,7 @@ import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import { applyFrostedBackdrop } from './solvePreviewRenderer';
 import {
-  CARRIAGE_SPEED_MM_S, MEMBERS, buildConstantSpeedCycle, deflected, interp, interpNullable,
+  CARRIAGE_SPEED_MM_S, MEMBERS, buildConstantSpeedCycle, deflected, deflectedPoint, interp, interpNullable,
   nearestToWall, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
@@ -459,7 +459,7 @@ export function drawMechanismFrame(
     // Target pinch P_goal & target attack vector
     if (constraints.target_pinch_from_top_mm != null) {
       const ty = ceiling - constraints.target_pinch_from_top_mm;
-      const txContact = result.pinch_contact_x ?? pinchContactX(params);
+      const txContact = result.pinch_contact_x ?? pinchContactX(params, tubeSweep);
       const txCenter = txContact + params.f_thickness / 2;
       const footR = Math.max(params.f_thickness / 2, 0.18);
       const angRad = ((constraints.target_attack_angle_deg ?? 0) * Math.PI) / 180;
@@ -511,10 +511,7 @@ export function drawMechanismFrame(
       for (let k = 0; k <= 12; k++) {
         const yy = (k / 12) * params.stroke;
         const ff = interp(yy, result.Y_positions, result.force_a);
-        trajPts.push([
-          lf.x[tipIdx] + lf.x_per_y[tipIdx] * yy + lf.x_per_n[tipIdx] * ff,
-          lf.y[tipIdx] + lf.y_per_y[tipIdx] * yy + lf.y_per_n[tipIdx] * ff,
-        ]);
+        trajPts.push(deflectedPoint(lf, tipIdx, yy, ff));
       }
       const pEnd = trajPts[trajPts.length - 1];
       ctx.beginPath();

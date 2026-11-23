@@ -1004,7 +1004,7 @@ def _solve_contact_flex(p: LinkageParams, g: np.ndarray, st: np.ndarray, ct: np.
         r_hi[idx] = hi[idx] - ca[idx] * f_sub
 
     tol = 1e-8 if fast else 1e-13
-    max_it = 30 if fast else 52
+    max_it = 44 if fast else 52
     # Safeguarded secant-bisection (only evaluates unconverged points on each step).
     for it in range(max_it):
         still = (hi - lo) > tol

@@ -1,7 +1,7 @@
 import { encodeGif } from '../lib/gifEncoder';
 import type { GifFrameInput } from '../lib/gifEncoder';
 import {
-  CARRIAGE_SPEED_MM_S, buildConstantSpeedCycle, deflected, interp, nearestToWall,
+  CARRIAGE_SPEED_MM_S, buildConstantSpeedCycle, deflected, deflectedPoint, interp, nearestToWall,
   sampleCubicBezier, strokeOutlinePath,
 } from './types';
 import type {
@@ -662,6 +662,12 @@ export function drawSchematicFrame(
   drawJoint(frame.a, frame.ok ? PALETTE.memberL : PALETTE.rejectedCore);
   drawJoint(frame.j, frame.ok ? PALETTE.textPrimary : PALETTE.rejectedCore);
   drawJoint(frame.p, frame.ok ? PALETTE.memberF : PALETTE.rejectedCore);
+  // Fixed outer contact surface marker at (closed_gap - preload) from the wall
+  const contactX = frame.p[0] - frame.th[2] / 2;
+  ctx.beginPath();
+  ctx.arc(tx.toX(contactX), tx.toY(frame.p[1]), 2.0, 0, Math.PI * 2);
+  ctx.fillStyle = PALETTE.emerald;
+  ctx.fill();
 
   // Drafting corner marks for best milestones
   if (opts?.showCornerEmphasis ?? frame.best) {
@@ -782,8 +788,7 @@ export function drawFinaleFrame(
     for (let k = 0; k <= 12; k++) {
       const yy = (k / 12) * stroke;
       const ff = interp(yy, result.Y_positions, result.force_a);
-      const px = lf.x[tipIdx] + lf.x_per_y[tipIdx] * yy + lf.x_per_n[tipIdx] * ff;
-      const py = lf.y[tipIdx] + lf.y_per_y[tipIdx] * yy + lf.y_per_n[tipIdx] * ff;
+      const [px, py] = deflectedPoint(lf, tipIdx, yy, ff);
       if (k === 0) ctx.moveTo(tx.toX(px), tx.toY(py));
       else ctx.lineTo(tx.toX(px), tx.toY(py));
     }

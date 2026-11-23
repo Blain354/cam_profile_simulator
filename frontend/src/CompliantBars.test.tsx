@@ -5,7 +5,8 @@ import { SolverModal } from './compliant/SolverModal';
 import { SolverGoalBudgetControls } from './compliant/CompliantControls';
 import {
   COMPLIANT_DEFAULTS, DEFAULT_CONSTRAINTS, DEFAULT_SOLVER_GOAL_CONFIG, DEFAULT_SOLVER_METHOD_CONFIG,
-  allowableStressMpa, anchorPoint, memberChords, screwThrustAvailableN,
+  allowableStressMpa, anchorPoint, deflected, deflectedPoint, fromCompliantProfilePayload,
+  memberChords, pinchContactX, pinchX, screwThrustAvailableN,
 } from './compliant/types';
 import type { Runner, SolveJobState } from './compliant/types';
 
@@ -118,6 +119,7 @@ test('right-hand panel renders the uniform multi-chart grid layout', () => {
   expect(getByText('Static flow vs carriage Y')).toBeTruthy();
   expect(getByText('Pinch gap vs carriage Y')).toBeTruthy();
   expect(getByText('Pinch force vs carriage Y')).toBeTruthy();
+  expect(getByText('Motor torque vs carriage Y')).toBeTruthy();
   expect(getByText('Worst stress in the part vs carriage Y')).toBeTruthy();
 });
 
@@ -500,11 +502,11 @@ test('screwThrustAvailableN matches 60-degree M3x0.5 power-screw limit and motor
   expect(getByText('Screw Ø (mm)')).toBeTruthy();
   expect(getByText('Lead screw pitch (mm/rev)')).toBeTruthy();
 
-  // Stall-safety constraints are checked by default in Solver constraints.
+  // Motor-limited stress is checked by default; hard no-stall rejection is off by default (stall caps stroke/performance).
   const motorStressCb = getByRole('checkbox', { name: /Motor-limited stress/ }) as HTMLInputElement;
   const noStallCb = getByRole('checkbox', { name: /No motor stall inside ±stroke/ }) as HTMLInputElement;
   expect(motorStressCb.checked).toBe(true);
-  expect(noStallCb.checked).toBe(true);
+  expect(noStallCb.checked).toBe(false);
 
   // Open Solve setup modal, select Min actuation energy (unselecting default), and launch.
   fireEvent.click(getByRole('button', { name: /Solve…/ }));
@@ -521,7 +523,7 @@ test('screwThrustAvailableN matches 60-degree M3x0.5 power-screw limit and motor
   expect(body.goal).toBe('min_energy');
   expect(body.params.motor_torque_mnm).toBe(30);
   expect(body.constraints.motor_limited_stress).toBe(true);
-  expect(body.constraints.require_no_stall_in_stroke).toBe(true);
+  expect(body.constraints.require_no_stall_in_stroke).toBe(false);
 });
 
 test('Results accordion displays peak thrust, cycle energy, stall Y, and yield Y, and SolverModal ranks by Low energy', async () => {
@@ -639,4 +641,89 @@ test('Results accordion displays peak thrust, cycle energy, stall Y, and yield Y
   expect(modal.getByTestId('best-solution-card-1').textContent).toContain('420 mJ');
   fireEvent.click(modal.getByRole('button', { name: 'Low energy' }));
   expect(modal.getByTestId('best-solution-card-1').textContent).toContain('85 mJ');
+});
+
+test('pinchContactX uses FEM h_sealed and preload, independent of mechanism nodes, and deflected stays locked at Y=0', () => {
+  expect(COMPLIANT_DEFAULTS.tube_model).toBe('fem');
+  const femSweep = { h_sealed: 0.78 };
+  const base = { ...COMPLIANT_DEFAULTS, tube_model: 'fem' as const, tube_center_x: 8, tube_od: 3, preload: 0.12 };
+  const expectedContactX = (0.78 - 0.12) - (8 + 1.5);
+  expect(pinchContactX(base, femSweep)).toBeCloseTo(expectedContactX, 6);
+  expect(pinchX(base, femSweep)).toBeCloseTo(expectedContactX + base.f_thickness / 2, 6);
+
+  // Dragging mechanism nodes / handles / pinch_y / thicknesses does not change pinchContactX.
+  const dragged = {
+    ...base,
+    anchor_distance: 2.1,
+    junction_x: -3.2,
+    junction_y: 14.5,
+    pinch_y: 6.4,
+    l_v1: 2.5,
+    f_v2: -1.7,
+    f_thickness: 1.9,
+  };
+  expect(pinchContactX(dragged, femSweep)).toBeCloseTo(expectedContactX, 6);
+  expect(pinchX(dragged, femSweep)).toBeCloseTo(expectedContactX + 1.9 / 2, 6);
+
+  // At Y = 0 with force = force_y0, deflected() and deflectedPoint() stay strictly at the Y = 0 pinch coordinates.
+  const line = {
+    x: [-5.5, expectedContactX + 0.5],
+    y: [12, 10.5],
+    x_per_y: [0.2, 0.8],
+    y_per_y: [0.1, -0.05],
+    x_per_n: [0.02, 0.09],
+    y_per_n: [0.01, 0.03],
+    force_y0: 4.2,
+    thickness: 1.0,
+  };
+  const atY0 = deflected(line, 0, 4.2);
+  expect(atY0[1][0]).toBeCloseTo(expectedContactX + 0.5, 9);
+  expect(atY0[1][1]).toBeCloseTo(10.5, 9);
+  expect(deflectedPoint(line, 1, 0, 4.2)).toEqual([expectedContactX + 0.5, 10.5]);
+});
+
+test('schematic keeps valid viewBox and h0 when backend returns an empty failed result (e.g. FEM ballooning)', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/simulate')) {
+      return new Response(JSON.stringify({
+        feasible: false,
+        passes: false,
+        message: 'Tube FEM: ballooning',
+        Y_positions: [],
+        flow_a: [], flow_b: [], gap_a: [], gap_b: [], gap_rigid_a: [],
+        force_a: [], force_b: [], stress_a: [], stress_b: [],
+        wall_x: 0, pivot_height_y0: 0, anchor_x: 0, pivot_x: 0, pinch_x: 0, pinch_contact_x: 0,
+        travel_sign: 1, lines: {}, handles: {},
+        anchor: [0, 0], junction: [0, 0], pinch: [0, 0], pivot: [0, 0],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { findByText } = render(<CompliantBars mode="explorer" onOpenExplorer={() => {}} />);
+  expect(await findByText('Tube FEM: ballooning')).toBeTruthy();
+  const svg = document.querySelector('svg[aria-label="Compliant bars"]');
+  expect(svg).toBeTruthy();
+  const vb = (svg?.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
+  // Must use params fallback (wall = 9.5, ceiling = 16) rather than collapsing to 4x4 around 0.
+  expect(vb[2]).toBeGreaterThan(15);
+  expect(vb[3]).toBeGreaterThan(15);
+  expect(svg?.textContent).toContain('h₀ 8.00');
+  expect(svg?.textContent).not.toContain('h₀ 0.00');
+});
+
+test('fromCompliantProfilePayload migrates legacy v1 max_y0_flex_mm=0.05 and require_no_stall_in_stroke defaults', () => {
+  const legacy = fromCompliantProfilePayload({
+    constraints: { max_y0_flex_mm: 0.05, require_no_stall_in_stroke: true },
+  });
+  expect(legacy.constraints.max_y0_flex_mm).toBe(0);
+  expect(legacy.constraints.require_no_stall_in_stroke).toBe(false);
+  expect(legacy.constraints.constraints_version).toBe(2);
+
+  // Explicit v2 user choices are preserved.
+  const v2 = fromCompliantProfilePayload({
+    constraints: { constraints_version: 2, max_y0_flex_mm: 0.12, require_no_stall_in_stroke: true },
+  });
+  expect(v2.constraints.max_y0_flex_mm).toBe(0.12);
+  expect(v2.constraints.require_no_stall_in_stroke).toBe(true);
 });

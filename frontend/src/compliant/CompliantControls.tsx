@@ -412,13 +412,13 @@ export function SolverConstraintsContent({
           onChange={(v) => onConstraintsChange({ min_tube_clearance_mm: v })}
         />
         <ParameterSlider
-          label="Max Y=0 gap flex (mm)"
+          label="Max Y=0 pre-flex (mm)"
           value={constraints.max_y0_flex_mm}
           min={0}
-          max={0.3}
+          max={0.5}
           step={0.01}
-          secondaryValue={constraints.max_y0_flex_mm === 0 ? 'seal only' : `≤ ${constraints.max_y0_flex_mm.toFixed(2)} mm`}
-          description="Tight tolerance on outward flex at Y = 0 under tube pressure relative to the precalculated (closed_gap − preload) fixed contact point."
+          secondaryValue={constraints.max_y0_flex_mm === 0 ? 'off (fixed Y=0)' : `≤ ${constraints.max_y0_flex_mm.toFixed(2)} mm`}
+          description="Optional cap on the elastic pre-flex required to hold the fixed (closed_gap − preload) contact point under Y = 0 tube pressure. 0 disables the cap (stress and rotation at Y = 0 still apply)."
           onChange={(v) => onConstraintsChange({ max_y0_flex_mm: v })}
         />
         <ParameterSlider
@@ -464,14 +464,14 @@ export function SolverConstraintsContent({
           <label className="flex items-start gap-2 text-xs text-neutral-200 cursor-pointer select-none">
             <input
               type="checkbox"
-              checked={constraints.require_no_stall_in_stroke ?? true}
+              checked={constraints.require_no_stall_in_stroke ?? false}
               onChange={(e) => onConstraintsChange({ require_no_stall_in_stroke: e.target.checked })}
               className="mt-0.5 accent-amber-500 shrink-0"
             />
             <span>
-              No motor stall inside ±stroke
+              No motor stall inside ±stroke (optional hard reject)
               <span className="block text-[10px] leading-snug text-neutral-400 font-normal">
-                Rejects designs whose thrust inside ±stroke exceeds motor torque; stalling outside ±stroke is allowed.
+                Off by default: stalling inside ±stroke physically caps carriage travel to ±stall Y, limiting max reachable flow, chamber frequency, and raising energy. Check to hard-reject any stall inside ±stroke.
               </span>
             </span>
           </label>
@@ -1581,6 +1581,21 @@ export function ResultsAccordion({
               ? '—'
               : `${result.energy_cycle_mj.toFixed(1)} mJ`
           }
+        />
+        <StatRow
+          label="Max reachable flow"
+          value={
+            result?.max_flow_l_min == null
+              ? '—'
+              : `${result.max_flow_l_min.toFixed(1)} L/min${
+                result.max_flow_frac != null ? ` (${Math.round(result.max_flow_frac * 100)}% bore)` : ''
+              }${
+                result.effective_stroke_mm != null && result.stall_y_mm != null && result.stall_y_mm < params.stroke - 1e-4
+                  ? ` @ ±${result.effective_stroke_mm.toFixed(2)} mm`
+                  : ''
+              }`
+          }
+          highlight={result?.max_flow_frac != null && result.max_flow_frac < 0.5}
         />
         <StatRow
           label="Motor stalls at"

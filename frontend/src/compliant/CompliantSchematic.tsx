@@ -7,7 +7,7 @@ import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import { buildMechanismGif } from './mechanismGif';
 import {
-  LOAD_FACTOR, MEMBERS, MOTOR_RPM, anchorPoint, anchorSymmetricRange, bezier, deflected, effectivePinchY, interp, interpNullable,
+  LOAD_FACTOR, MEMBERS, MOTOR_RPM, anchorPoint, anchorSymmetricRange, bezier, deflected, deflectedPoint, effectivePinchY, interp, interpNullable,
   leftNormal, nearestToWall, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
@@ -117,6 +117,7 @@ export function CompliantSchematic({
   const [gifExporting, setGifExporting] = useState(false);
   const [gifPct, setGifPct] = useState(0);
   const [gifError, setGifError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const flowParticlesOn = useFlowParticlesOn();
   const drag = useRef<
     null | { kind: 'anchor' } | { kind: 'junction' } | { kind: 'pinch' } | { kind: 'handle'; member: Member; index: 0 | 1 }
@@ -151,7 +152,7 @@ export function CompliantSchematic({
   };
 
   const handleExportMechanismGif = async () => {
-    if (!result?.lines || gifExporting) return;
+    if (!result?.lines?.l || gifExporting) return;
     setGifExporting(true);
     setGifPct(2);
     setGifError(null);
@@ -182,15 +183,20 @@ export function CompliantSchematic({
     }
   };
 
+  const hasSolvedLines = Boolean(result?.lines?.l && result?.lines?.r && result?.lines?.f);
   const anchor: Pt = anchorPoint(params);
   const junction: Pt = [params.junction_x, params.junction_y];
   const pivot: Pt = [params.pivot_inverted ? -params.pivot_offset : params.pivot_offset, params.closed_carriage_height];
-  const wall = result?.wall_x ?? params.tube_center_x + params.tube_od / 2;
-  const h0 = result?.pivot_height_y0 ?? params.closed_carriage_height;
+  const wall = result?.wall_x && result.wall_x > 0 ? result.wall_x : params.tube_center_x + params.tube_od / 2;
+  const h0 = result?.pivot_height_y0 && result.pivot_height_y0 > 0 ? result.pivot_height_y0 : params.closed_carriage_height;
   const ceiling = 2 * h0;
-  const pinchContactXPos = result?.pinch_contact_x ?? pinchContactX(params);
+  const pinchContactXPos = params.tube_model === 'fem' && tubeSweep?.h_sealed != null
+    ? pinchContactX(params, tubeSweep)
+    : (hasSolvedLines && result?.pinch_contact_x != null ? result.pinch_contact_x : pinchContactX(params, tubeSweep));
   const pinch: Pt = [pinchContactXPos + params.f_thickness / 2, effectivePinchY(params, constraints)];
-  const force = result ? interp(yPose, result.Y_positions, result.force_a) : 0;
+  const force = hasSolvedLines && result ? interp(yPose, result.Y_positions, result.force_a) : 0;
+  const atRestPose = Math.abs(yPose) < 1e-9;
+  const useLiveRest = !hasSolvedLines || isDragging || atRestPose;
 
   const restLines = useMemo(() => ({
     l: bezier(anchor, junction, params.l_u1, params.l_v1, params.l_u2, params.l_v2),
@@ -199,13 +205,13 @@ export function CompliantSchematic({
   }), [anchor[0], anchor[1], junction[0], junction[1], pivot[0], pivot[1], pinch[0], pinch[1], params]);
 
   const lines = useMemo(() => {
-    if (!result?.lines) return restLines;
+    if (useLiveRest || !result?.lines) return restLines;
     return {
       l: deflected(result.lines.l, yPose, force),
       r: deflected(result.lines.r, yPose, force),
       f: deflected(result.lines.f, yPose, force),
     };
-  }, [result, yPose, force, restLines]);
+  }, [result, yPose, force, restLines, useLiveRest]);
 
   const chords: Record<Member, [Pt, Pt]> = { l: [anchor, junction], r: [junction, pivot], f: [junction, pinch] };
   const handleOf = (member: Member, index: 0 | 1): Pt => {
@@ -250,7 +256,7 @@ export function CompliantSchematic({
   const margin = 2;
   const poly = (pts: Pt[]) => pts.map(([x, yy]) => `${x.toFixed(3)},${(-yy).toFixed(3)}`).join(' ');
   const dot = (p: Pt, color: string, kind: 'anchor' | 'junction' | 'pinch', label: string) => (
-    <g className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind }; svgRef.current?.setPointerCapture(e.pointerId); }}>
+    <g className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind }; setIsDragging(true); svgRef.current?.setPointerCapture(e.pointerId); }}>
       <circle cx={p[0]} cy={-p[1]} r={1.05} fill="transparent" />
       <circle cx={p[0]} cy={-p[1]} r={0.45} fill="var(--bui-surface)" stroke={color} strokeWidth={0.12} />
       <text x={p[0] + 0.5} y={-p[1] - 0.45} fill={color} fontSize={0.55} fontWeight="bold">{label}</text>
@@ -265,9 +271,9 @@ export function CompliantSchematic({
   ].map(([px, py]) => `${px},${-py}`).join(' ');
   const mirror = (pts: Pt[]): Pt[] => pts.map(([x, yy]) => [-x, ceiling - yy]);
   const mirroredLines: Record<Member, Pt[]> = {
-    l: result ? mirror(deflected(result.lines.l, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.l),
-    r: result ? mirror(deflected(result.lines.r, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.r),
-    f: result ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.f),
+    l: !useLiveRest && result ? mirror(deflected(result.lines.l, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.l),
+    r: !useLiveRest && result ? mirror(deflected(result.lines.r, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.r),
+    f: !useLiveRest && result ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a))) : mirror(lines.f),
   };
   const mirroredOutlines: Record<Member, Pt[]> = {
     l: strokeOutlinePath(mirroredLines.l, params.l_thickness),
@@ -311,7 +317,7 @@ export function CompliantSchematic({
     </>
   );
 
-  const footB = result
+  const footB = !useLiveRest && result
     ? mirror(deflected(result.lines.f, -yPose, interp(-yPose, result.Y_positions, result.force_a)))
     : mirror(lines.f);
   const contactA = nearestToWall(lines.f, -1);
@@ -485,9 +491,9 @@ export function CompliantSchematic({
           role="img"
           aria-label="Compliant bars"
           onPointerMove={onPointerMove}
-          onPointerUp={() => { drag.current = null; }}
-          onPointerCancel={() => { drag.current = null; }}
-          onPointerLeave={() => { drag.current = null; }}
+          onPointerUp={() => { drag.current = null; setIsDragging(false); }}
+          onPointerCancel={() => { drag.current = null; setIsDragging(false); }}
+          onPointerLeave={() => { drag.current = null; setIsDragging(false); }}
         >
           <defs>
             {/* True frosted-glass backdrop blur (~2.6px screen blur) clipped strictly inside upper layers */}
@@ -689,10 +695,7 @@ export function CompliantSchematic({
                 for (let k = 0; k <= steps; k++) {
                   const yy = (k / steps) * params.stroke;
                   const ff = interp(yy, result.Y_positions, result.force_a);
-                  pts.push([
-                    lf.x[tipIdx] + lf.x_per_y[tipIdx] * yy + lf.x_per_n[tipIdx] * ff,
-                    lf.y[tipIdx] + lf.y_per_y[tipIdx] * yy + lf.y_per_n[tipIdx] * ff,
-                  ]);
+                  pts.push(deflectedPoint(lf, tipIdx, yy, ff));
                 }
                 const pEnd = pts[pts.length - 1];
                 return (
@@ -737,7 +740,7 @@ export function CompliantSchematic({
                 const end = index === 0 ? chords[member.id][0] : chords[member.id][1];
                 const isHovered = hoveredBound === `${member.id}_${index + 1}`;
                 return (
-                  <g key={`${member.id}-${index}`} className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind: 'handle', member: member.id, index }; svgRef.current?.setPointerCapture(e.pointerId); }}>
+                  <g key={`${member.id}-${index}`} className="cursor-grab touch-none" onPointerDown={(e) => { drag.current = { kind: 'handle', member: member.id, index }; setIsDragging(true); svgRef.current?.setPointerCapture(e.pointerId); }}>
                     <line x1={end[0]} y1={-end[1]} x2={h[0]} y2={-h[1]} stroke={member.color} strokeOpacity={isHovered ? 1 : 0.7} strokeWidth={isHovered ? 0.14 : 0.06} />
                     <circle cx={h[0]} cy={-h[1]} r={1.05} fill="transparent" />
                     {isHovered && (

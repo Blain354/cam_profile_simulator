@@ -65,14 +65,14 @@ class ComputeTests(unittest.TestCase):
         self.assertFalse(result.pivot_ok, result.message)
 
     def test_admissible_slope_outranks_a_rejected_shape(self):
-        # 4.0 mN·m motor stalls before the 1 mm default bar reaches 75 MPa (at 5.8 mN·m).
-        good = compute_compliant(CompliantParams(motor_torque_mnm=4.0), fast=True)
-        bad = compute_compliant(CompliantParams(motor_torque_mnm=4.0, member_strength_mpa=0.01), fast=True)
+        # 5.0 mN·m motor clears the FEM operating stroke (~4.5 mN·m) and stalls before the default bar yields.
+        good = compute_compliant(CompliantParams(motor_torque_mnm=5.0), fast=True)
+        bad = compute_compliant(CompliantParams(motor_torque_mnm=5.0, member_strength_mpa=0.01), fast=True)
         self.assertGreater(admission_score(good), 0.0)
         self.assertLess(admission_score(bad), admission_score(good))
 
     def test_solver_keeps_a_fixed_shape(self):
-        params = CompliantParams(motor_torque_mnm=4.0)
+        params = CompliantParams(motor_torque_mnm=5.0)
         bounds = {key: (getattr(params, key), getattr(params, key)) for key in (
             "anchor_distance", "junction_x", "junction_y", "pinch_y",
             "l_u1", "l_v1", "l_u2", "l_v2", "r_u1", "r_v1", "r_u2", "r_v2",
@@ -213,17 +213,58 @@ class ComputeTests(unittest.TestCase):
         self.assertTrue(outside.junction_ok)
 
     def test_seal_at_y0_is_enforced_as_hard_constraint(self):
-        # Very low modulus + tiny preload -> tube pressure pushes the foot open at Y = 0 -> must fail passes.
+        # Even for a very soft bar, the fixed Y=0 pinch constraint keeps gap_y0_mm locked to closed_gap - preload,
+        # while max_y0_flex_mm catches excessive pre-flex required to hold that position.
         soft = CompliantParams(member_modulus_mpa=150.0, preload=0.02, l_thickness=0.4, r_thickness=0.4, f_thickness=0.4)
-        res = compute_compliant(soft, fast=True)
-        self.assertFalse(res.sealed_at_y0)
-        self.assertFalse(res.passes)
-        self.assertIn("y = 0", res.message.lower())
+        res_locked = compute_compliant(soft, fast=True)
+        self.assertAlmostEqual(res_locked.gap_y0_mm, res_locked.closed_gap - soft.preload, places=5)
+        self.assertTrue(res_locked.sealed_at_y0)
 
+        res_capped = compute_compliant(soft, fast=True, constraints=CompliantConstraints(max_y0_flex_mm=0.05))
+        self.assertFalse(res_capped.sealed_at_y0)
+        self.assertFalse(res_capped.passes)
+        self.assertIn("y = 0", res_capped.message.lower())
+
+    def test_pinch_x_at_y0_is_fixed_independent_of_node_configuration(self):
+        # Regardless of how nodes/handles/thicknesses/modulus are dragged, at carriage Y = 0
+        # the foot contact X from the wall equals the precalculated FEM (closed_gap - preload),
+        # while pinch_y stays as configured.
+        base = CompliantParams(preload=0.12, pinch_y=11.2, input_pressure_kpa=100.0, tube_shore_a=50.0)
+        base_res = compute_compliant(base, fast=True)
+        expected_gap_y0 = base_res.closed_gap - base.preload
+        expected_contact_x = expected_gap_y0 - base_res.wall_x
+
+        variants = [
+            base,
+            CompliantParams(anchor_distance=2.0, junction_x=-3.0, junction_y=9.5, preload=0.12, pinch_y=11.2),
+            CompliantParams(anchor_distance=7.2, junction_x=-6.8, junction_y=14.0, l_v1=2.2, r_v2=-1.8, preload=0.12, pinch_y=11.2),
+            CompliantParams(f_thickness=0.5, l_thickness=0.6, r_thickness=0.6, member_modulus_mpa=400.0, preload=0.12, pinch_y=11.2),
+            CompliantParams(f_thickness=1.8, preload=0.12, pinch_y=7.4),
+        ]
+        for p in variants:
+            res = compute_compliant(p, fast=True)
+            mid = len(res.Y_positions) // 2
+            self.assertAlmostEqual(res.Y_positions[mid], 0.0, places=9)
+            self.assertAlmostEqual(res.pinch_contact_x, expected_contact_x, places=6)
+            self.assertAlmostEqual(res.gap_y0_mm, expected_gap_y0, places=6)
+            self.assertAlmostEqual(res.gap_a[mid], expected_gap_y0, places=6)
+            self.assertAlmostEqual(res.gap_b[mid], expected_gap_y0, places=6)
+            self.assertAlmostEqual(res.lines["f"]["x"][-1] - p.f_thickness / 2.0, expected_contact_x, places=6)
+            self.assertAlmostEqual(res.lines["f"]["force_y0"], res.force_a[mid], places=6)
+            self.assertAlmostEqual(res.pinch[1], p.pinch_y, places=6)
+
+        # Changing FEM pressure or preload updates the fixed Pinch_x accordingly.
+        higher_p = compute_compliant(CompliantParams(preload=0.12, pinch_y=11.2, input_pressure_kpa=180.0), fast=True)
+        self.assertNotAlmostEqual(higher_p.pinch_contact_x, expected_contact_x, places=3)
+        self.assertAlmostEqual(higher_p.gap_y0_mm, higher_p.closed_gap - 0.12, places=6)
+
+        more_preload = compute_compliant(CompliantParams(preload=0.25, pinch_y=11.2, input_pressure_kpa=100.0), fast=True)
+        self.assertAlmostEqual(more_preload.pinch_contact_x, expected_contact_x - 0.13, places=6)
+        self.assertAlmostEqual(more_preload.gap_y0_mm, base_res.closed_gap - 0.25, places=6)
 
     def test_attack_angle_and_trajectory_target_goal(self):
         from backend.compliant_bars import admission_score
-        params = CompliantParams(motor_torque_mnm=4.0)
+        params = CompliantParams(motor_torque_mnm=5.0)
         res = compute_compliant(params, fast=True)
         self.assertIsNotNone(res.attack_angle_deg)
         self.assertGreaterEqual(res.attack_angle_deg, -90.0)
@@ -259,7 +300,7 @@ class ComputeTests(unittest.TestCase):
         w = normalize_goal_weights("dx_at_025", {"dx_at_025": 70, "trajectory_target": 30})
         self.assertAlmostEqual(w["dx_at_025"], 0.7, places=6)
         self.assertAlmostEqual(w["trajectory_target"], 0.3, places=6)
-        res = compute_compliant(CompliantParams(motor_torque_mnm=4.0), fast=True)
+        res = compute_compliant(CompliantParams(motor_torque_mnm=5.0), fast=True)
         sc = admission_score(res, CompliantConstraints(target_pinch_from_top_mm=5.5, target_attack_angle_deg=0.0), goal_weights=w)
         self.assertTrue(sc > 0.0)
 
@@ -534,7 +575,7 @@ class ComputeTests(unittest.TestCase):
 
         self.assertIn("pass_freq_bw", SOLVER_GOALS)
 
-        res = compute_compliant(CompliantParams(motor_torque_mnm=4.0), fast=True)
+        res = compute_compliant(CompliantParams(motor_torque_mnm=5.0), fast=True)
         self.assertTrue(res.passes)
         self.assertIsNotNone(res.chamber_cycle_freq_hz)
 
@@ -690,10 +731,37 @@ class ComputeTests(unittest.TestCase):
         self.assertIsNotNone(summary["best_peak_thrust_op_n"])
         self.assertIsNotNone(summary["best_peak_torque_op_mnm"])
         self.assertTrue(summary["active_constraints"]["motor_limited_stress"])
-        self.assertTrue(summary["active_constraints"]["require_no_stall_in_stroke"])
+        self.assertFalse(summary["active_constraints"]["require_no_stall_in_stroke"])
         self.assertAlmostEqual(summary["active_constraints"]["motor_torque_mnm"], 30.0, places=2)
         rej_keys = {r["key"] for r in summary["rejection_stats"]}
         self.assertIn("motor_stall", rej_keys)
+
+    def test_motor_stall_caps_reachable_stroke_and_performance_without_hard_reject(self):
+        # Default constraints do NOT hard-reject stall inside ±stroke; instead, stall physically caps
+        # carriage travel to ±effective_stroke_mm, limiting max flow, dx_at_025, and chamber frequency,
+        # while early stall increases energy (holding stall torque across the stalled remainder).
+        strong_motor = compute_compliant(CompliantParams(motor_torque_mnm=8.0, stroke=1.5, chamber_volume_ml=100.0), fast=False)
+        weak_motor = compute_compliant(CompliantParams(motor_torque_mnm=1.0, stroke=1.5, chamber_volume_ml=100.0), fast=False)
+        self.assertTrue(strong_motor.motor_ok)
+        self.assertTrue(weak_motor.motor_ok)  # Not hard-rejected by default
+        self.assertIsNotNone(weak_motor.stall_y_mm)
+        self.assertLess(weak_motor.effective_stroke_mm, 1.5)
+        self.assertAlmostEqual(weak_motor.effective_stroke_mm, weak_motor.stall_y_mm, places=6)
+        self.assertGreater(strong_motor.max_flow_l_min, weak_motor.max_flow_l_min)
+        self.assertGreater(strong_motor.max_flow_frac, weak_motor.max_flow_frac)
+        self.assertIsNotNone(strong_motor.chamber_cycle_freq_hz)
+        self.assertTrue(
+            weak_motor.chamber_cycle_freq_hz is None
+            or strong_motor.chamber_cycle_freq_hz > weak_motor.chamber_cycle_freq_hz
+        )
+        # Optional hard rejection still works when explicitly enabled.
+        strict = compute_compliant(
+            CompliantParams(motor_torque_mnm=1.0, stroke=1.5),
+            fast=True,
+            constraints=CompliantConstraints(require_no_stall_in_stroke=True),
+        )
+        self.assertFalse(strict.motor_ok)
+        self.assertFalse(strict.passes)
 
 
 if __name__ == "__main__":

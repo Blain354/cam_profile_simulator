@@ -25,7 +25,7 @@ export const COMPLIANT_DEFAULTS = {
   tube_od: 3,
   input_pressure_kpa: 100,
   compliance: 0.7,
-  tube_model: 'simple' as TubeModel,
+  tube_model: 'fem' as TubeModel,
   tube_shore_a: 50,
   chamber_volume_ml: 10,
   motor_torque_mnm: 30,
@@ -227,6 +227,7 @@ export interface SolverConstraints {
   stress_limit_factor: number;
   motor_limited_stress?: boolean;
   require_no_stall_in_stroke?: boolean;
+  constraints_version?: number;
   junction_exclude_x?: [number, number] | null;
   junction_exclude_y?: [number, number] | null;
   target_pinch_from_top_mm?: number | null;
@@ -240,11 +241,12 @@ export const DEFAULT_CONSTRAINTS: SolverConstraints = {
   min_shell_clearance_mm: 0.05,
   min_pivot_clearance_mm: 0.05,
   min_tube_clearance_mm: 0.5,
-  max_y0_flex_mm: 0.05,
+  max_y0_flex_mm: 0,
   max_rotation_deg: 15,
   stress_limit_factor: 0.85,
   motor_limited_stress: true,
-  require_no_stall_in_stroke: true,
+  require_no_stall_in_stroke: false,
+  constraints_version: 2,
   junction_exclude_x: null,
   junction_exclude_y: null,
   target_pinch_from_top_mm: 5.5,
@@ -332,6 +334,7 @@ export interface Line {
   x: number[]; y: number[];
   x_per_y: number[]; y_per_y: number[];
   x_per_n: number[]; y_per_n: number[];
+  force_y0?: number;
   thickness: number;
 }
 
@@ -406,6 +409,9 @@ export interface CompliantResult {
   motor_margin?: number | null;
   screw_self_locking?: boolean;
   stall_y_mm?: number | null;
+  effective_stroke_mm?: number | null;
+  max_flow_l_min?: number | null;
+  max_flow_frac?: number | null;
   yield_y_mm?: number | null;
   thrust_to_yield_n?: number | null;
   torque_to_yield_mnm?: number | null;
@@ -450,6 +456,9 @@ export interface Runner {
   thrust_to_yield_n?: number | null;
   torque_to_yield_mnm?: number | null;
   stall_y_mm?: number | null;
+  effective_stroke_mm?: number | null;
+  max_flow_l_min?: number | null;
+  max_flow_frac?: number | null;
   yield_y_mm?: number | null;
   motor_margin?: number | null;
   motor_ok?: boolean;
@@ -765,7 +774,7 @@ export const BUILTIN_MATERIALS: Material[] = [
   { name: 'ABS (bamb)', modulus_mpa: 1880, strength_mpa: 62, builtin: true },
 ];
 
-export type CompliantChartKey = 'flow' | 'gap' | 'force' | 'stress' | 'chamber' | 'section';
+export type CompliantChartKey = 'flow' | 'gap' | 'force' | 'torque' | 'stress' | 'chamber' | 'section';
 export type CompliantChartSettings = Record<CompliantChartKey, ChartDomainSettings>;
 
 const AUTO_DOMAIN: ChartDomainSettings = { autoX: true, autoY: true, xMin: -2, xMax: 2, yMin: 0, yMax: 12 };
@@ -773,6 +782,7 @@ export const DEFAULT_CHART_SETTINGS: CompliantChartSettings = {
   flow: AUTO_DOMAIN,
   gap: AUTO_DOMAIN,
   force: { ...AUTO_DOMAIN, yMin: 0.1, yMax: 100 },
+  torque: AUTO_DOMAIN,
   stress: AUTO_DOMAIN,
   chamber: { ...AUTO_DOMAIN, xMin: 0 },
   section: AUTO_DOMAIN,
@@ -915,7 +925,7 @@ export function fromCompliantProfilePayload(raw: Record<string, unknown>): Compl
   const constraints: SolverConstraints = { ...DEFAULT_CONSTRAINTS };
   const rawParams = raw.params && typeof raw.params === 'object' ? raw.params as Partial<CompliantParams> : {};
   const params: CompliantParams = { ...COMPLIANT_DEFAULTS, ...rawParams };
-  params.tube_model = rawParams.tube_model === 'fem' ? 'fem' : 'simple';
+  params.tube_model = rawParams.tube_model === 'simple' ? 'simple' : 'fem';
   const rawBounds = raw.bounds && typeof raw.bounds === 'object' ? raw.bounds as Record<string, unknown> : {};
   for (const key of SHAPE_KEYS) {
     const pair = rawBounds[key];
@@ -957,9 +967,19 @@ export function fromCompliantProfilePayload(raw: Record<string, unknown>): Compl
     if (typeof map.motor_limited_stress === 'boolean') {
       constraints.motor_limited_stress = map.motor_limited_stress;
     }
-    if (typeof map.require_no_stall_in_stroke === 'boolean') {
-      constraints.require_no_stall_in_stroke = map.require_no_stall_in_stroke;
+    const ver = typeof map.constraints_version === 'number' ? map.constraints_version : 1;
+    if (ver >= 2) {
+      if (typeof map.require_no_stall_in_stroke === 'boolean') {
+        constraints.require_no_stall_in_stroke = map.require_no_stall_in_stroke;
+      }
+    } else {
+      // Migrate legacy v1 defaults: Y=0 pinch X is now statically fixed and motor stall acts as a physical stroke limiter.
+      if (Math.abs((constraints.max_y0_flex_mm ?? 0) - 0.05) < 1e-6) {
+        constraints.max_y0_flex_mm = 0;
+      }
+      constraints.require_no_stall_in_stroke = false;
     }
+    constraints.constraints_version = 2;
   }
   const chartSettings = resolveChartSettings(raw.chartSettings ?? raw.chart_settings);
   const chartScales = resolveChartScales(raw.chartScales ?? raw.chart_scales);
@@ -1054,30 +1074,40 @@ export function allowableStressMpa(memberStrengthMpa: number, constraints?: Solv
   return memberStrengthMpa * Math.min(1, Math.max(0.05, factor));
 }
 
-/** Max vertical lead-screw thrust (N) before motor stall, matching backend `_screw_factors`. */
-export function screwThrustAvailableN(
-  p: Pick<CompliantParams, 'motor_torque_mnm' | 'screw_diameter' | 'lead_screw_pitch' | 'screw_friction'>,
+/** Motor shaft torque per newton of vertical lead-screw thrust (mN·m / N), matching backend `_screw_factors`. */
+export function screwTorquePerNewtonMnm(
+  p: Pick<CompliantParams, 'screw_diameter' | 'lead_screw_pitch' | 'screw_friction'>,
 ): number | null {
   const dm = p.screw_diameter - 0.6495 * p.lead_screw_pitch;
-  if (dm <= 0 || p.lead_screw_pitch <= 0 || p.motor_torque_mnm < 0) return null;
+  if (dm <= 0 || p.lead_screw_pitch <= 0) return null;
   const helix = Math.atan(p.lead_screw_pitch / (Math.PI * dm));
   const friction = Math.atan(Math.max(p.screw_friction, 0) / Math.cos(Math.PI / 6));
   const angleRaise = Math.min(helix + friction, Math.PI / 2 - 1e-4);
   const kRaise = (dm / 2) * Math.tan(angleRaise);
-  return kRaise > 1e-12 ? p.motor_torque_mnm / kRaise : null;
+  return kRaise > 1e-12 ? kRaise : null;
+}
+
+/** Max vertical lead-screw thrust (N) before motor stall, matching backend `_screw_factors`. */
+export function screwThrustAvailableN(
+  p: Pick<CompliantParams, 'motor_torque_mnm' | 'screw_diameter' | 'lead_screw_pitch' | 'screw_friction'>,
+): number | null {
+  if (p.motor_torque_mnm < 0) return null;
+  const kRaise = screwTorquePerNewtonMnm(p);
+  return kRaise != null ? p.motor_torque_mnm / kRaise : null;
 }
 
 /** Outer contact surface X of the foot facing the left wall (-wall_x) at rest (Y = 0). */
-export function pinchContactX(p: CompliantParams): number {
+export function pinchContactX(p: CompliantParams, tubeSweep?: { h_sealed?: number } | null): number {
   const wall = p.tube_center_x + p.tube_od / 2;
-  const opening = p.tube_model === 'simple' ? p.compliance * p.input_pressure_kpa * 1e-3 : 0;
-  const closed = (p.tube_od - p.tube_id) - opening;
+  const closed = p.tube_model === 'fem'
+    ? (tubeSweep?.h_sealed ?? (p.tube_od - p.tube_id))
+    : (p.tube_od - p.tube_id) - p.compliance * p.input_pressure_kpa * 1e-3;
   return (closed - p.preload) - wall;
 }
 
 /** Centerline X of the foot tip P at rest (Y = 0), shifted by f_thickness / 2 so the contact face aligns. */
-export function pinchX(p: CompliantParams): number {
-  return pinchContactX(p) + p.f_thickness / 2;
+export function pinchX(p: CompliantParams, tubeSweep?: { h_sealed?: number } | null): number {
+  return pinchContactX(p, tubeSweep) + p.f_thickness / 2;
 }
 
 /** Effective pinch height Y at Y = 0: locked to 2·h₀ - target_pinch_from_top_mm when a target is active. */
@@ -1114,10 +1144,19 @@ export function interpNullable(y: number, ys: number[], vs: (number | null)[] | 
   return vs[0] ?? null;
 }
 
+export function deflectedPoint(line: Line, index: number, y: number, force: number): Pt {
+  const df = force - (line.force_y0 ?? 0);
+  return [
+    line.x[index] + line.x_per_y[index] * y + line.x_per_n[index] * df,
+    line.y[index] + line.y_per_y[index] * y + line.y_per_n[index] * df,
+  ];
+}
+
 export function deflected(line: Line, y: number, force: number): Pt[] {
+  const df = force - (line.force_y0 ?? 0);
   return line.x.map((x, i) => [
-    x + line.x_per_y[i] * y + line.x_per_n[i] * force,
-    line.y[i] + line.y_per_y[i] * y + line.y_per_n[i] * force,
+    x + line.x_per_y[i] * y + line.x_per_n[i] * df,
+    line.y[i] + line.y_per_y[i] * y + line.y_per_n[i] * df,
   ] as Pt);
 }
 

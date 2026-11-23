@@ -136,7 +136,7 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
   const yPose = Math.min(params.stroke, Math.max(-params.stroke, y));
   const loadedRpm = MOTOR_RPM * LOAD_FACTOR;
   const carriageSpeed = loadedRpm * (params.lead_screw_pitch || SCREW_PITCH_MM) / 60;
-  const wallX = result?.wall_x ?? params.tube_center_x + params.tube_od / 2;
+  const wallX = result?.wall_x && result.wall_x > 0 ? result.wall_x : params.tube_center_x + params.tube_od / 2;
 
   const hasFreeContext = CONTEXT_VAR_KEYS.some((k) => !contextFixed[k]) || !contextFixed.pivot_inverted;
 

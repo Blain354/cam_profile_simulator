@@ -41,6 +41,7 @@ try:
         normalize_goal_weights,
     )
     from storage import CompliantExperimentStorage
+    import tube_model as tube_law
 except ImportError:
     from .compliant_bars import (
         ALL_SOLVER_KEYS,
@@ -62,6 +63,7 @@ except ImportError:
         normalize_goal_weights,
     )
     from .storage import CompliantExperimentStorage
+    from . import tube_model as tube_law
 
 
 CONSTRAINT_KEYS = ("stress", "motor_stall", "seal_y0", "tube", "crossing", "shell", "pivot", "pinch", "rotation", "junction_forbidden", "no_open", "geometry")
@@ -148,10 +150,17 @@ def _make_preview_frame(
         a = [-float(params.anchor_distance), float(params.l_thickness) / 2.0]
         j = [float(params.junction_x), float(params.junction_y)]
         v = [-float(params.pivot_offset) if params.pivot_inverted else float(params.pivot_offset), h0]
-        closed_est = max(0.0, (params.tube_od - params.tube_id) - (
-            params.compliance * params.input_pressure_kpa * 1e-3 if params.tube_model == "simple" else 0.0
-        ))
-        px = (closed_est - params.preload) - wall_x + params.f_thickness / 2.0
+        if result.pinch_x != 0.0:
+            px = float(result.pinch_x)
+        else:
+            if tube_law.uses_fem(params):
+                try:
+                    closed_est = float(tube_law.law(params).closed_gap)
+                except Exception:
+                    closed_est = max(0.0, float(params.tube_od - params.tube_id))
+            else:
+                closed_est = max(0.0, float(params.tube_od - params.tube_id) - float(params.compliance * params.input_pressure_kpa * 1e-3))
+            px = (closed_est - params.preload) - wall_x + params.f_thickness / 2.0
         p = [float(px), float(params.pinch_y)]
 
         def _handles_for(s_pt, e_pt, prefix: str):
@@ -224,6 +233,9 @@ def _runner_brief(params: CompliantParams, result: CompliantResult, score: float
         "thrust_to_yield_n": result.thrust_to_yield_n,
         "torque_to_yield_mnm": result.torque_to_yield_mnm,
         "stall_y_mm": result.stall_y_mm,
+        "effective_stroke_mm": result.effective_stroke_mm,
+        "max_flow_l_min": result.max_flow_l_min,
+        "max_flow_frac": result.max_flow_frac,
         "yield_y_mm": result.yield_y_mm,
         "motor_margin": result.motor_margin,
         "motor_ok": result.motor_ok,

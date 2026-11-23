@@ -5,7 +5,7 @@ import { apiFetch } from '../components';
 import { sideBore, tubeProfile } from '../lib/tubeSide';
 import type { TubeSweep } from '../lib/tubeSweep';
 import {
-  LOAD_FACTOR, MOTOR_RPM, SCREW_PITCH_MM, anchorPoint, bezier, deflected, effectivePinchY, interp,
+  LOAD_FACTOR, MOTOR_RPM, SCREW_PITCH_MM, anchorPoint, bezier, deflected, deflectedPoint, effectivePinchY, interp,
   nearestToWall, pinchContactX, strokeOutlinePath,
 } from './types';
 import type {
@@ -168,13 +168,16 @@ export function RunnerMiniSchematic({
     }
   };
 
+  const hasSolvedLines = Boolean(simResult?.lines?.l && simResult?.lines?.r && simResult?.lines?.f);
   const anchor: Pt = anchorPoint(params);
   const junction: Pt = [params.junction_x, params.junction_y];
   const pivot: Pt = [params.pivot_inverted ? -params.pivot_offset : params.pivot_offset, params.closed_carriage_height];
-  const wall = simResult?.wall_x ?? params.tube_center_x + params.tube_od / 2;
-  const h0 = simResult?.pivot_height_y0 ?? params.closed_carriage_height;
+  const wall = simResult?.wall_x && simResult.wall_x > 0 ? simResult.wall_x : params.tube_center_x + params.tube_od / 2;
+  const h0 = simResult?.pivot_height_y0 && simResult.pivot_height_y0 > 0 ? simResult.pivot_height_y0 : params.closed_carriage_height;
   const ceiling = 2 * h0;
-  const pinchContactXPos = simResult?.pinch_contact_x ?? pinchContactX(params);
+  const pinchContactXPos = params.tube_model === 'fem' && tubeSweep?.h_sealed != null
+    ? pinchContactX(params, tubeSweep)
+    : (hasSolvedLines && simResult?.pinch_contact_x != null ? simResult.pinch_contact_x : pinchContactX(params, tubeSweep));
   const pinch: Pt = [pinchContactXPos + params.f_thickness / 2, effectivePinchY(params, constraints)];
 
   const restLines = useMemo(() => ({
@@ -183,11 +186,11 @@ export function RunnerMiniSchematic({
     f: bezier(junction, pinch, params.f_u1, params.f_v1, params.f_u2, params.f_v2),
   }), [anchor[0], anchor[1], junction[0], junction[1], pivot[0], pivot[1], pinch[0], pinch[1], params]);
 
-  const forceA = simResult ? interp(yPose, simResult.Y_positions, simResult.force_a) : 0;
-  const forceB = simResult ? interp(-yPose, simResult.Y_positions, simResult.force_a) : 0;
+  const forceA = hasSolvedLines && simResult ? interp(yPose, simResult.Y_positions, simResult.force_a) : 0;
+  const forceB = hasSolvedLines && simResult ? interp(-yPose, simResult.Y_positions, simResult.force_a) : 0;
 
   const primaryLines = useMemo(() => {
-    if (!simResult?.lines) return restLines;
+    if (!hasSolvedLines || !simResult?.lines) return restLines;
     return {
       l: deflected(simResult.lines.l, yPose, forceA),
       r: deflected(simResult.lines.r, yPose, forceA),
@@ -198,7 +201,7 @@ export function RunnerMiniSchematic({
   const mirror = (pts: Pt[]): Pt[] => pts.map(([x, yy]) => [-x, ceiling - yy]);
 
   const secondaryLines = useMemo(() => {
-    if (!simResult?.lines) {
+    if (!hasSolvedLines || !simResult?.lines) {
       return {
         l: mirror(restLines.l),
         r: mirror(restLines.r),
@@ -283,10 +286,7 @@ export function RunnerMiniSchematic({
         for (let k = 0; k <= steps; k++) {
           const yy = (k / steps) * params.stroke;
           const ff = interp(yy, simResult.Y_positions, simResult.force_a);
-          pts.push([
-            lf.x[tipIdx] + lf.x_per_y[tipIdx] * yy + lf.x_per_n[tipIdx] * ff,
-            lf.y[tipIdx] + lf.y_per_y[tipIdx] * yy + lf.y_per_n[tipIdx] * ff,
-          ]);
+          pts.push(deflectedPoint(lf, tipIdx, yy, ff));
         }
         return pts;
       }
