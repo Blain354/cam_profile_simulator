@@ -272,7 +272,9 @@ Request and reply:
 { "rows": [{ "name": "pend_arm_L", "key": "bar2_length", "label": "...", "new_expression": "14.43 mm",
              "current_expression": "10 mm", "status": "update", "detail": "" }],
   "api_calls": 2, "table_name": "cam_sim_pendulum", "table_exists": true, "table_created": false,
-  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null,
+  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…",
+  "document_id": "…", "workspace_id": "…", "document_url": "https://cad.onshape.com/documents/…/w/…",
+  "write_error": null,
   "input_check": { "configured": false, "valid": true, "rows": [], "part_studio_url": null, "error": null },
   "cad_check": { "configured": false, "coherent": true, "rows": [], "error": null } }
 ```
