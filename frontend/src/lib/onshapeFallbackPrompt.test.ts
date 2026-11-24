@@ -5,56 +5,56 @@ import type { OnshapePromptTable } from './onshapeFallbackPrompt';
 test('lists failed rows with old/new values, table URLs, and document info', () => {
   const tables: OnshapePromptTable[] = [
     {
-      table_name: 'cam_sim_compliant',
+      table_name: 'cam_sim_pendulum',
       table_exists: true,
       element_id: 'E1',
       table_url: 'https://cad.onshape.com/documents/DOC123/w/WS456/e/E1',
       write_error: 'HTTP 429: rate limit',
       rows: [
-        { name: 'cb_junction_x', label: 'Junction x', current_expression: '2 mm', new_expression: '3.5 mm', status: 'error', detail: 'HTTP 429: rate limit' },
-        { name: 'cb_anchor_distance', label: 'Anchor distance', current_expression: '1 mm', new_expression: '1 mm', status: 'same' },
+        { name: 'pend_arm_L', label: 'Arm L', current_expression: '10 mm', new_expression: '12 mm', status: 'error', detail: 'HTTP 429: rate limit' },
+        { name: 'pend_anchor', label: 'Anchor distance', current_expression: '4 mm', new_expression: '4 mm', status: 'same' },
       ],
     },
     {
-      table_name: 'cam_sim_carriage',
+      table_name: 'cam_sim_lever',
       table_exists: false,
       element_id: null,
       table_url: null,
       rows: [
-        { name: 'carriage_pivot_offset', label: 'Carriage pivot offset', current_expression: null, new_expression: '4 mm', status: 'error' },
+        { name: 'lever_L', label: 'Lever length', current_expression: null, new_expression: '16.5 mm', status: 'error' },
       ],
     },
     {
-      table_name: 'cam_sim_pinch',
+      table_name: 'cam_sim_elbow',
       table_exists: true,
       element_id: 'E3',
       table_url: 'https://cad.onshape.com/documents/DOC123/w/WS456/e/E3',
       rows: [
-        { name: 'pinch_preload', label: 'Preload', current_expression: '0.5 mm', new_expression: '0.8 mm', status: 'written' },
+        { name: 'elbow_stroke', label: 'Stroke', current_expression: '1.5 mm', new_expression: '2.0 mm', status: 'written' },
       ],
     },
   ];
 
   const prompt = buildOnshapeFallbackPrompt({
-    mechanism: 'Compliant Bars',
+    mechanism: 'Pendulum linkage',
     error: 'HTTP 429: rate limit',
     tables,
     partStudioUrl: 'https://cad.onshape.com/documents/DOC123/w/WS456/e/PS99',
   });
 
   expect(prompt).toContain('cam-profile-sim');
-  expect(prompt).toContain('Compliant Bars');
+  expect(prompt).toContain('Pendulum linkage');
   expect(prompt).toContain('https://cad.onshape.com/documents/DOC123/w/WS456');
   expect(prompt).toContain('`did`: `DOC123`, `wid`: `WS456`');
   expect(prompt).toContain('https://cad.onshape.com/documents/DOC123/w/WS456/e/PS99');
-  expect(prompt).toContain('### `cam_sim_compliant` (exists, element `E1`)');
+  expect(prompt).toContain('### `cam_sim_pendulum` (exists, element `E1`)');
   expect(prompt).toContain('URL: https://cad.onshape.com/documents/DOC123/w/WS456/e/E1');
-  expect(prompt).toContain('- `#cb_junction_x`: `2 mm` -> `3.5 mm` (Junction x)');
-  expect(prompt).toContain('### `cam_sim_carriage` (missing — create Variable Studio first)');
-  expect(prompt).toContain('- `#carriage_pivot_offset`: `(new)` -> `4 mm` (Carriage pivot offset)');
+  expect(prompt).toContain('- `#pend_arm_L`: `10 mm` -> `12 mm` (Arm L)');
+  expect(prompt).toContain('### `cam_sim_lever` (missing — create Variable Studio first)');
+  expect(prompt).toContain('- `#lever_L`: `(new)` -> `16.5 mm` (Lever length)');
   // Already-written table and unchanged row are omitted
-  expect(prompt).not.toContain('cam_sim_pinch');
-  expect(prompt).not.toContain('cb_anchor_distance');
+  expect(prompt).not.toContain('cam_sim_elbow');
+  expect(prompt).not.toContain('pend_anchor');
 });
 
 test('falls back to selected update/new rows when apply fails with a network error', () => {
@@ -86,13 +86,13 @@ test('falls back to selected update/new rows when apply fails with a network err
 
 test('still produces a useful prompt when preview itself failed before loading tables', () => {
   const prompt = buildOnshapeFallbackPrompt({
-    mechanism: 'Compliant Bars',
+    mechanism: 'Pendulum linkage',
     error: 'HTTP 503: Onshape unavailable',
     tables: [],
-    fallbackTableNames: ['cam_sim_compliant', 'cam_sim_carriage', 'cam_sim_pinch'],
+    fallbackTableNames: ['cam_sim_pendulum'],
   });
 
   expect(prompt).toContain('HTTP 503: Onshape unavailable');
-  expect(prompt).toContain('`cam_sim_compliant`, `cam_sim_carriage`, `cam_sim_pinch`');
+  expect(prompt).toContain('`cam_sim_pendulum`');
   expect(prompt).toContain('ONSHAPE_DOCUMENT_ID');
 });

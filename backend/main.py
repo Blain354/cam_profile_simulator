@@ -19,21 +19,14 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from simulation import SimulationParams, compute_simulation, SolverParams, SolverResult, solve_cam_profile
 from storage import (
-    LINKAGE_KINDS, PROFILE_TYPES, CompliantExperimentStorage, LinkageProfileStorage,
+    LINKAGE_KINDS, PROFILE_TYPES, LinkageProfileStorage,
     ProfileStorage, default_db_path,
 )
 
 import onshape_export
 import onshape_variables
-import onshape_compliant
 from legacy_units import legacy_psi_to_kpa
 from linkage import LinkageParams, LinkageSearch, compute_linkage, optimize_linkage
-from compliant_bars import compute_compliant, solve_compliant
-from compliant_bars import _constraints_from_mapping as _compliant_constraints
-from compliant_bars import _params_from_mapping as _compliant_params
-from compliant_bars import SOLVER_GOALS as _COMPLIANT_GOALS
-from compliant_solver import SOLVER_METHODS as _COMPLIANT_METHODS
-from compliant_solver import CompliantSolveJobManager, SolverBusyError
 import tube_model as tube_law
 
 
@@ -50,8 +43,6 @@ _MAX_SOLVE_CANDIDATE_SETS = 6
 # linkage_storage only serves the custom materials, still in linkage_profiles.
 profiles = ProfileStorage(default_db_path())
 linkage_storage = LinkageProfileStorage(default_db_path())
-compliant_experiments = CompliantExperimentStorage(default_db_path())
-compliant_jobs = CompliantSolveJobManager(compliant_experiments)
 
 app.add_middleware(
     CORSMiddleware,
@@ -908,191 +899,6 @@ def _linkage_params(req: LinkageRequest) -> LinkageParams:
 @app.post("/api/linkage/simulate")
 def linkage_simulate(req: LinkageRequest):
     return dataclasses.asdict(compute_linkage(_linkage_params(req)))
-
-
-@app.post("/api/compliant/simulate")
-def compliant_simulate(payload: dict = Body(...)):
-    constraints = _compliant_constraints(payload.get("constraints"))
-    return dataclasses.asdict(compute_compliant(_compliant_params(payload), constraints=constraints))
-
-
-class CompliantSolveBody(BaseModel):
-    params: dict
-    bounds: dict = Field(default_factory=dict)
-    budget: int = Field(36, ge=1, le=80)
-    constraints: Optional[dict] = None
-    pivot_side: str = Field("current", pattern="^(current|normal|inverted|both)$")
-
-
-@app.post("/api/compliant/solve")
-def compliant_solve(body: CompliantSolveBody):
-    bounds = {}
-    for key, pair in body.bounds.items():
-        if isinstance(pair, (list, tuple)) and len(pair) == 2:
-            bounds[key] = (float(pair[0]), float(pair[1]))
-    constraints = _compliant_constraints(body.constraints)
-    try:
-        return solve_compliant(
-            _compliant_params(body.params),
-            bounds,
-            budget=body.budget,
-            constraints=constraints,
-            pivot_side=body.pivot_side,
-        )
-    except tube_law.TubeModelError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-
-@app.post("/api/compliant/onshape/measured")
-def compliant_onshape_measured():
-    """The inputs the CAD decides for compliant bars, as Onshape computes them now. Reads only."""
-    return _onshape_variables(lambda: onshape_variables.read_measured("compliant"))
-
-
-@app.post("/api/compliant/onshape/preview")
-def compliant_onshape_preview(payload: dict = Body(...)):
-    """What writing this design to its Onshape tables (compliant, carriage, pinch) would change. Reads only."""
-    return _onshape_variables(lambda: onshape_compliant.preview(
-        _compliant_params(payload), _compliant_constraints(payload.get("constraints"))))
-
-
-@app.post("/api/compliant/onshape/apply")
-def compliant_onshape_apply(payload: dict = Body(...)):
-    """Write the named variables, each into its own table, after checking the inputs the CAD decides."""
-    names = payload.get("names")
-    if not isinstance(names, list) or len(names) > 100 or not all(isinstance(n, str) for n in names):
-        raise HTTPException(status_code=422, detail="names must be a list of at most 100 variable names")
-    return _onshape_variables(lambda: onshape_compliant.apply(
-        _compliant_params(payload), names, _compliant_constraints(payload.get("constraints"))))
-
-
-class CompliantSolveJobBody(BaseModel):
-    params: dict
-    bounds: dict = Field(default_factory=dict)
-    constraints: Optional[dict] = None
-    pivot_side: str = Field("current", pattern="^(current|normal|inverted|both)$")
-    # The lists live with the solver, so a goal or a method added there is accepted here.
-    goal: str = Field("dx_at_025", pattern="^(%s)$" % "|".join(_COMPLIANT_GOALS))
-    goal_weights: Optional[dict] = None
-    method: str = Field("cmaes", pattern="^(%s)$" % "|".join(_COMPLIANT_METHODS))
-    method_params: Optional[dict] = None
-    time_budget_s: float = Field(30.0, ge=1.0)
-    name: Optional[str] = None
-    note: str = ""
-
-
-class CompliantExperimentPatchBody(BaseModel):
-    name: Optional[str] = None
-    note: Optional[str] = None
-
-
-@app.post("/api/compliant/solve/jobs")
-def compliant_solve_job_start(body: CompliantSolveJobBody):
-    bounds = {}
-    for key, pair in body.bounds.items():
-        if isinstance(pair, (list, tuple)) and len(pair) == 2:
-            bounds[key] = (float(pair[0]), float(pair[1]))
-    try:
-        return compliant_jobs.start_job(
-            params_dict=body.params,
-            bounds=bounds,
-            constraints_dict=body.constraints,
-            pivot_side=body.pivot_side,
-            goal=body.goal,
-            goal_weights=body.goal_weights,
-            method=body.method,
-            method_params=body.method_params,
-            time_budget_s=body.time_budget_s,
-            name=body.name,
-            note=body.note,
-        )
-    except SolverBusyError as exc:
-        return JSONResponse(
-            status_code=409,
-            content={"detail": str(exc), "active_job_id": exc.active_job_id},
-        )
-
-
-@app.get("/api/compliant/solve/jobs/active")
-def compliant_solve_job_active():
-    """Return the currently running compliant solve session (if any), for cross-device / refresh reconnection."""
-    return {"active": compliant_jobs.get_active_job()}
-
-
-@app.get("/api/compliant/solve/jobs/{job_id}")
-def compliant_solve_job_status(job_id: str):
-    job = compliant_jobs.get_job(job_id)
-    if job is not None:
-        return job
-    exp = compliant_experiments.get_experiment(job_id)
-    if exp is not None:
-        req = exp.get("request") or {}
-        summary = exp.get("summary") or {}
-        status = exp["status"]
-        msg = (
-            "Interrupted by server restart — last saved checkpoint preserved."
-            if status == "interrupted"
-            else "Loaded from saved experiment."
-        )
-        return {
-            "job_id": exp["id"],
-            "experiment_id": exp["id"],
-            "name": exp["name"],
-            "note": exp["note"],
-            "status": status,
-            "goal": exp["goal"],
-            "goal_weights": req.get("goal_weights") or summary.get("goal_weights"),
-            "method": req.get("method") or summary.get("method"),
-            "method_params": req.get("method_params") or summary.get("method_params"),
-            "time_budget_s": exp["time_budget_s"],
-            "summary": summary,
-            "found": exp["best_params"] is not None,
-            "params": exp["best_params"],
-            "result": exp["best_result"],
-            "runners": summary.get("runners", []),
-            "message": msg,
-            "error": None,
-        }
-    raise HTTPException(status_code=404, detail="Solve job not found.")
-
-
-@app.post("/api/compliant/solve/jobs/{job_id}/cancel")
-def compliant_solve_job_cancel(job_id: str):
-    ok = compliant_jobs.cancel_job(job_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Solve job not found.")
-    return {"cancelled": True, "job_id": job_id}
-
-
-@app.get("/api/compliant/experiments")
-def compliant_experiments_list():
-    return {"experiments": compliant_experiments.list_experiments()}
-
-
-@app.get("/api/compliant/experiments/{exp_id}")
-def compliant_experiments_get(exp_id: str):
-    exp = compliant_experiments.get_experiment(exp_id)
-    if exp is None:
-        raise HTTPException(status_code=404, detail="Experiment not found.")
-    return exp
-
-
-@app.patch("/api/compliant/experiments/{exp_id}")
-def compliant_experiments_patch(exp_id: str, body: CompliantExperimentPatchBody):
-    ok = compliant_experiments.update_meta(exp_id, name=body.name, note=body.note)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Experiment not found.")
-    return {"updated": True, "id": exp_id}
-
-
-@app.delete("/api/compliant/experiments/{exp_id}")
-def compliant_experiments_delete(exp_id: str):
-    if compliant_jobs.is_running(exp_id):
-        raise HTTPException(status_code=409, detail="Cannot delete a running solve session; stop it first.")
-    ok = compliant_experiments.delete_experiment(exp_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Experiment not found.")
-    return {"deleted": True, "id": exp_id}
 
 
 @app.post("/api/linkage/optimize")

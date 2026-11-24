@@ -50,45 +50,10 @@ test('each tab has an Explorer and a Finder sub-tab, and the choice is kept', ()
   expect(getByRole('tab', { name: 'Explorer' }).getAttribute('aria-selected')).toBe('true')
   fireEvent.click(finder)
   expect(JSON.parse(localStorage.getItem('cam-sim.tabs.v1')!)).toEqual(
-    { tab: 'cam', sub: { cam: 'finder', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer', compliant: 'explorer' } })
+    { tab: 'cam', sub: { cam: 'finder', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer' } })
   unmount()
   const again = render(<App />)
   expect(again.getByRole('tab', { name: 'Finder' }).getAttribute('aria-selected')).toBe('true')
-})
-
-test('Compliant Bars names its search sub-tab Solver', () => {
-  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'compliant', sub: { compliant: 'explorer' } }))
-  const { getByRole } = render(<App />)
-  expect(getByRole('button', { name: 'Compliant Bars' }).getAttribute('aria-pressed')).toBe('true')
-  expect(getByRole('heading', { name: 'Splines' })).toBeTruthy()
-  const tubes = [...document.querySelectorAll('svg[aria-label="Compliant bars"] polygon')]
-  expect(tubes.filter((poly) => (poly.getAttribute('points') ?? '').trim().split(/\s+/).length > 20).length).toBe(4)
-  expect(tubes.some((poly) => (poly.getAttribute('points') ?? '').trim().split(/\s+/).length === 8)).toBe(true)
-  expect(getByRole('button', { name: 'Oscillate' })).toBeTruthy()
-  expect(getByRole('button', { name: 'Center' })).toBeTruthy()
-  fireEvent.click(getByRole('tab', { name: 'Solver' }))
-  expect(getByRole('button', { name: 'Solve…' })).toBeTruthy()
-})
-
-test('Compliant Bars toggles spline parameter nodes and keeps them on top', () => {
-  localStorage.setItem('cam-sim.tabs.v1', JSON.stringify({ tab: 'compliant', sub: { compliant: 'explorer' } }))
-  const { getByRole } = render(<App />)
-  const toggle = getByRole('button', { name: 'Spline nodes' })
-  const svg = document.querySelector('svg[aria-label="Compliant bars"]')!
-  expect(toggle.getAttribute('aria-pressed')).toBe('true')
-  const nodesLayer = svg.querySelector('[data-layer="spline-nodes"]')
-  expect(nodesLayer).toBeTruthy()
-  expect(svg.lastElementChild).toBe(nodesLayer)
-  // 6 bezier handles + 3 skeleton nodes (A, J, P)
-  expect(nodesLayer!.querySelectorAll('g').length).toBe(9)
-
-  fireEvent.click(toggle)
-  expect(toggle.getAttribute('aria-pressed')).toBe('false')
-  expect(svg.querySelector('[data-layer="spline-nodes"]')).toBeNull()
-
-  fireEvent.click(toggle)
-  expect(toggle.getAttribute('aria-pressed')).toBe('true')
-  expect(svg.querySelector('[data-layer="spline-nodes"]')).toBeTruthy()
 })
 
 function stubLinkage(optimize: unknown) {

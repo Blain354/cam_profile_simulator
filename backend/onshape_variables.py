@@ -26,8 +26,6 @@ Environment:
   ONSHAPE_DOCUMENT_ID, ONSHAPE_WORKSPACE_ID      the document (shared with the STL export)
   ONSHAPE_LINKAGE_MAPPING                        JSON {kind: {onshape_name: value_key}}, replaces
                                                  the default names of that kind
-  ONSHAPE_COMPLIANT_PART_STUDIO_ID               Part Studio the Compliant Bars inputs are measured in
-                                                 and checked against (onshape_compliant.py writes its tables)
 """
 
 from __future__ import annotations
@@ -75,17 +73,6 @@ VALUES = {
     "pin_gap_y0": ("Pin (or pad) to the wall the tube rests on, at Y = 0, part at rest", "mm"),
     # Not in the default names: the sketches put the carriage pivot on the far side of the screw.
     "pivot_side": ("Carriage pivot side: 1 far side of the screw, -1 its tube's side (inverted)", ""),
-    # Compliant Bars (onshape_compliant.py). Handles: u along the chord, v to its left.
-    "junction_x": ("Junction of the three members, x from the screw axis", "mm"),
-    "junction_y": ("Junction of the three members, y from the anchor wall", "mm"),
-    "pinch_y": ("Foot tip, y from the anchor wall", "mm"),
-    **{f"{m}_{q}{i}": (f"{name} handle {i}, {'fraction along the chord' if q == 'u' else 'offset left of the chord'}", "" if q == "u" else "mm")
-       for m, name in (("l", "L"), ("r", "R"), ("f", "Foot")) for i in (1, 2) for q in ("u", "v")},
-    "l_thickness": ("L, in-plane thickness", "mm"),
-    "r_thickness": ("R, in-plane thickness", "mm"),
-    "f_thickness": ("Foot, in-plane thickness (round tip of this diameter)", "mm"),
-    "closed_carriage_height": ("Carriage pivot height at Y = 0, from the anchor wall", "mm"),
-    "closed_gap": ("Wall-to-foot gap that closes the tube under pressure (tube model)", "mm"),
 }
 
 _TUBE = {"pinch_tube_OD": "tube_od", "pinch_tube_ID": "tube_id"}
@@ -122,13 +109,6 @@ DEFAULT_MAPPING: dict[str, dict[str, str]] = {
 # in the same document and branch as the table; ONSHAPE_LINKAGE_MEASURED (same JSON shape) replaces a kind's names.
 DEFAULT_MEASURED: dict[str, dict[str, str]] = {
     "pendulum": {"tube_center_x": "pend_CALC_tube_center"},
-    # Read from ONSHAPE_COMPLIANT_PART_STUDIO_ID: the tube and the depth are never written by this tab.
-    "compliant": {
-        "tube_center_x": "pend_CALC_tube_center",
-        "member_depth": "cb_member_depth",
-        "tube_od": "pinch_tube_OD",
-        "tube_id": "pinch_tube_ID",
-    },
 }
 # Written values carry 4 decimals and the slider moves by 0.05 mm: a match within a micrometre is the same input.
 MEASURE_TOLERANCE_MM = 0.001
@@ -288,9 +268,8 @@ def measured_for(kind: str) -> dict[str, str]:
 
 
 def _measure_source(kind: Optional[str] = None) -> Optional[str]:
-    """The Part Studio a kind's inputs are measured in. Compliant Bars has its own (no fallback)."""
-    var = "ONSHAPE_COMPLIANT_PART_STUDIO_ID" if kind == "compliant" else "ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID"
-    eid = os.environ.get(var, "").strip()
+    """The Part Studio a kind's inputs are measured in."""
+    eid = os.environ.get("ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID", "").strip()
     return _checked_id(eid, "Part Studio") if eid else None
 
 

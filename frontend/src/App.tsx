@@ -5,8 +5,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Legend
 } from 'recharts';
 import {
-  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor, PenLine,
-  SlidersHorizontal, Eye, ChartLine, MoreHorizontal, Sparkles
+  Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor,
+  SlidersHorizontal, Eye, ChartLine, MoreHorizontal
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -27,8 +27,6 @@ import { chartDomain } from './lib/chartDomain';
 import type { ChartCardView } from './ChartCard';
 import ProfileBuilder, { FinderProfilePreview } from './ProfileBuilder';
 import LinkageExplorer, { LinkageProfilePreview } from './LinkageExplorer';
-import CompliantBars, { CompliantProfilePreview } from './CompliantBars';
-import type { SolveJobState } from './compliant/types';
 import { SubTabs } from './SubTabs';
 import type { SubTab } from './SubTabs';
 import {
@@ -50,9 +48,9 @@ type ExplorerChartKey = 'pneumatic' | 'gapY' | 'gapTime' | 'section';
 // Memoised: it stays mounted behind the other tabs and should not follow every App render.
 const KeptProfileBuilder = React.memo(ProfileBuilder);
 
-type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum' | 'compliant';
+type TopTab = 'cam' | 'linkage' | 'lever' | 'pendulum';
 type MobilePane = 'controls' | 'schematic' | 'charts';
-const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum', 'compliant'];
+const TOP_TABS: TopTab[] = ['cam', 'linkage', 'lever', 'pendulum'];
 const MOBILE_PANES: { id: MobilePane; label: string; Icon: typeof SlidersHorizontal }[] = [
   { id: 'controls', label: 'Controls', Icon: SlidersHorizontal },
   { id: 'schematic', label: 'Schematic', Icon: Eye },
@@ -60,8 +58,7 @@ const MOBILE_PANES: { id: MobilePane; label: string; Icon: typeof SlidersHorizon
 ];
 const TABS_KEY = 'cam-sim.tabs.v1';
 const SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Finder' }];
-const SOLVER_SUB_TABS: { value: SubTab; label: string }[] = [{ value: 'explorer', label: 'Explorer' }, { value: 'finder', label: 'Solver' }];
-const DEFAULT_SUB_TABS: Record<TopTab, SubTab> = { cam: 'explorer', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer', compliant: 'explorer' };
+const DEFAULT_SUB_TABS: Record<TopTab, SubTab> = { cam: 'explorer', linkage: 'explorer', lever: 'explorer', pendulum: 'explorer' };
 
 /** A stored cam profile's parameters, its note column over the payload's note as the old route served it. */
 function camParamsFromProfile(payload: Record<string, unknown>, note: string): SimulationParams {
@@ -71,8 +68,7 @@ function camParamsFromProfile(payload: Record<string, unknown>, note: string): S
 const renderProfilePreview = (type: ProfileType) => (payload: ProfilePayload) =>
   type === 'cam' ? <CamProfilePreview payload={payload} />
     : type === 'cam-finder' ? <FinderProfilePreview payload={payload} />
-      : type === 'compliant' ? <CompliantProfilePreview payload={payload} />
-        : <LinkageProfilePreview kind={type} payload={payload} />;
+      : <LinkageProfilePreview kind={type} payload={payload} />;
 
 function loadTabs(): { tab: TopTab; sub: Record<TopTab, SubTab> } {
   const sub = { ...DEFAULT_SUB_TABS };
@@ -140,10 +136,8 @@ export default function App() {
   const [finderProfile, setFinderProfile] = useState<ProfileState>(UNSAVED_PROFILE);
   /** Tagged with its type: the state a closed linkage tab reported never shows on another one. */
   const [linkageProfile, setLinkageProfile] = useState<{ type: ProfileType; state: ProfileState } | null>(null);
-  const [compliantProfile, setCompliantProfile] = useState<ProfileState>(UNSAVED_PROFILE);
   const finderRef = useRef<ProfileHandle>(null);
   const linkageRef = useRef<ProfileHandle>(null);
-  const compliantRef = useRef<ProfileHandle>(null);
   const [guidanceMode, setGuidanceMode] = useState(true);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -153,31 +147,6 @@ export default function App() {
   const [showStlExport, setShowStlExport] = useState(false);
   const [mobilePane, setMobilePane] = useState<MobilePane>('controls');
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const [globalActiveSolve, setGlobalActiveSolve] = useState<SolveJobState | null>(null);
-  const [openLiveSolveSignal, setOpenLiveSolveSignal] = useState(0);
-
-  // Discover any active server-side Compliant Bars solver session across tabs and devices.
-  useEffect(() => {
-    let alive = true;
-    const checkActive = async () => {
-      try {
-        const res = await apiFetch('/api/compliant/solve/jobs/active');
-        if (!res.ok || !alive) return;
-        const payload = await res.json();
-        if (!alive) return;
-        const active = (payload?.active ?? null) as SolveJobState | null;
-        setGlobalActiveSolve(active && active.status === 'running' ? active : null);
-      } catch { /* ignore transient network failures */ }
-    };
-    void checkActive();
-    const interval = setInterval(() => { void checkActive(); }, 3000);
-    return () => { alive = false; clearInterval(interval); };
-  }, []);
-
-  const openGlobalLiveSolve = useCallback(() => {
-    setActiveTab('compliant');
-    setOpenLiveSolveSignal((n) => n + 1);
-  }, []);
 
   const getExplorerChartSettings = useCallback((key: ExplorerChartKey): ChartDomainSettings => {
     const root = (params.chart_settings ?? {}) as Record<string, unknown>;
@@ -359,13 +328,11 @@ export default function App() {
   };
   const profileState = camExplorer ? camProfile
     : camFinder ? finderProfile
-    : activeTab === 'compliant' ? compliantProfile
     : linkageProfile?.type === profileType ? linkageProfile.state : UNSAVED_PROFILE;
   /** The open feature's handle, only when it saves the open context's type. */
   const profileHandle = (): ProfileHandle | null => {
     const handle = camExplorer ? camHandle
       : camFinder ? finderRef.current
-      : activeTab === 'compliant' ? compliantRef.current
       : linkageRef.current;
     return handle && handle.type === profileType ? handle : null;
   };
@@ -633,7 +600,6 @@ export default function App() {
                   ['linkage', 'Bar Linkage', Waypoints],
                   ['lever', 'Lever Linkage', Spline],
                   ['pendulum', 'Pendulum Linkage', Anchor],
-                  ['compliant', 'Compliant Bars', PenLine],
                 ] as const).map(([tab, label, Icon]) => (
                   <button key={tab} type="button" onClick={(e) => {
                     setActiveTab(tab);
@@ -656,7 +622,7 @@ export default function App() {
 
             {/* Row 2 on phones: Mode switcher + Profile pill cleanly side-by-side (wraps on very narrow screens when dirty). */}
             <div className="flex w-full sm:w-auto min-w-0 flex-wrap sm:flex-nowrap items-center justify-between sm:justify-start gap-x-2 gap-y-1.5">
-              <SubTabs label="Mode" value={subTab} options={activeTab === 'compliant' ? SOLVER_SUB_TABS : SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
+              <SubTabs label="Mode" value={subTab} options={SUB_TABS} onChange={(v) => setSubTab(activeTab, v)} />
               <div className="ml-auto sm:ml-0 max-w-full flex justify-end sm:justify-start">
                 <ProfilePill state={profileState} onImport={() => setImportType(profileType)}
                   onSaveAsNew={() => { void openSaveDialog(); }} onUpdate={() => { void updateProfile(); }}
@@ -697,44 +663,6 @@ export default function App() {
           <ThemeToggle theme={theme} onThemeChange={setTheme} />
         </div>
       </Header>
-
-      {globalActiveSolve && globalActiveSolve.status === 'running' && (() => {
-        const s = globalActiveSolve.summary;
-        const pct = Math.round((s?.progress ?? 0) * 100);
-        const tested = s?.tested ?? 0;
-        const feasible = s?.feasible ?? 0;
-        return (
-          <div
-            role="status"
-            aria-live="polite"
-            className="shrink-0 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
-          >
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <Sparkles className="w-4 h-4 shrink-0 text-amber-400 animate-pulse" />
-              <span className="shrink-0 rounded-full border border-amber-500/50 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
-                Solver live
-              </span>
-              <span className="font-semibold text-white truncate">{globalActiveSolve.name}</span>
-              <span className="hidden md:inline font-mono text-[11px] text-amber-200/90 shrink-0">
-                {pct}% · {tested.toLocaleString()} evals · {feasible} valid
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 ml-auto">
-              <span className="md:hidden font-mono text-[11px] text-amber-200/90">
-                {pct}% · {feasible}/{tested}
-              </span>
-              <button
-                type="button"
-                onClick={openGlobalLiveSolve}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/60 bg-amber-500/25 px-2.5 py-1 text-xs font-bold text-amber-100 hover:bg-amber-500/35 transition-colors"
-              >
-                <Eye className="w-3.5 h-3.5 shrink-0" />
-                Watch live
-              </button>
-            </div>
-          </div>
-        );
-      })()}
 
       {error && (
         <div className="shrink-0 bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg text-sm">{error}</div>
@@ -882,15 +810,6 @@ export default function App() {
               where={`cam gap at Y = ${travel.y.toFixed(2)} mm`} {...explorerCard('section')} />
           </div>
         </div>
-      ) : activeTab === 'compliant' ? (
-        <CompliantBars
-          mode={subTab}
-          onOpenExplorer={() => { setSubTab('compliant', 'explorer'); setMobilePane('schematic'); }}
-          onProfileStateChange={setCompliantProfile}
-          profileRef={compliantRef}
-          openLiveJobSignal={openLiveSolveSignal}
-          onActiveJobChange={setGlobalActiveSolve}
-        />
       ) : activeTab !== 'cam' ? (
         <LinkageExplorer
           key={activeTab}

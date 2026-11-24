@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { apiFetch } from '../components';
 
 /** One saved-profile store for the whole app; each feature has its own type and payload shape. */
-export type ProfileType = 'cam' | 'cam-finder' | 'elbow' | 'lever' | 'pendulum' | 'compliant';
+export type ProfileType = 'cam' | 'cam-finder' | 'elbow' | 'lever' | 'pendulum';
 
 export type ProfilePayload = Record<string, unknown>;
 
@@ -35,7 +35,6 @@ export const PROFILE_TYPE_LABEL: Record<ProfileType, string> = {
   elbow: 'Bar linkage profiles',
   lever: 'Lever linkage profiles',
   pendulum: 'Pendulum linkage profiles',
-  compliant: 'Compliant Bars profiles',
 };
 
 const base = (type: ProfileType) => `/api/profiles/${encodeURIComponent(type)}`;
@@ -167,8 +166,8 @@ export function suggestNextProfileName(name: string | null): string {
   return `${prefix}${next}`;
 }
 
-/** The profile type a tab and sub-tab save and import: a linkage or compliant profile holds its Explorer and Finder/Solver settings together. */
-export function profileTypeOf(tab: 'cam' | 'linkage' | 'lever' | 'pendulum' | 'compliant', sub: 'explorer' | 'finder'): ProfileType {
+/** The profile type a tab and sub-tab save and import: a linkage profile holds its Explorer and Finder settings together. */
+export function profileTypeOf(tab: 'cam' | 'linkage' | 'lever' | 'pendulum', sub: 'explorer' | 'finder'): ProfileType {
   if (tab === 'cam') return sub === 'finder' ? 'cam-finder' : 'cam';
   return tab === 'linkage' ? 'elbow' : tab;
 }

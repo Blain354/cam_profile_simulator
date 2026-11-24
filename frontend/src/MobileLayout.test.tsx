@@ -2,9 +2,6 @@ import { cleanup, fireEvent, render, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 import { DelayedHoverHint } from './components'
-import { SolverModal } from './compliant/SolverModal'
-import { DEFAULT_SOLVER_GOAL_CONFIG, DEFAULT_SOLVER_METHOD_CONFIG } from './compliant/types'
-import type { SolveJobState } from './compliant/types'
 
 beforeEach(() => {
   localStorage.clear()
@@ -35,8 +32,8 @@ test('mobile bottom pane bar switches data-mobile-pane and every tab exposes con
   expect(shell.dataset.mobilePane).toBe('charts')
   expect(chartsTab.getAttribute('aria-selected')).toBe('true')
 
-  // Verify the 3 pane markers exist across Cam Explorer, Linkage, and Compliant Bars.
-  for (const tabName of ['Cam', 'Bar Linkage', 'Compliant Bars']) {
+  // Verify the 3 pane markers exist across Cam Explorer and Linkage tabs.
+  for (const tabName of ['Cam', 'Bar Linkage', 'Pendulum Linkage']) {
     fireEvent.click(getByRole('button', { name: tabName }))
     expect(container.querySelector('[data-pane="controls"]'), tabName).toBeTruthy()
     expect(container.querySelector('[data-pane="schematic"]'), tabName).toBeTruthy()
@@ -73,48 +70,4 @@ test('DelayedHoverHint stays closed on touch-only devices (hover: none)', () => 
   vi.advanceTimersByTime(200)
   expect(queryByRole('tooltip')).toBeNull()
   vi.useRealTimers()
-})
-
-test('SolverModal live view renders a single close button for responsive header reordering', () => {
-  const onClose = vi.fn()
-  const job: SolveJobState = {
-    job_id: 'j1',
-    experiment_id: 'e1',
-    name: 'Long Solver Experiment Name',
-    note: '',
-    status: 'running',
-    goal: 'flow_slope',
-    time_budget_s: 60,
-    summary: null,
-    found: false,
-    params: null,
-    result: null,
-    runners: [],
-    message: '',
-    error: null,
-  }
-  const { getAllByRole } = render(
-    <SolverModal
-      open
-      modalMode="live"
-      job={job}
-      goalConfig={DEFAULT_SOLVER_GOAL_CONFIG}
-      methodConfig={DEFAULT_SOLVER_METHOD_CONFIG}
-      timeBudgetS={60}
-      spaceSummary={{ freeCount: 5, lockedCount: 1, pivotBoth: false }}
-      onGoalConfigChange={vi.fn()}
-      onMethodConfigChange={vi.fn()}
-      onTimeBudgetChange={vi.fn()}
-      onLaunch={vi.fn()}
-      onSwitchToSetup={vi.fn()}
-      onClose={onClose}
-      onCancel={vi.fn()}
-      onApplyRunner={vi.fn()}
-      onSaveMeta={vi.fn(async () => {})}
-    />,
-  )
-  const closeButtons = getAllByRole('button', { name: 'Close solver modal' })
-  expect(closeButtons).toHaveLength(1)
-  fireEvent.click(closeButtons[0])
-  expect(onClose).toHaveBeenCalledTimes(1)
 })

@@ -398,44 +398,11 @@ CAD places the tube itself and the simulator follows its measure. Compliant Bars
   the export invalid and disables the write: Onshape gave no value (the variable has to be defined
   before the rollback bar), or the value is in the wrong unit. Each successful check costs one API
   call per measured variable. With the id unset, or for a linkage kind that has no measured input,
-  this check reads nothing and does not gate the write. A Compliant Bars write is still refused when
-  a member cannot be skinned, whether or not `ONSHAPE_COMPLIANT_PART_STUDIO_ID` is set
-  (**Compliant Bars: three tables**). The read-back in **What the Part Studio uses**
+  this check reads nothing and does not gate the write. The read-back in **What the Part Studio uses**
   is separate: it still runs when the id is set, including for an elbow or a lever.
 
-## Compliant Bars: three tables
+## Compliant Bars (migrated)
 
-**Write to Onshape variables** (under Load CAD values, Compliant Bars tab) writes the design into three
-Variable Studios of the document, so that no quantity exists twice in the CAD (`backend/onshape_compliant.py`):
+Compliant Bars Onshape export (`cam_sim_compliant`, `cam_sim_carriage`, `cam_sim_pinch`) has moved to **Minivalve Simulator**: `/home/blain/web_projects/minivalve-simulator` (see [`../MIGRATION-MINIVALVE-SIMULATOR.md`](../MIGRATION-MINIVALVE-SIMULATOR.md)).
 
-| Table | Variables | Holds |
-|-------|-----------|-------|
-| `cam_sim_compliant` | `cb_anchor_distance`, `cb_junction_x`, `cb_junction_y`, `cb_pinch_y`, `cb_{l,r,f}_{u,v}{1,2}`, `cb_{l,r,f}_thickness` | what is specific to compliant bars. The owner adds the CAD-only inputs by hand (`cb_member_depth`, `cb_eye_diameter`, `cb_pin_hole_diameter`, `cb_pad_*`, `cb_sketch_datum`); a write keeps them. |
-| `cam_sim_carriage` | `carriage_closed_height`, `carriage_pivot_offset`, `carriage_pivot_side` (1 far side of the screw, -1 the tube's side: `pivot_inverted`) | the carriage, shared by every mechanism. The side places the pivot and the carriage pin holes in the Part Studio. |
-| `cam_sim_pinch` | `pinch_closed_gap` (the tube model's closed gap), `pinch_preload` | the pinch, shared by every mechanism |
-
-`cb_pinch_y` is the tip height the geometry is built with: with a target pinch height in the constraints,
-it is `2 x closed_carriage_height - target`. Not written, because the CAD decides them: the tube size
-(`#pinch_tube_OD`, `#pinch_tube_ID`, table *VARIABLES-MODULAR-VALVE-MOTOR*), the tube position
-(`#pend_CALC_tube_center`, and `#pinch_CALC_tube_wall` measured in the Part Studio) and `#cb_member_depth`.
-The tables hold plain numbers; every formula (handle coordinates, pinch pad) is a variable of the Part Studio.
-
-- `POST /api/compliant/onshape/preview`, body = the `/api/compliant/simulate` body. Locally it builds the
-  geometry and runs `skin_check` (`backend/compliant_bars.py`). If the geometry cannot be built
-  (no pinch, or a closed gap that is not positive), the reply is HTTP 409 and nothing is sent.
-  Otherwise Onshape: one call lists the Variable Studios, one more reads each table that exists,
-  one per measured input, one read-back. A member that fails `skin_check` does not refuse the preview.
-  Reply: `{tables: [{table_name, table_exists, element_id, table_url, rows}], api_calls, input_check, cad_check, skin_check}`.
-  `skin_check` is `{valid, message, rows}`. Each row is one member (`l`, `r`, `f`): the smallest radius of
-  curvature of its cubic, `|B'|^3 / |B' x B''|`, sampled on 1001 points, against half `cb_{l,r,f}_thickness`.
-  The handles are the ones written to Onshape: `u1` and `u2` are not swapped, unlike the mesh sampler.
-  The window names each failing member with both numbers and disables the write (**Export not valid**).
-  **Load CAD values and check again** is offered for a measured-input mismatch. This window has no **Look up**.
-- `POST /api/compliant/onshape/apply`, same body plus `names`. The geometry refusal above comes first.
-  Before any Onshape call it then refuses
-  (HTTP 409, `ExportRefused`) when `skin_check` is not valid. It then reads the measured inputs and
-  refuses the same way when that check is configured and not valid. Each table is then read, merged and
-  written back whole like the linkage tables (created when missing, untouched when nothing ticked in it
-  changes). A failed write is reported on that table (`write_error` is the first one); the other tables
-  are still written, and the Part Studio read-back is skipped.
 

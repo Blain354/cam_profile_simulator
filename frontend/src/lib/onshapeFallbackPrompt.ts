@@ -127,15 +127,11 @@ export function buildOnshapeFallbackPrompt(input: BuildOnshapeFallbackPromptInpu
     lines.push('(Preview failed before reading current Onshape values; read the table(s) first and apply the design values.)');
   }
 
-  const backendRefs = mechanism === 'Compliant Bars'
-    ? '`backend/onshape_compliant.py` and `backend/onshape_variables.py`'
-    : '`backend/onshape_variables.py`';
-
   lines.push(
     '',
     'Notes:',
     '- Preserve all other existing variables in each Variable Studio (read, merge, write).',
-    `- Reference implementation in \`cam-profile-sim\`: ${backendRefs} (Onshape REST v10 \`/api/v10/variables/d/{did}/w/{wid}/e/{eid}/variables\`), or edit directly in the Variable Studio tab(s) above.`,
+    '- Reference implementation in `cam-profile-sim`: `backend/onshape_variables.py` (Onshape REST v10 `/api/v10/variables/d/{did}/w/{wid}/e/{eid}/variables`), or edit directly in the Variable Studio tab(s) above.',
   );
 
   return lines.join('\n');
