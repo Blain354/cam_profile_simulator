@@ -54,6 +54,7 @@ Misconceptions vs facts:
 - **500 on config routes** → SQLite I/O (path, perms, disk), not network DB.
 - **Empty configs after deploy** → persistence path/volume wrong.
 - **Browser fetch fails** → API/CORS/Traefik; **not** SQLite protocol.
+- **Compliant Bars solve after a backend restart** → a row left `running` is marked `interrupted` when the process starts. The search does not resume; the last checkpoint stays in `compliant_solve_experiments`. `GET /api/compliant/solve/jobs/active` is null until a new session starts. A second `POST /api/compliant/solve/jobs` is refused with HTTP 409 only while one session is `running` in that process.
 
 ---
 

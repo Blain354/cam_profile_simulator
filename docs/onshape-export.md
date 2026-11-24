@@ -272,7 +272,9 @@ Request and reply:
 { "rows": [{ "name": "pend_arm_L", "key": "bar2_length", "label": "...", "new_expression": "14.43 mm",
              "current_expression": "10 mm", "status": "update", "detail": "" }],
   "api_calls": 2, "table_name": "cam_sim_pendulum", "table_exists": true, "table_created": false,
-  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…", "write_error": null,
+  "element_id": "…", "table_url": "https://cad.onshape.com/documents/…/w/…/e/…",
+  "document_id": "…", "workspace_id": "…", "document_url": "https://cad.onshape.com/documents/…/w/…",
+  "write_error": null,
   "input_check": { "configured": false, "valid": true, "rows": [], "part_studio_url": null, "error": null },
   "cad_check": { "configured": false, "coherent": true, "rows": [], "error": null } }
 ```
@@ -425,7 +427,7 @@ The tables hold plain numbers; every formula (handle coordinates, pinch pad) is 
   (no pinch, or a closed gap that is not positive), the reply is HTTP 409 and nothing is sent.
   Otherwise Onshape: one call lists the Variable Studios, one more reads each table that exists,
   one per measured input, one read-back. A member that fails `skin_check` does not refuse the preview.
-  Reply: `{tables: [{table_name, table_exists, element_id, table_url, rows}], api_calls, input_check, cad_check, skin_check}`.
+  Reply: `{tables: [{table_name, table_exists, element_id, table_url, document_id, workspace_id, document_url, rows}], api_calls, input_check, cad_check, skin_check, document_id, workspace_id, document_url}`. `document_url` is the workspace URL from `document_url` in `backend/onshape_variables.py` (`ONSHAPE_BASE_URL`, then `/documents/{document_id}/w/{workspace_id}`). Each table carries the same three fields.
   `skin_check` is `{valid, message, rows}`. Each row is one member (`l`, `r`, `f`): the smallest radius of
   curvature of its cubic, `|B'|^3 / |B' x B''|`, sampled on 1001 points, against half `cb_{l,r,f}_thickness`.
   The handles are the ones written to Onshape: `u1` and `u2` are not swapped, unlike the mesh sampler.
@@ -438,4 +440,5 @@ The tables hold plain numbers; every formula (handle coordinates, pinch pad) is 
   written back whole like the linkage tables (created when missing, untouched when nothing ticked in it
   changes). A failed write is reported on that table (`write_error` is the first one); the other tables
   are still written, and the Part Studio read-back is skipped.
+When that window shows an error — a write that did not go through, or a measured-input mismatch that carries an error — **Copy prompt for agent** copies a manual write list and does not call Onshape. The text names the mechanism, the error, and the document URL when the reply has one. Otherwise it names the document and workspace ids, or, when those are missing, `ONSHAPE_DOCUMENT_ID` and `ONSHAPE_LINKAGE_WORKSPACE_ID` (or `ONSHAPE_WORKSPACE_ID`). It also names the Part Studio URL when the check has one, and the rows still to change: rows whose status is `error`, or, if none are, the ticked rows that would `update` or be `new` — every such row when nothing is ticked. The linkage window has the same button (`frontend/src/lib/onshapeFallbackPrompt.ts`).
 
