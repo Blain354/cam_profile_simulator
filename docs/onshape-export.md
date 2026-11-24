@@ -369,29 +369,19 @@ Some inputs are set by the CAD, not by the simulator. The Part Studio measures t
 simulator reads them back. The defaults live in `DEFAULT_MEASURED` (`backend/onshape_variables.py`).
 The pendulum reads its tube centre (`tube_center_x`, the tube-axis distance from the screw axis)
 from `#pend_CALC_tube_center`, in the Part Studio `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID`.
-Compliant Bars reads its own Part Studio, `ONSHAPE_COMPLIANT_PART_STUDIO_ID` (no fallback): the tube
-centre from `#pend_CALC_tube_center`, the out-of-plane depth (`member_depth`) from `#cb_member_depth`,
-and the tube size (`tube_od`, `tube_id`) from `#pinch_tube_OD` and `#pinch_tube_ID`. A Part Studio is an
+`DEFAULT_MEASURED` has that one entry. A Part Studio is an
 element id on the table's document and branch, never chosen by name.
 A measured input is never written to a table: the pendulum export has no `pend_tube_center`, so the
-CAD places the tube itself and the simulator follows its measure. Compliant Bars writes its own tables
-(**Compliant Bars: three tables** below).
+CAD places the tube itself and the simulator follows its measure.
 
 | Env | Meaning |
 |-----|---------|
 | `ONSHAPE_LINKAGE_MEASURE_PART_STUDIO_ID` | Part Studio on the table's document and branch. It holds the measured variables, and it is the one whose resolved variables are compared with the simulator. Unset: nothing is read or checked. |
-| `ONSHAPE_COMPLIANT_PART_STUDIO_ID` | Part Studio of the compliant bars (MINIVALVE: *SMART_VALVE_MOTOR_V3_compliant links_splines*). Measured inputs and the read-back of Compliant Bars. Unset: that tab reads and checks nothing. |
 | `ONSHAPE_LINKAGE_MEASURED` | Optional JSON `{kind: {simulator value key: variable name}}` replacing `DEFAULT_MEASURED` for a kind. |
 
 - **Sync from Onshape** (under Tube centre, on the pendulum) calls `POST /api/linkage/onshape/measured`:
   one read-only FeatureScript evaluation per variable (`getVariable`), and each value returned overwrites
   that input on the design.
-- **Load CAD values from Onshape** (the button above the Compliant Bars controls) and **Sync from Onshape**
-  (on the tube centre and on the out-of-plane depth) call `POST /api/compliant/onshape/measured`: the same
-  read-only evaluation, one call per variable. Load CAD values copies every value returned;
-  a per-field Sync from Onshape copies only that field.
-  The same values gate the Compliant Bars write. An object under `compliant` in `ONSHAPE_LINKAGE_MEASURED`
-  replaces the defaults for this tab; the pendulum map is never used for it.
 - **Export check.** Opening the write window, and **Look up**, also reads the measured values and says
   whether the export is valid: every measured input must equal the simulator's within 0.001 in that
   value's unit (millimetres for the tube centre). If one differs, the write button is disabled and reads
