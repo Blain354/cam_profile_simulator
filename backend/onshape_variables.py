@@ -412,8 +412,12 @@ def _studio_path(t: Target, eid: str) -> str:
     return f"/variables/d/{t.document_id}/w/{t.workspace_id}/e/{eid}/variables"
 
 
+def document_url(t: Target) -> str:
+    return f"{oe.ONSHAPE_BASE_URL}/documents/{t.document_id}/w/{t.workspace_id}"
+
+
 def table_url(t: Target, eid: str) -> str:
-    return f"{oe.ONSHAPE_BASE_URL}/documents/{t.document_id}/w/{t.workspace_id}/e/{eid}"
+    return f"{document_url(t)}/e/{eid}"
 
 
 def _call(method: str, path: str, **kw: Any) -> Any:
@@ -496,6 +500,9 @@ def _summary(
         "table_created": created,
         "element_id": eid,
         "table_url": table_url(t, eid) if eid else None,
+        "document_id": t.document_id,
+        "workspace_id": t.workspace_id,
+        "document_url": document_url(t),
         "write_error": write_error,
     }
 

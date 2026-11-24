@@ -725,6 +725,18 @@ export function CompliantSchematic({
               />
             </g>
           </g>
+          <circle
+            data-layer="pivot-zone"
+            cx={pivot[0]}
+            cy={-carriageY}
+            r={Math.max(params.carriage_pin_diameter / 2, 1.0)}
+            fill="#60a5fa"
+            fillOpacity={0.14}
+            stroke="#60a5fa"
+            strokeOpacity={0.7}
+            strokeWidth={0.12}
+            strokeDasharray="0.35 0.25"
+          />
           <circle cx={pivot[0]} cy={-carriageY} r={Math.max(params.carriage_pin_diameter / 2, 0.2)} fill="#60a5fa" />
           {MEMBERS.map((member) => (
             <g key={member.id}>
@@ -858,6 +870,13 @@ export function CompliantSchematic({
           {/* Hover highlight & search-zone overlay when hovering a Spline Bounds card */}
           {hoveredBound && bounds && (() => {
             if (hoveredBound === 'anchor') {
+              if (constraints.anchor_fixed) {
+                return (
+                  <g data-layer="bound-hover" pointerEvents="none">
+                    <circle cx={anchor[0]} cy={-anchor[1]} r={0.85} fill="#f59e0b" fillOpacity={0.2} stroke="#f59e0b" strokeWidth={0.14} />
+                  </g>
+                );
+              }
               const sym = constraints.anchor_symmetric === true;
               if (sym) {
                 const [aLo, aHi] = anchorSymmetricRange(bounds.anchor_distance);

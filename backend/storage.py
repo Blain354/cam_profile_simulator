@@ -767,12 +767,13 @@ class CompliantExperimentStorage:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=15.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS compliant_solve_experiments (
@@ -913,6 +914,21 @@ class CompliantExperimentStorage:
             )
             conn.commit()
             return cur.rowcount > 0
+
+    def mark_stale_running_as_interrupted(self) -> int:
+        """Mark any job left in 'running' state from a previous server process as 'interrupted'."""
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE compliant_solve_experiments
+                SET status = 'interrupted', updated_at = ?
+                WHERE status = 'running'
+                """,
+                (now,),
+            )
+            conn.commit()
+            return cur.rowcount
 
     def delete_experiment(self, exp_id: str) -> bool:
         with self._connect() as conn:

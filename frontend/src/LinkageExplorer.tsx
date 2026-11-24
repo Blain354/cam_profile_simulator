@@ -8,9 +8,11 @@ import type { ReactElement, Ref } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
-import { Pause, Play, RefreshCw, RotateCcw, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
+import { Check, Copy, Download, Pause, Play, RefreshCw, RotateCcw, Save, Settings, Target, Trash2, UploadCloud } from 'lucide-react';
 import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
+import { buildPendulumMvccDocument, downloadMvccDocument } from './lib/mvcc';
 import type { ProfileHandle, ProfileState } from './lib/profiles';
+import { buildOnshapeFallbackPrompt, copyTextToClipboard } from './lib/onshapeFallbackPrompt';
 import { Accordion, AccordionScope, ParameterSlider, StatRow, apiFetch } from './components';
 import type { SubTab } from './SubTabs';
 import type { ChartDomainSettings } from './components';
@@ -950,6 +952,7 @@ interface InputCheck {
 interface OnshapeTable {
   rows: OnshapeRow[]; api_calls: number; table_name: string; table_exists: boolean; table_created: boolean;
   element_id: string | null; table_url: string | null; write_error?: string | null; input_check?: InputCheck;
+  document_id?: string | null; workspace_id?: string | null; document_url?: string | null;
   /** What the Part Studio actually uses for each written variable (backend `cad_check`). */
   cad_check?: { configured: boolean; coherent: boolean; error: string | null;
     rows: { name: string; label: string; unit: string; simulator: number; onshape: number | null; ok: boolean }[] };
@@ -1004,9 +1007,15 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
   const [busy, setBusy] = useState<'read' | 'write' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const staleRef = useRef(0);
   const writingRef = useRef(false);   // busy state lags a render: this stops a double click sending two writes
   const recheckRef = useRef(false);   // after a sync, read again once the new values are on screen
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current);
+  }, []);
 
   const name = nameInput.trim();
   const nameOk = TABLE_NAME.test(name);
@@ -1014,7 +1023,7 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
   // One read per opening or per explicit name check, never per keystroke: each read costs Onshape API calls.
   const read = (tableName: string) => {
     const ticket = ++staleRef.current;
-    setTable(null); setError(null); setDone(false); setBusy('read');
+    setTable(null); setError(null); setDone(false); setCopyState('idle'); setBusy('read');
     onshapeCall('/api/linkage/onshape/preview', { ...params, table_name: tableName })
       .then((t) => {
         if (ticket !== staleRef.current) return;
@@ -1061,7 +1070,7 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
   const write = async () => {
     if (!table || writingRef.current) return;
     writingRef.current = true;
-    setBusy('write'); setError(null);
+    setBusy('write'); setError(null); setCopyState('idle');
     try {
       const t = await onshapeCall('/api/linkage/onshape/apply', { ...params, table_name: table.table_name, names: chosen.map((r) => r.name) });
       setTable(t);
@@ -1076,6 +1085,24 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
       writingRef.current = false;
       setBusy(null);
     }
+  };
+
+  const copyAgentPrompt = async (errorMessage: string) => {
+    const prompt = buildOnshapeFallbackPrompt({
+      mechanism: `${kind.charAt(0).toUpperCase()}${kind.slice(1)} linkage`,
+      error: errorMessage,
+      tables: table ? [table] : [],
+      selectedNames: picked,
+      fallbackTableNames: [table?.table_name ?? (name || storedTableName(kind))],
+      documentId: table?.document_id,
+      workspaceId: table?.workspace_id,
+      documentUrl: table?.document_url,
+      partStudioUrl: table?.input_check?.part_studio_url,
+    });
+    const ok = await copyTextToClipboard(prompt);
+    setCopyState(ok ? 'copied' : 'failed');
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopyState('idle'), 2500);
   };
 
   const statusText: Record<OnshapeRow['status'], [string, string]> = {
@@ -1107,7 +1134,16 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
           </p>
         </div>
         {busy === 'read' && <p className="text-neutral-400" role="status">Looking for the table in Onshape…</p>}
-        {error && <p className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{error}</p>}
+        {error && (
+          <div className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">
+            <p>{error}</p>
+            <Button variant="ghost" type="button" onClick={() => copyAgentPrompt(error)}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 hover:bg-red-900/50">
+              {copyState === 'copied' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              {copyState === 'copied' ? 'Copied prompt' : copyState === 'failed' ? 'Copy failed' : 'Copy prompt for agent'}
+            </Button>
+          </div>
+        )}
         {table && (
           <>
             <p className="text-xs leading-snug text-neutral-400">
@@ -1142,11 +1178,22 @@ function OnshapeVariablesModal({ open, onClose, params, onSyncMeasured }: {
                     {r.label}: simulator {r.simulator.toFixed(4)} {r.unit}, Onshape #{r.variable} {r.value.toFixed(4)} {r.unit} {r.ok ? '✓' : '✗'}
                   </p>
                 ))}
-                {!check.valid && check.rows.some((r) => !r.ok) && (
-                  <Button variant="ghost" type="button" onClick={syncAndCheck} disabled={busy != null}
-                    className="mt-2 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 disabled:opacity-40">
-                    Sync from Onshape and check again
-                  </Button>
+                {!check.valid && (check.rows.some((r) => !r.ok) || (check.error && !error)) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {check.rows.some((r) => !r.ok) && (
+                      <Button variant="ghost" type="button" onClick={syncAndCheck} disabled={busy != null}
+                        className="rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 disabled:opacity-40">
+                        Sync from Onshape and check again
+                      </Button>
+                    )}
+                    {check.error && !error && (
+                      <Button variant="ghost" type="button" onClick={() => copyAgentPrompt(check.error!)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 hover:bg-red-900/50">
+                        {copyState === 'copied' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copyState === 'copied' ? 'Copied prompt' : copyState === 'failed' ? 'Copy failed' : 'Copy prompt for agent'}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -2379,12 +2426,23 @@ export default function LinkageExplorer({ kind, shared, mode, onOpenExplorer, on
           <h2 className="text-lg font-bold text-white tracking-tight truncate">{pendulum ? 'Pendulum linkage' : lever ? 'Lever linkage' : 'Bar linkage'}</h2>
         </div>
 
-        <div className="shrink-0 mb-4">
+        <div className="shrink-0 mb-4 space-y-1">
           <Button variant="ghost" type="button" onClick={() => setOnshapeOpen(true)} disabled={!data || data.Y_positions.length === 0}
             title="Compare these dimensions with the Onshape variable table, then overwrite the variables there"
             className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40">
             <UploadCloud className="w-3.5 h-3.5" /> Write to Onshape variables
           </Button>
+          {pendulum && (
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => downloadMvccDocument(buildPendulumMvccDocument(activeProfile, params))}
+              title="Export this Pendulum configuration as a .mvcc file for SR_Unit_Cluster"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-emerald-500/60 hover:text-emerald-300"
+            >
+              <Download className="w-3.5 h-3.5" /> Export .mvcc
+            </Button>
+          )}
           <OnshapeVariablesModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params}
             onSyncMeasured={(patch) => setParams((p) => ({ ...p, ...patch }))} />
         </div>

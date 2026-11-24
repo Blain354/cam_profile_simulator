@@ -398,17 +398,17 @@ export function SolverConstraintsContent({
           min={0.05}
           max={2}
           step={0.05}
-          description="Least gap kept between non-eye spans and the carriage pivot pin."
+          description="Least gap kept between non-eye member spans and the 2 mm diameter exclusion zone around the carriage pivot."
           onChange={(v) => onConstraintsChange({ min_pivot_clearance_mm: v })}
         />
         <ParameterSlider
-          label="Min tube clearance L/R (mm)"
+          label="Min tube clearance (mm)"
           value={constraints.min_tube_clearance_mm}
-          min={0}
+          min={0.05}
           max={3}
           step={0.05}
-          secondaryValue={constraints.min_tube_clearance_mm === 0 ? 'off' : `≥ ${constraints.min_tube_clearance_mm.toFixed(2)} mm`}
-          description="Minimum horizontal clearance kept between Member L/R and Tube A/B across the full stroke."
+          secondaryValue={`≥ ${constraints.min_tube_clearance_mm.toFixed(2)} mm`}
+          description="Minimum clearance kept between all members (L, R, and Foot away from contact P) and Tube A/B across the full stroke."
           onChange={(v) => onConstraintsChange({ min_tube_clearance_mm: v })}
         />
         <ParameterSlider
@@ -457,17 +457,18 @@ export function SolverConstraintsContent({
         />
         <div className="space-y-2 rounded-lg border border-neutral-700/80 bg-neutral-900/50 p-2.5">
           <div className="text-[11px] font-semibold text-neutral-300">Motor stall &amp; stress safety</div>
-          <label className="flex items-start gap-2 text-xs text-neutral-200 cursor-pointer select-none">
+          <label className="flex items-start gap-2 text-xs text-neutral-200 select-none">
             <input
               type="checkbox"
-              checked={constraints.motor_limited_stress ?? true}
-              onChange={(e) => onConstraintsChange({ motor_limited_stress: e.target.checked })}
+              checked={true}
+              disabled={true}
+              onChange={() => onConstraintsChange({ motor_limited_stress: true })}
               className="mt-0.5 accent-amber-500 shrink-0"
             />
             <span>
               Motor-limited stress (stall before yield)
               <span className="block text-[10px] leading-snug text-neutral-400 font-normal">
-                Validates peak stress up to the carriage Y where the motor stalls (in or out of ±stroke), instead of assuming infinite screw torque.
+                Always enforced by solver: motor must stall before any member reaches the stress limit, even outside ±stroke.
               </span>
             </span>
           </label>
@@ -827,6 +828,7 @@ export function SplineBoundsList({
   bounds,
   quadrantMap,
   constraints,
+  onPatchParams,
   onPatchBounds,
   onQuadrantChange,
   onConstraintsChange,
@@ -836,6 +838,7 @@ export function SplineBoundsList({
   bounds: Record<ShapeKey, [number, number]>;
   quadrantMap: QuadrantMap;
   constraints: SolverConstraints;
+  onPatchParams: (patch: Partial<CompliantParams>) => void;
   onPatchBounds: (patch: Partial<Record<ShapeKey, [number, number]>>) => void;
   onQuadrantChange: (key: QuadrantKey, next: QuadrantConfig) => void;
   onConstraintsChange: (patch: Partial<SolverConstraints>) => void;
@@ -1048,55 +1051,98 @@ export function SplineBoundsList({
 
         <div className="grid grid-cols-2 gap-2">
           {(() => {
-            const sym = constraints.anchor_symmetric === true;
+            const anchorFixed = constraints.anchor_fixed === true;
+            const sym = constraints.anchor_symmetric === true && !anchorFixed;
             const [aLo, aHi] = anchorSymmetricRange(bounds.anchor_distance);
             const fmtN = (n: number) => Number(n.toFixed(2));
             return (
               <div
                 onMouseEnter={() => onHover('anchor')}
                 onMouseLeave={() => onHover(null)}
-                className="rounded-lg border border-neutral-700 bg-neutral-900/70 p-2 space-y-1 hover:border-amber-500/60 transition-colors"
+                className={`rounded-lg border p-2 space-y-1 transition-colors ${
+                  anchorFixed
+                    ? 'border-amber-500/40 bg-amber-500/5 hover:border-amber-400/70'
+                    : 'border-neutral-700 bg-neutral-900/70 hover:border-amber-500/60'
+                }`}
               >
-                <div className="flex items-center justify-between text-[10px]">
+                <div className="flex items-center justify-between gap-1 text-[10px]">
                   <span className="font-semibold truncate" style={{ color: '#f59e0b' }}>
                     Anchor (A)
                   </span>
-                  <span className="text-neutral-500">mm</span>
+                  <label className="flex items-center gap-1 text-neutral-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      aria-label="Fix anchor distance"
+                      checked={anchorFixed}
+                      onChange={(e) => onConstraintsChange({ anchor_fixed: e.target.checked })}
+                      className="accent-amber-500"
+                    />
+                    <span>Fixed</span>
+                  </label>
                 </div>
-                <div className="grid grid-cols-2 gap-1">
-                  <input
-                    aria-label="Anchor (A) min"
-                    type="number"
-                    value={bounds.anchor_distance[0]}
-                    step={LIMITS.anchor_distance.step}
-                    onChange={(e) => onPatchBounds({ anchor_distance: [Number(e.target.value), bounds.anchor_distance[1]] })}
-                    className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-[10px] text-neutral-100"
-                  />
-                  <input
-                    aria-label="Anchor (A) max"
-                    type="number"
-                    value={bounds.anchor_distance[1]}
-                    step={LIMITS.anchor_distance.step}
-                    onChange={(e) => onPatchBounds({ anchor_distance: [bounds.anchor_distance[0], Number(e.target.value)] })}
-                    className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-[10px] text-neutral-100"
-                  />
-                </div>
-                <label className="flex items-center gap-1 pt-0.5 text-[10px] text-neutral-300 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    aria-label="Symmetric anchor range around center"
-                    checked={sym}
-                    onChange={(e) => onConstraintsChange({ anchor_symmetric: e.target.checked })}
-                    className="accent-amber-500"
-                  />
-                  <span>Symmetric (±)</span>
-                </label>
-                {sym && aHi > 0 && (
-                  <div className="text-[9px] font-mono text-amber-300/80 leading-tight">
-                    {aLo > 0
-                      ? `[${fmtN(-aHi)}..${fmtN(-aLo)}] & [${fmtN(aLo)}..${fmtN(aHi)}]`
-                      : `[${fmtN(-aHi)}..${fmtN(aHi)}]`}
-                  </div>
+                {anchorFixed ? (
+                  <>
+                    <div className="flex items-center gap-1">
+                      <input
+                        aria-label="Fixed anchor distance"
+                        type="number"
+                        min={LIMITS.anchor_distance.min}
+                        max={LIMITS.anchor_distance.max}
+                        step={LIMITS.anchor_distance.step}
+                        value={params.anchor_distance}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          if (Number.isFinite(v)) {
+                            const clamped = Math.min(LIMITS.anchor_distance.max, Math.max(LIMITS.anchor_distance.min, v));
+                            onPatchParams({ anchor_distance: clamped });
+                          }
+                        }}
+                        className="w-full rounded border border-amber-500/40 bg-neutral-950 px-1.5 py-0.5 font-mono text-[10px] text-neutral-100"
+                      />
+                      <span className="text-[10px] text-neutral-500">mm</span>
+                    </div>
+                    <div className="text-[9px] leading-tight text-neutral-400">
+                      Locked to current value
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-1">
+                      <input
+                        aria-label="Anchor (A) min"
+                        type="number"
+                        value={bounds.anchor_distance[0]}
+                        step={LIMITS.anchor_distance.step}
+                        onChange={(e) => onPatchBounds({ anchor_distance: [Number(e.target.value), bounds.anchor_distance[1]] })}
+                        className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-[10px] text-neutral-100"
+                      />
+                      <input
+                        aria-label="Anchor (A) max"
+                        type="number"
+                        value={bounds.anchor_distance[1]}
+                        step={LIMITS.anchor_distance.step}
+                        onChange={(e) => onPatchBounds({ anchor_distance: [bounds.anchor_distance[0], Number(e.target.value)] })}
+                        className="w-full rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 font-mono text-[10px] text-neutral-100"
+                      />
+                    </div>
+                    <label className="flex items-center gap-1 pt-0.5 text-[10px] text-neutral-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        aria-label="Symmetric anchor range around center"
+                        checked={constraints.anchor_symmetric === true}
+                        onChange={(e) => onConstraintsChange({ anchor_symmetric: e.target.checked })}
+                        className="accent-amber-500"
+                      />
+                      <span>Symmetric (±)</span>
+                    </label>
+                    {sym && aHi > 0 && (
+                      <div className="text-[9px] font-mono text-amber-300/80 leading-tight">
+                        {aLo > 0
+                          ? `[${fmtN(-aHi)}..${fmtN(-aLo)}] & [${fmtN(aLo)}..${fmtN(aHi)}]`
+                          : `[${fmtN(-aHi)}..${fmtN(aHi)}]`}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
@@ -1473,42 +1519,67 @@ export function SolveExperimentsList({
   }
   return (
     <div className="space-y-1.5 pt-2">
-      {experiments.map((exp) => (
-        <div
-          key={exp.id}
-          className="flex items-center justify-between gap-2 rounded-lg border border-neutral-700 bg-neutral-900/60 px-2.5 py-2 text-xs"
-        >
-          <button
-            type="button"
-            onClick={() => onOpen(exp.id)}
-            className="min-w-0 flex-1 text-left hover:text-amber-200"
+      {experiments.map((exp) => {
+        const isRunning = exp.status === 'running';
+        const statusBadge = isRunning
+          ? { label: 'LIVE', cls: 'bg-amber-500/20 text-amber-300 border-amber-500/50 animate-pulse' }
+          : exp.status === 'interrupted'
+            ? { label: 'INTERRUPTED', cls: 'bg-orange-500/20 text-orange-300 border-orange-500/40' }
+            : exp.status === 'cancelled'
+              ? { label: 'STOPPED', cls: 'bg-sky-500/20 text-sky-300 border-sky-500/40' }
+              : exp.status === 'failed'
+                ? { label: 'FAILED', cls: 'bg-red-500/20 text-red-300 border-red-500/40' }
+                : null;
+        return (
+          <div
+            key={exp.id}
+            className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+              isRunning
+                ? 'border-amber-500/50 bg-amber-500/10'
+                : 'border-neutral-700 bg-neutral-900/60'
+            }`}
           >
-            <div className="font-semibold text-neutral-200 truncate">{exp.name}</div>
-            <div className="text-[10px] font-mono text-neutral-400 truncate">
-              {SOLVER_GOAL_META[exp.goal]?.short ?? exp.goal} · {exp.feasible}/{exp.tested} valid · {exp.elapsed_s.toFixed(0)}s
-            </div>
-            {exp.note && <div className="text-[10px] text-neutral-500 truncate">{exp.note}</div>}
-          </button>
-          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() => onOpen(exp.id)}
-              title="Inspect experiment"
-              className="rounded border border-neutral-700 p-1 text-neutral-300 hover:border-amber-500/60 hover:text-amber-300"
+              className="min-w-0 flex-1 text-left hover:text-amber-200"
             >
-              <Eye className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-semibold text-neutral-200 truncate">{exp.name}</span>
+                {statusBadge && (
+                  <span className={`shrink-0 rounded-full border px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wide ${statusBadge.cls}`}>
+                    {statusBadge.label}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] font-mono text-neutral-400 truncate">
+                {SOLVER_GOAL_META[exp.goal]?.short ?? exp.goal} · {exp.feasible}/{exp.tested} valid · {exp.elapsed_s.toFixed(0)}s
+              </div>
+              {exp.note && <div className="text-[10px] text-neutral-500 truncate">{exp.note}</div>}
             </button>
-            <button
-              type="button"
-              onClick={() => onDelete(exp.id)}
-              title="Delete experiment"
-              className="rounded border border-neutral-700 p-1 text-neutral-400 hover:border-red-500/60 hover:text-red-300"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => onOpen(exp.id)}
+                title={isRunning ? 'Watch live session' : 'Inspect experiment'}
+                className="rounded border border-neutral-700 p-1 text-neutral-300 hover:border-amber-500/60 hover:text-amber-300"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
+              {!isRunning && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(exp.id)}
+                  title="Delete experiment"
+                  className="rounded border border-neutral-700 p-1 text-neutral-400 hover:border-red-500/60 hover:text-red-300"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1647,7 +1718,7 @@ export function ResultsAccordion({
           highlight={result ? !result.plastic_ok : false}
         />
         <StatRow label="Shell clearance" value={mm(result?.shell_clearance_mm)} highlight={result ? !result.shell_ok : false} />
-        <StatRow label="Tube clearance (L/R)" value={mm(result?.tube_clearance_mm)} highlight={result?.tube_ok === false} />
+        <StatRow label="Tube clearance" value={mm(result?.tube_clearance_mm)} highlight={result?.tube_ok === false} />
         {result?.crossing_ok === false && (
           <StatRow label="Member crossing" value="Crossing detected" highlight={true} />
         )}

@@ -21,30 +21,60 @@ const VIOLET = '#a78bfa';
 const TOOLTIP_STYLE = { backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' };
 const MARGIN = { top: 6, right: 16, bottom: 18, left: 16 };
 
-/** Same floor as LinkageExplorer so a 210 px grid row always renders the chart cleanly. */
-function FitChart({ children }: { children: ReactElement }) {
-  return <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={158}>{children}</ResponsiveContainer>;
+export type CompliantPlotKind = 'stress' | 'flow' | 'chamber' | 'gap' | 'force' | 'torque';
+
+export interface CompliantPlotTabMeta {
+  kind: CompliantPlotKind;
+  shortLabel: string;
+  title: (params: CompliantParams, result: CompliantResult | null) => string;
 }
 
-export function CompliantCharts({
-  params,
-  result,
-  constraints,
-  yPose,
-  chartSettings,
-  chartScales,
-  onChartSettingsChange,
-  onChartScalesChange,
-}: {
-  params: CompliantParams;
-  result: CompliantResult | null;
-  constraints?: SolverConstraints;
-  yPose: number;
-  chartSettings: CompliantChartSettings;
-  chartScales: ChartScaleSettings;
-  onChartSettingsChange: (key: CompliantChartKey, next: ChartDomainSettings) => void;
-  onChartScalesChange: (patch: Partial<ChartScaleSettings>) => void;
-}) {
+function formatChamberRiseLabel(result: CompliantResult | null): string {
+  const parts: string[] = [];
+  if (result?.chamber_t50_ms != null || result?.chamber_t90_ms != null) {
+    parts.push(
+      `t50 ${result?.chamber_t50_ms != null ? `${result.chamber_t50_ms.toFixed(0)} ms` : '—'} / t90 ${result?.chamber_t90_ms != null ? `${result.chamber_t90_ms.toFixed(0)} ms` : '—'}`,
+    );
+  }
+  if (result?.chamber_t100_ms != null) {
+    parts.push(`t100 ${result.chamber_t100_ms.toFixed(0)} ms`);
+  }
+  if (result?.chamber_cycle_freq_hz != null && result?.chamber_bandwidth_hz != null) {
+    parts.push(`f ${result.chamber_cycle_freq_hz.toFixed(2)} Hz · BW ${result.chamber_bandwidth_hz.toFixed(2)} Hz`);
+  }
+  return parts.length > 0 ? ` · ${parts.join(' · ')}` : '';
+}
+
+export const COMPLIANT_PLOT_TABS: CompliantPlotTabMeta[] = [
+  { kind: 'stress', shortLabel: 'Stress', title: () => 'Worst stress in the part vs carriage Y' },
+  { kind: 'flow', shortLabel: 'Flow', title: () => 'Static flow vs carriage Y' },
+  {
+    kind: 'chamber',
+    shortLabel: 'Chamber',
+    title: (params, result) =>
+      `Chamber (${params.chamber_volume_ml} mL): inflation & deflation${formatChamberRiseLabel(result)}`,
+  },
+  { kind: 'gap', shortLabel: 'Gap', title: () => 'Pinch gap vs carriage Y' },
+  { kind: 'force', shortLabel: 'Force', title: () => 'Pinch force vs carriage Y' },
+  { kind: 'torque', shortLabel: 'Torque', title: () => 'Motor torque vs carriage Y' },
+];
+
+/** Same floor as LinkageExplorer so a 210 px grid row always renders the chart cleanly. */
+function FitChart({ children, minHeight = 158 }: { children: ReactElement; minHeight?: number }) {
+  return <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={minHeight}>{children}</ResponsiveContainer>;
+}
+
+function useCompliantChartDatasets(
+  params: CompliantParams,
+  result: CompliantResult | null,
+  constraints?: SolverConstraints,
+) {
+  const stroke = params.stroke;
+  const motorLimited = constraints?.motor_limited_stress ?? true;
+  const stallY = motorLimited && result?.stall_y_mm != null && Number.isFinite(result.stall_y_mm)
+    ? result.stall_y_mm
+    : null;
+
   const chartData = useMemo(() => {
     const ys = result?.Y_positions ?? [];
     return ys.map((y, i) => ({
@@ -61,12 +91,6 @@ export function CompliantCharts({
       stressB: result?.stress_b?.[i] ?? null,
     }));
   }, [result]);
-
-  const stroke = params.stroke;
-  const motorLimited = constraints?.motor_limited_stress ?? true;
-  const stallY = motorLimited && result?.stall_y_mm != null && Number.isFinite(result.stall_y_mm)
-    ? result.stall_y_mm
-    : null;
 
   const forceData = useMemo(() => {
     const ys = result?.overtravel_y && result.overtravel_y.length > 0
@@ -211,10 +235,41 @@ export function CompliantCharts({
     }));
   }, [result]);
 
-  const xAxisY = (c: ChartDomainSettings) => {
+  return { stroke, stallY, chartData, forceData, torqueData, flowData, stressData, cycleData };
+}
+
+type ChartDatasets = ReturnType<typeof useCompliantChartDatasets>;
+
+function renderCompliantPlot({
+  kind,
+  params,
+  result,
+  constraints,
+  datasets,
+  settings: c,
+  chartScales,
+  yPose,
+  minHeight = 158,
+}: {
+  kind: CompliantPlotKind;
+  params: CompliantParams;
+  result: CompliantResult | null;
+  constraints?: SolverConstraints;
+  datasets: ChartDatasets;
+  settings: ChartDomainSettings;
+  chartScales?: ChartScaleSettings;
+  yPose?: number | null;
+  minHeight?: number;
+}) {
+  const { stroke, stallY, chartData, forceData, torqueData, flowData, stressData, cycleData } = datasets;
+
+  const useSharedX = Boolean(c.autoX && chartScales?.lockX && chartScales.xRangeMm > 0);
+  const xOverflow = !c.autoX || useSharedX ? 'discard' : 'extendDomain';
+  const yOverflow = c.autoY ? 'extendDomain' : 'discard';
+
+  const xAxisY = () => {
     // Per-card manual X overrides shared X scale; otherwise shared lockX keeps all charts aligned.
-    const useSharedX = c.autoX && chartScales.lockX && chartScales.xRangeMm > 0;
-    const domain = useSharedX
+    const domain = useSharedX && chartScales
       ? ([-chartScales.xRangeMm, chartScales.xRangeMm] as [number, number])
       : chartDomain(c, 'x', ['dataMin', 'dataMax']);
     return (
@@ -244,6 +299,7 @@ export function CompliantCharts({
         stroke="#10b981"
         strokeDasharray="4 3"
         strokeOpacity={0.65}
+        ifOverflow={xOverflow}
         label={{ value: `+${stroke.toFixed(2)}`, fill: '#10b981', fontSize: 10, position: 'insideTopRight' }}
       />
       <ReferenceLine
@@ -251,10 +307,472 @@ export function CompliantCharts({
         stroke="#10b981"
         strokeDasharray="4 3"
         strokeOpacity={0.65}
+        ifOverflow={xOverflow}
         label={{ value: `-${stroke.toFixed(2)}`, fill: '#10b981', fontSize: 10, position: 'insideTopLeft' }}
       />
     </>
   );
+
+  const flowYDomain = () => {
+    if (!c.autoY) return chartDomain(c, 'y');
+    if (chartScales?.lockFlowY && chartScales.flowYMax > 0) return [0, chartScales.flowYMax] as [number, number];
+    return ['auto', 'auto'] as [string, string];
+  };
+
+  if (kind === 'flow') {
+    return (
+      <FitChart minHeight={minHeight}>
+        <LineChart data={flowData} margin={MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          {xAxisY()}
+          <YAxis
+            type="number"
+            stroke="#888"
+            domain={flowYDomain()}
+            allowDataOverflow={!c.autoY || Boolean(chartScales?.lockFlowY)}
+            tickFormatter={(v) => Number(v).toFixed(0)}
+            label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+          />
+          {safeStrokeMarkers()}
+          {stallY != null && stallY < stroke - 1e-4 && (
+            <>
+              <ReferenceLine
+                x={stallY}
+                stroke={VIOLET}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+                label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+              />
+              <ReferenceLine
+                x={-stallY}
+                stroke={VIOLET}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+              />
+              {result?.max_flow_l_min != null && (
+                <ReferenceLine
+                  y={result.max_flow_l_min}
+                  stroke={VIOLET}
+                  strokeDasharray="4 3"
+                  label={{
+                    value: `max @ stall (${result.max_flow_l_min.toFixed(1)} L/min)`,
+                    fill: VIOLET,
+                    fontSize: 10,
+                    position: 'insideTopRight',
+                  }}
+                />
+              )}
+            </>
+          )}
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(v) => `${Number(v).toFixed(3)} L/min`}
+            labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
+          />
+          <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+          <Line type="linear" dataKey="flowAReach" name="Tube A (supply)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+          <Line type="linear" dataKey="flowBReach" name="Tube B (exhaust)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+          {stallY != null && stallY < stroke - 1e-4 && (
+            <>
+              <Line
+                type="linear"
+                dataKey="flowAOver"
+                name="Tube A (beyond stall)"
+                legendType="none"
+                stroke={ORANGE}
+                strokeOpacity={0.32}
+                strokeWidth={2}
+                strokeDasharray="4 4"
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="linear"
+                dataKey="flowBOver"
+                name="Tube B (beyond stall)"
+                legendType="none"
+                stroke={CYAN}
+                strokeOpacity={0.32}
+                strokeWidth={2}
+                strokeDasharray="4 4"
+                dot={false}
+                isAnimationActive={false}
+              />
+            </>
+          )}
+          {yPose != null && <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
+        </LineChart>
+      </FitChart>
+    );
+  }
+
+  if (kind === 'chamber') {
+    return (
+      <FitChart minHeight={minHeight}>
+        <LineChart data={cycleData} margin={MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          <XAxis
+            dataKey="t"
+            type="number"
+            domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
+            allowDataOverflow={!c.autoX}
+            stroke="#888"
+            label={{
+              value: `Time (s) · ±${stroke.toFixed(2)} mm stroke`,
+              position: 'bottom',
+              fill: '#888',
+              offset: 0,
+            }}
+            tickFormatter={(v) => Number(v).toFixed(1)}
+          />
+          <YAxis
+            yAxisId="q"
+            type="number"
+            stroke="#888"
+            domain={chartDomain(c, 'y')}
+            allowDataOverflow={!c.autoY}
+            tickFormatter={(v) => Number(v).toFixed(1)}
+            label={{ value: 'Free air (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+          />
+          <YAxis
+            yAxisId="p"
+            orientation="right"
+            type="number"
+            stroke={VIOLET}
+            domain={[0, Math.max(params.input_pressure_kpa, 10)]}
+            tickFormatter={(v) => Number(v).toFixed(0)}
+            label={{ value: 'Chamber (kPa g)', angle: 90, position: 'insideRight', fill: VIOLET, offset: 10 }}
+          />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(v, name) => (name === 'Chamber pressure' ? `${Number(v).toFixed(1)} kPa` : `${Number(v).toFixed(3)} L/min`)}
+            labelFormatter={(l) => `t: ${Number(l).toFixed(2)} s`}
+          />
+          <Legend verticalAlign="top" align="right" height={28} iconSize={9} wrapperStyle={{ fontSize: 10, lineHeight: '13px' }} />
+          <Line yAxisId="q" type="linear" dataKey="flowIn" name="Inflate (tube A)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+          <Line yAxisId="q" type="linear" dataKey="flowOut" name="Deflate (tube B)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+          <Line yAxisId="p" type="linear" dataKey="kpa" name="Chamber pressure" stroke={VIOLET} strokeWidth={2} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </FitChart>
+    );
+  }
+
+  if (kind === 'gap') {
+    return (
+      <FitChart minHeight={minHeight}>
+        <LineChart data={chartData} margin={MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          {xAxisY()}
+          <YAxis
+            type="number"
+            stroke="#888"
+            domain={chartDomain(c, 'y', ['auto', 'auto'])}
+            allowDataOverflow={!c.autoY}
+            tickFormatter={(v) => Number(v).toFixed(1)}
+            label={{ value: 'Foot to wall (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+          />
+          {safeStrokeMarkers()}
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(v) => `${Number(v).toFixed(3)} mm`}
+            labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
+          />
+          {result?.closed_gap != null && (
+            <ReferenceLine y={result.closed_gap} stroke="#ef4444" strokeDasharray="3 3"
+              label={{ value: 'closed', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />
+          )}
+          {result?.full_open_gap != null && (
+            <ReferenceLine y={result.full_open_gap} stroke="#10b981" strokeDasharray="3 3"
+              label={{ value: 'full bore', fill: '#10b981', fontSize: 11, position: 'insideTopRight' }} />
+          )}
+          <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+          <Line type="linear" dataKey="rigidA" name="Tube A, rigid" stroke={ORANGE} strokeOpacity={0.6} strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
+          <Line type="linear" dataKey="gapA" name="Tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+          <Line type="linear" dataKey="gapB" name="Tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+          {yPose != null && <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
+        </LineChart>
+      </FitChart>
+    );
+  }
+
+  if (kind === 'force') {
+    return (
+      <FitChart minHeight={minHeight}>
+        <LineChart data={forceData} margin={MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          {xAxisY()}
+          <YAxis
+            type="number"
+            stroke="#888"
+            scale="log"
+            domain={c.autoY ? [0.1, 'auto'] : [Math.max(c.yMin, 1e-3), c.yMax]}
+            allowDataOverflow
+            tickFormatter={(v) => String(Number(v))}
+            label={{ value: 'Force (N)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+          />
+          {safeStrokeMarkers()}
+          {result?.thrust_available_n != null && result.thrust_available_n > 0.1 && (
+            <ReferenceLine
+              y={result.thrust_available_n}
+              stroke="#ef4444"
+              strokeDasharray="4 3"
+              label={{
+                value: `motor (${result.thrust_available_n.toFixed(0)} N)`,
+                fill: '#ef4444',
+                fontSize: 10,
+                position: 'insideTopRight',
+              }}
+            />
+          )}
+          {stallY != null && (
+            <>
+              <ReferenceLine
+                x={stallY}
+                stroke={VIOLET}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+                ifOverflow={xOverflow}
+                label={{ value: 'stall', fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+              />
+              <ReferenceLine
+                x={-stallY}
+                stroke={VIOLET}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+                ifOverflow={xOverflow}
+                label={{ value: 'stall', fill: VIOLET, fontSize: 10, position: 'insideBottomLeft' }}
+              />
+            </>
+          )}
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(v) => `${Number(v).toFixed(2)} N`}
+            labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
+          />
+          <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+          <Line type="linear" dataKey="forceA" name="Foot on tube A" stroke={ORANGE} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+          <Line type="linear" dataKey="forceB" name="Foot on tube B" stroke={CYAN} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+          <Line type="linear" dataKey="thrust" name="Screw thrust" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+          {yPose != null && <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
+        </LineChart>
+      </FitChart>
+    );
+  }
+
+  if (kind === 'torque') {
+    return (
+      <FitChart minHeight={minHeight}>
+        <LineChart data={torqueData} margin={MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+          {xAxisY()}
+          <YAxis
+            type="number"
+            stroke="#888"
+            domain={chartDomain(c, 'y')}
+            allowDataOverflow={!c.autoY}
+            tickFormatter={(v) => Number(v).toFixed(1)}
+            label={{ value: 'Torque (mN·m)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+          />
+          {safeStrokeMarkers()}
+          {params.motor_torque_mnm > 0 && (
+            <ReferenceLine
+              y={params.motor_torque_mnm}
+              stroke="#ef4444"
+              strokeDasharray="4 3"
+              ifOverflow={yOverflow}
+              label={{
+                value: `max torque (${params.motor_torque_mnm.toFixed(1)} mN·m)`,
+                fill: '#ef4444',
+                fontSize: 10,
+                position: 'insideTopRight',
+              }}
+            />
+          )}
+          {stallY != null && (
+            <>
+              <ReferenceLine
+                x={stallY}
+                stroke={VIOLET}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+                ifOverflow={xOverflow}
+                label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+              />
+              <ReferenceLine
+                x={-stallY}
+                stroke={VIOLET}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+                ifOverflow={xOverflow}
+              />
+            </>
+          )}
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(v) => `${Number(v).toFixed(2)} mN·m`}
+            labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
+          />
+          <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+          <Line type="linear" dataKey="torque" name="Motor torque (A + B)" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+          {yPose != null && <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
+        </LineChart>
+      </FitChart>
+    );
+  }
+
+  // kind === 'stress'
+  return (
+    <FitChart minHeight={minHeight}>
+      <LineChart data={stressData} margin={MARGIN}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+        {xAxisY()}
+        <YAxis
+          type="number"
+          stroke="#888"
+          domain={chartDomain(c, 'y')}
+          allowDataOverflow={!c.autoY}
+          tickFormatter={(v) => Number(v).toFixed(0)}
+          label={{ value: 'Stress (MPa)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
+        />
+        {safeStrokeMarkers()}
+        {stallY != null && (
+          <>
+            <ReferenceLine
+              x={stallY}
+              stroke={VIOLET}
+              strokeDasharray="3 3"
+              strokeOpacity={0.8}
+              ifOverflow={xOverflow}
+              label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
+            />
+            <ReferenceLine
+              x={-stallY}
+              stroke={VIOLET}
+              strokeDasharray="3 3"
+              strokeOpacity={0.8}
+              ifOverflow={xOverflow}
+            />
+          </>
+        )}
+        <Tooltip
+          contentStyle={TOOLTIP_STYLE}
+          formatter={(v) => `${Number(v).toFixed(1)} MPa`}
+          labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
+        />
+        <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+        <ReferenceLine
+          y={params.member_strength_mpa}
+          stroke="#ef4444"
+          strokeDasharray="3 3"
+          ifOverflow={yOverflow}
+          label={{ value: 'strength', fill: '#ef4444', fontSize: 11, position: 'insideTopRight' }}
+        />
+        {(constraints?.stress_limit_factor ?? 1) < 0.999 && (
+          <ReferenceLine
+            y={allowableStressMpa(params.member_strength_mpa, constraints)}
+            stroke="#f59e0b"
+            strokeDasharray="4 2"
+            ifOverflow={yOverflow}
+            label={{
+              value: `limit (${Math.round((constraints?.stress_limit_factor ?? 1) * 100)}%)`,
+              fill: '#f59e0b',
+              fontSize: 10,
+              position: 'insideBottomRight',
+            }}
+          />
+        )}
+        <Line type="linear" dataKey="stressAReach" name="Part on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
+        <Line type="linear" dataKey="stressBReach" name="Part on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
+        {stallY != null && (
+          <>
+            <Line
+              type="linear"
+              dataKey="stressAOver"
+              name="Part A (beyond stall)"
+              legendType="none"
+              stroke={ORANGE}
+              strokeOpacity={0.35}
+              strokeWidth={2}
+              strokeDasharray="4 4"
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="linear"
+              dataKey="stressBOver"
+              name="Part B (beyond stall)"
+              legendType="none"
+              stroke={CYAN}
+              strokeOpacity={0.35}
+              strokeWidth={2}
+              strokeDasharray="4 4"
+              dot={false}
+              isAnimationActive={false}
+            />
+          </>
+        )}
+        {yPose != null && <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />}
+      </LineChart>
+    </FitChart>
+  );
+}
+
+/** Standalone single-chart renderer reusing the exact Explorer chart visuals. */
+export function CompliantSingleChart({
+  kind,
+  params,
+  result,
+  constraints,
+  yPose = null,
+  settings,
+  chartScales,
+  minHeight = 240,
+}: {
+  kind: CompliantPlotKind;
+  params: CompliantParams;
+  result: CompliantResult | null;
+  constraints?: SolverConstraints;
+  yPose?: number | null;
+  settings?: ChartDomainSettings;
+  chartScales?: ChartScaleSettings;
+  minHeight?: number;
+}) {
+  const datasets = useCompliantChartDatasets(params, result, constraints);
+  const resolvedSettings = settings ?? DEFAULT_CHART_SETTINGS[kind];
+  return renderCompliantPlot({
+    kind,
+    params,
+    result,
+    constraints,
+    datasets,
+    settings: resolvedSettings,
+    chartScales,
+    yPose,
+    minHeight,
+  });
+}
+
+export function CompliantCharts({
+  params,
+  result,
+  constraints,
+  yPose,
+  chartSettings,
+  chartScales,
+  onChartSettingsChange,
+  onChartScalesChange,
+}: {
+  params: CompliantParams;
+  result: CompliantResult | null;
+  constraints?: SolverConstraints;
+  yPose: number;
+  chartSettings: CompliantChartSettings;
+  chartScales: ChartScaleSettings;
+  onChartSettingsChange: (key: CompliantChartKey, next: ChartDomainSettings) => void;
+  onChartScalesChange: (patch: Partial<ChartScaleSettings>) => void;
+}) {
+  const datasets = useCompliantChartDatasets(params, result, constraints);
+  const { stroke } = datasets;
 
   const cardProps = (key: CompliantChartKey) => ({
     settings: chartSettings[key],
@@ -266,27 +784,7 @@ export function CompliantCharts({
     ? interpNullable(yPose, result.Y_positions, result.gap_a)
     : null;
 
-  const flowYDomain = (c: ChartDomainSettings) => {
-    if (!c.autoY) return chartDomain(c, 'y');
-    if (chartScales.lockFlowY && chartScales.flowYMax > 0) return [0, chartScales.flowYMax] as [number, number];
-    return ['auto', 'auto'] as [string, string];
-  };
-
-  const riseLabel = (() => {
-    const parts: string[] = [];
-    if (result?.chamber_t50_ms != null || result?.chamber_t90_ms != null) {
-      parts.push(
-        `t50 ${result?.chamber_t50_ms != null ? `${result.chamber_t50_ms.toFixed(0)} ms` : '—'} / t90 ${result?.chamber_t90_ms != null ? `${result.chamber_t90_ms.toFixed(0)} ms` : '—'}`,
-      );
-    }
-    if (result?.chamber_t100_ms != null) {
-      parts.push(`t100 ${result.chamber_t100_ms.toFixed(0)} ms`);
-    }
-    if (result?.chamber_cycle_freq_hz != null && result?.chamber_bandwidth_hz != null) {
-      parts.push(`f ${result.chamber_cycle_freq_hz.toFixed(2)} Hz · BW ${result.chamber_bandwidth_hz.toFixed(2)} Hz`);
-    }
-    return parts.length > 0 ? ` · ${parts.join(' · ')}` : '';
-  })();
+  const riseLabel = formatChamberRiseLabel(result);
 
   return (
     <div data-pane="charts" className="lg:col-span-5 min-w-0 flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">
@@ -361,90 +859,7 @@ export function CompliantCharts({
 
       <div className="grid auto-rows-[minmax(210px,1fr)] gap-4">
         <ChartCard title="Static flow vs carriage Y" {...cardProps('flow')}>
-          {({ settings: c }) => (
-            <FitChart>
-              <LineChart data={flowData} margin={MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                {xAxisY(c)}
-                <YAxis
-                  type="number"
-                  stroke="#888"
-                  domain={flowYDomain(c)}
-                  allowDataOverflow={!c.autoY || chartScales.lockFlowY}
-                  tickFormatter={(v) => Number(v).toFixed(0)}
-                  label={{ value: 'Flow (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                />
-                {safeStrokeMarkers()}
-                {stallY != null && stallY < stroke - 1e-4 && (
-                  <>
-                    <ReferenceLine
-                      x={stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                      label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
-                    />
-                    <ReferenceLine
-                      x={-stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                    />
-                    {result?.max_flow_l_min != null && (
-                      <ReferenceLine
-                        y={result.max_flow_l_min}
-                        stroke={VIOLET}
-                        strokeDasharray="4 3"
-                        label={{
-                          value: `max @ stall (${result.max_flow_l_min.toFixed(1)} L/min)`,
-                          fill: VIOLET,
-                          fontSize: 10,
-                          position: 'insideTopRight',
-                        }}
-                      />
-                    )}
-                  </>
-                )}
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(v) => `${Number(v).toFixed(3)} L/min`}
-                  labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
-                />
-                <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="linear" dataKey="flowAReach" name="Tube A (supply)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="flowBReach" name="Tube B (exhaust)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
-                {stallY != null && stallY < stroke - 1e-4 && (
-                  <>
-                    <Line
-                      type="linear"
-                      dataKey="flowAOver"
-                      name="Tube A (beyond stall)"
-                      legendType="none"
-                      stroke={ORANGE}
-                      strokeOpacity={0.32}
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      type="linear"
-                      dataKey="flowBOver"
-                      name="Tube B (beyond stall)"
-                      legendType="none"
-                      stroke={CYAN}
-                      strokeOpacity={0.32}
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </>
-                )}
-                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
-              </LineChart>
-            </FitChart>
-          )}
+          {({ settings: c }) => renderCompliantPlot({ kind: 'flow', params, result, constraints, datasets, settings: c, chartScales, yPose })}
         </ChartCard>
 
         {params.chamber_volume_ml > 0 && (
@@ -452,93 +867,12 @@ export function CompliantCharts({
             title={`Chamber (${params.chamber_volume_ml} mL): inflation & deflation${riseLabel}`}
             {...cardProps('chamber')}
           >
-            {({ settings: c }) => (
-              <FitChart>
-                <LineChart data={cycleData} margin={MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                  <XAxis
-                    dataKey="t"
-                    type="number"
-                    domain={chartDomain(c, 'x', ['dataMin', 'dataMax'])}
-                    allowDataOverflow={!c.autoX}
-                    stroke="#888"
-                    label={{
-                      value: `Time (s) · ±${stroke.toFixed(2)} mm stroke`,
-                      position: 'bottom',
-                      fill: '#888',
-                      offset: 0,
-                    }}
-                    tickFormatter={(v) => Number(v).toFixed(1)}
-                  />
-                  <YAxis
-                    yAxisId="q"
-                    type="number"
-                    stroke="#888"
-                    domain={chartDomain(c, 'y')}
-                    allowDataOverflow={!c.autoY}
-                    tickFormatter={(v) => Number(v).toFixed(1)}
-                    label={{ value: 'Free air (L/min)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                  />
-                  <YAxis
-                    yAxisId="p"
-                    orientation="right"
-                    type="number"
-                    stroke={VIOLET}
-                    domain={[0, Math.max(params.input_pressure_kpa, 10)]}
-                    tickFormatter={(v) => Number(v).toFixed(0)}
-                    label={{ value: 'Chamber (kPa g)', angle: 90, position: 'insideRight', fill: VIOLET, offset: 10 }}
-                  />
-                  <Tooltip
-                    contentStyle={TOOLTIP_STYLE}
-                    formatter={(v, name) => (name === 'Chamber pressure' ? `${Number(v).toFixed(1)} kPa` : `${Number(v).toFixed(3)} L/min`)}
-                    labelFormatter={(l) => `t: ${Number(l).toFixed(2)} s`}
-                  />
-                  <Legend verticalAlign="top" align="right" height={28} iconSize={9} wrapperStyle={{ fontSize: 10, lineHeight: '13px' }} />
-                  <Line yAxisId="q" type="linear" dataKey="flowIn" name="Inflate (tube A)" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                  <Line yAxisId="q" type="linear" dataKey="flowOut" name="Deflate (tube B)" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
-                  <Line yAxisId="p" type="linear" dataKey="kpa" name="Chamber pressure" stroke={VIOLET} strokeWidth={2} dot={false} isAnimationActive={false} />
-                </LineChart>
-              </FitChart>
-            )}
+            {({ settings: c }) => renderCompliantPlot({ kind: 'chamber', params, result, constraints, datasets, settings: c, chartScales, yPose })}
           </ChartCard>
         )}
 
         <ChartCard title="Pinch gap vs carriage Y" {...cardProps('gap')}>
-          {({ settings: c }) => (
-            <FitChart>
-              <LineChart data={chartData} margin={MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                {xAxisY(c)}
-                <YAxis
-                  type="number"
-                  stroke="#888"
-                  domain={chartDomain(c, 'y', ['auto', 'auto'])}
-                  allowDataOverflow={!c.autoY}
-                  tickFormatter={(v) => Number(v).toFixed(1)}
-                  label={{ value: 'Foot to wall (mm)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                />
-                {safeStrokeMarkers()}
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(v) => `${Number(v).toFixed(3)} mm`}
-                  labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
-                />
-                {result?.closed_gap != null && (
-                  <ReferenceLine y={result.closed_gap} stroke="#ef4444" strokeDasharray="3 3"
-                    label={{ value: 'closed', fill: '#ef4444', fontSize: 11, position: 'insideBottomRight' }} />
-                )}
-                {result?.full_open_gap != null && (
-                  <ReferenceLine y={result.full_open_gap} stroke="#10b981" strokeDasharray="3 3"
-                    label={{ value: 'full bore', fill: '#10b981', fontSize: 11, position: 'insideTopRight' }} />
-                )}
-                <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="linear" dataKey="rigidA" name="Tube A, rigid" stroke={ORANGE} strokeOpacity={0.6} strokeWidth={1.5} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="gapA" name="Tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="gapB" name="Tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
-              </LineChart>
-            </FitChart>
-          )}
+          {({ settings: c }) => renderCompliantPlot({ kind: 'gap', params, result, constraints, datasets, settings: c, chartScales, yPose })}
         </ChartCard>
 
         <TubeSectionCard
@@ -549,216 +883,15 @@ export function CompliantCharts({
         />
 
         <ChartCard title="Pinch force vs carriage Y" {...cardProps('force')}>
-          {({ settings: c }) => (
-            <FitChart>
-              <LineChart data={forceData} margin={MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                {xAxisY(c)}
-                <YAxis
-                  type="number"
-                  stroke="#888"
-                  scale="log"
-                  domain={c.autoY ? [0.1, 'auto'] : [Math.max(c.yMin, 1e-3), c.yMax]}
-                  allowDataOverflow
-                  tickFormatter={(v) => String(Number(v))}
-                  label={{ value: 'Force (N)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                />
-                {safeStrokeMarkers()}
-                {result?.thrust_available_n != null && result.thrust_available_n > 0.1 && (
-                  <ReferenceLine
-                    y={result.thrust_available_n}
-                    stroke="#ef4444"
-                    strokeDasharray="4 3"
-                    label={{
-                      value: `motor (${result.thrust_available_n.toFixed(0)} N)`,
-                      fill: '#ef4444',
-                      fontSize: 10,
-                      position: 'insideTopRight',
-                    }}
-                  />
-                )}
-                {stallY != null && (
-                  <>
-                    <ReferenceLine
-                      x={stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                      label={{ value: `stall`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
-                    />
-                    <ReferenceLine
-                      x={-stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                      label={{ value: `stall`, fill: VIOLET, fontSize: 10, position: 'insideBottomLeft' }}
-                    />
-                  </>
-                )}
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(v) => `${Number(v).toFixed(2)} N`}
-                  labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
-                />
-                <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="linear" dataKey="forceA" name="Foot on tube A" stroke={ORANGE} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="forceB" name="Foot on tube B" stroke={CYAN} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="thrust" name="Screw thrust" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
-              </LineChart>
-            </FitChart>
-          )}
+          {({ settings: c }) => renderCompliantPlot({ kind: 'force', params, result, constraints, datasets, settings: c, chartScales, yPose })}
         </ChartCard>
 
         <ChartCard title="Motor torque vs carriage Y" {...cardProps('torque')}>
-          {({ settings: c }) => (
-            <FitChart>
-              <LineChart data={torqueData} margin={MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                {xAxisY(c)}
-                <YAxis
-                  type="number"
-                  stroke="#888"
-                  domain={chartDomain(c, 'y')}
-                  allowDataOverflow={!c.autoY}
-                  tickFormatter={(v) => Number(v).toFixed(1)}
-                  label={{ value: 'Torque (mN·m)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                />
-                {safeStrokeMarkers()}
-                {params.motor_torque_mnm > 0 && (
-                  <ReferenceLine
-                    y={params.motor_torque_mnm}
-                    stroke="#ef4444"
-                    strokeDasharray="4 3"
-                    label={{
-                      value: `max torque (${params.motor_torque_mnm.toFixed(1)} mN·m)`,
-                      fill: '#ef4444',
-                      fontSize: 10,
-                      position: 'insideTopRight',
-                    }}
-                  />
-                )}
-                {stallY != null && (
-                  <>
-                    <ReferenceLine
-                      x={stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                      label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
-                    />
-                    <ReferenceLine
-                      x={-stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                    />
-                  </>
-                )}
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(v) => `${Number(v).toFixed(2)} mN·m`}
-                  labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
-                />
-                <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <Line type="linear" dataKey="torque" name="Motor torque (A + B)" stroke={VIOLET} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
-              </LineChart>
-            </FitChart>
-          )}
+          {({ settings: c }) => renderCompliantPlot({ kind: 'torque', params, result, constraints, datasets, settings: c, chartScales, yPose })}
         </ChartCard>
 
         <ChartCard title="Worst stress in the part vs carriage Y" {...cardProps('stress')}>
-          {({ settings: c }) => (
-            <FitChart>
-              <LineChart data={stressData} margin={MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                {xAxisY(c)}
-                <YAxis
-                  type="number"
-                  stroke="#888"
-                  domain={chartDomain(c, 'y')}
-                  allowDataOverflow={!c.autoY}
-                  tickFormatter={(v) => Number(v).toFixed(0)}
-                  label={{ value: 'Stress (MPa)', angle: -90, position: 'insideLeft', fill: '#888', offset: 10 }}
-                />
-                {safeStrokeMarkers()}
-                {stallY != null && (
-                  <>
-                    <ReferenceLine
-                      x={stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                      label={{ value: `stall ±${stallY.toFixed(2)}`, fill: VIOLET, fontSize: 10, position: 'insideBottomRight' }}
-                    />
-                    <ReferenceLine
-                      x={-stallY}
-                      stroke={VIOLET}
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.8}
-                    />
-                  </>
-                )}
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(v) => `${Number(v).toFixed(1)} MPa`}
-                  labelFormatter={(l) => `Y: ${Number(l).toFixed(3)} mm`}
-                />
-                <Legend verticalAlign="top" align="right" height={20} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                <ReferenceLine
-                  y={params.member_strength_mpa}
-                  stroke="#ef4444"
-                  strokeDasharray="3 3"
-                  label={{ value: 'strength', fill: '#ef4444', fontSize: 11, position: 'insideTopRight' }}
-                />
-                {(constraints?.stress_limit_factor ?? 1) < 0.999 && (
-                  <ReferenceLine
-                    y={allowableStressMpa(params.member_strength_mpa, constraints)}
-                    stroke="#f59e0b"
-                    strokeDasharray="4 2"
-                    label={{
-                      value: `limit (${Math.round((constraints?.stress_limit_factor ?? 1) * 100)}%)`,
-                      fill: '#f59e0b',
-                      fontSize: 10,
-                      position: 'insideBottomRight',
-                    }}
-                  />
-                )}
-                <Line type="linear" dataKey="stressAReach" name="Part on tube A" stroke={ORANGE} strokeWidth={3} dot={false} isAnimationActive={false} />
-                <Line type="linear" dataKey="stressBReach" name="Part on tube B" stroke={CYAN} strokeWidth={3} dot={false} isAnimationActive={false} />
-                {stallY != null && (
-                  <>
-                    <Line
-                      type="linear"
-                      dataKey="stressAOver"
-                      name="Part A (beyond stall)"
-                      legendType="none"
-                      stroke={ORANGE}
-                      strokeOpacity={0.35}
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      type="linear"
-                      dataKey="stressBOver"
-                      name="Part B (beyond stall)"
-                      legendType="none"
-                      stroke={CYAN}
-                      strokeOpacity={0.35}
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </>
-                )}
-                <ReferenceLine x={yPose} stroke="var(--bui-text)" strokeDasharray="5 5" strokeWidth={2} />
-              </LineChart>
-            </FitChart>
-          )}
+          {({ settings: c }) => renderCompliantPlot({ kind: 'stress', params, result, constraints, datasets, settings: c, chartScales, yPose })}
         </ChartCard>
       </div>
     </div>

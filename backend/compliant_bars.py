@@ -33,6 +33,8 @@ N_SPAN = 13          # samples per spline, including both ends
 N_Y = 61
 N_Y_FAST = 21
 CLEARANCE_MIN = 0.05   # mm, closer than this counts as contact
+TUBE_CLEARANCE_MIN = 0.25   # mm, minimum clearance from any member (L, R, and Foot away from P) to Tube A/B
+PIVOT_ZONE_DIAMETER_MM = 2.0  # mm, circular exclusion zone diameter around the moving carriage pivot
 ANCHOR_EMBED = 2.0     # mm, L may cross the shell at the anchor
 RIGID = 40.0           # overlap spans: stiffness and section both scale, so stress stays honest
 EYE_FACTOR = 1.6       # R nodes this many pin-diameters from the pivot are the eye
@@ -194,7 +196,7 @@ class CompliantConstraints:
     pinch_floor_margin_mm: float = 0.0
     min_shell_clearance_mm: float = CLEARANCE_MIN
     min_pivot_clearance_mm: float = CLEARANCE_MIN
-    min_tube_clearance_mm: float = 0.0
+    min_tube_clearance_mm: float = TUBE_CLEARANCE_MIN
     max_y0_flex_mm: float = 0.0
     max_rotation_deg: float = 0.0
     min_buckling_margin: float = 0.0   # 0 = not checked
@@ -203,6 +205,7 @@ class CompliantConstraints:
     junction_exclude_y: Optional[Tuple[float, float]] = None
     target_pinch_from_top_mm: Optional[float] = None
     target_attack_angle_deg: float = 0.0
+    anchor_fixed: bool = False
     anchor_symmetric: bool = False
     motor_limited_stress: bool = True
     require_no_stall_in_stroke: bool = False
@@ -237,7 +240,7 @@ def _constraints_from_mapping(data: Optional[dict]) -> CompliantConstraints:
             lo, hi = float(pair[0]), float(pair[1])
             if hi > lo:
                 cleaned[k] = (lo, hi)
-    for k in ("anchor_symmetric", "motor_limited_stress", "require_no_stall_in_stroke"):
+    for k in ("anchor_fixed", "anchor_symmetric", "motor_limited_stress", "require_no_stall_in_stroke"):
         if k in data and data[k] is not None:
             cleaned[k] = bool(data[k])
     return CompliantConstraints(**cleaned)  # type: ignore[arg-type]
@@ -627,17 +630,56 @@ def _housing_clearance(xy, radius, wall_x, ceiling, exempt) -> float:
     return float(np.min(gap)) if gap.size else 0.0
 
 
-def _tube_clearance_lr(xy, radius, wall_x: float, tube_od: float, lr_mask: np.ndarray) -> float:
-    """Least horizontal gap from Member L/R material disks to Tube A (left) and Tube B (right)."""
-    if not np.any(lr_mask):
-        return 0.0
-    x_lr = xy[lr_mask, 0]
-    r_lr = radius[lr_mask]
+def _tube_clearance(
+    xy: np.ndarray,
+    radius: np.ndarray,
+    wall_x: float,
+    tube_od: float,
+    lr_mask: np.ndarray,
+    foot_mask: np.ndarray,
+    pinch_idx: int,
+    min_clearance: float,
+) -> float:
+    """Least clearance from all members (L, R, and Foot away from contact P) to Tube A (left) and Tube B (right)."""
     tube_inner_left = -wall_x + tube_od
     tube_inner_right = wall_x - tube_od
-    gap_left = (x_lr - r_lr) - tube_inner_left
-    gap_right = tube_inner_right - (x_lr + r_lr)
-    return float(np.min(np.minimum(gap_left, gap_right)))
+    best = float("inf")
+
+    if np.any(lr_mask):
+        x_lr = xy[lr_mask, 0]
+        r_lr = radius[lr_mask]
+        gap_left = (x_lr - r_lr) - tube_inner_left
+        gap_right = tube_inner_right - (x_lr + r_lr)
+        best = min(best, float(np.min(np.minimum(gap_left, gap_right))))
+
+    if np.any(foot_mask):
+        x_f = xy[foot_mask, 0]
+        y_f = xy[foot_mask, 1]
+        r_f = radius[foot_mask]
+        # Tube B (right): no part of the foot may interfere with the right tube.
+        gap_f_right = tube_inner_right - (x_f + r_f)
+        best = min(best, float(np.min(gap_f_right)))
+
+        # Tube A (left): check against the indented tube surface around contact point P,
+        # exempting only the foot contact tip directly behind P.
+        pinch_xy = xy[pinch_idx]
+        r_pin = float(radius[pinch_idx])
+        h_pin = max(0.04, float(pinch_xy[0] - r_pin) - (-wall_x))
+        if h_pin >= tube_od:
+            surf_x = np.full(len(y_f), tube_inner_left, dtype=float)
+        else:
+            depth = tube_od - h_pin
+            dy = np.maximum(0.0, np.abs(y_f - pinch_xy[1]) - r_pin)
+            t = np.clip(dy / max(tube_od, 1e-6), 0.0, 1.0)
+            surf_x = -wall_x + h_pin + depth * t * t * (3.0 - 2.0 * t)
+        dist_to_p = np.hypot(x_f - pinch_xy[0], y_f - pinch_xy[1])
+        tip_exempt_r = r_pin + max(float(min_clearance), TUBE_CLEARANCE_MIN)
+        exempt_tip = (dist_to_p <= tip_exempt_r) & (x_f >= float(pinch_xy[0]) - 1e-6)
+        gap_f_left = np.where(exempt_tip, np.inf, (x_f - r_f) - surf_x)
+        if np.any(np.isfinite(gap_f_left)):
+            best = min(best, float(np.min(gap_f_left)))
+
+    return 0.0 if not np.isfinite(best) else best
 
 
 def _chamber_crossing_ms(t_ms: np.ndarray, p_g: np.ndarray, target_kpa: float) -> Optional[float]:
@@ -715,10 +757,32 @@ def _fast_chamber_t100_ms(p: CompliantParams, tube: LinkageParams, y: np.ndarray
     return None
 
 
-def _pivot_clearance(xy, radius, pivot, pin_r, exempt) -> float:
-    dist = np.hypot(xy[:, 0] - pivot[0], xy[:, 1] - pivot[1]) - radius - pin_r
+def _pivot_clearance(
+    xy: np.ndarray,
+    radius: np.ndarray,
+    pivot: np.ndarray,
+    pivot_r: float,
+    exempt: np.ndarray,
+    seg_a: Optional[np.ndarray] = None,
+    seg_b: Optional[np.ndarray] = None,
+    seg_r: Optional[np.ndarray] = None,
+) -> float:
+    """Least clearance from non-eye nodes and segments to the circular pivot exclusion zone (radius pivot_r)."""
+    dist = np.hypot(xy[:, 0] - pivot[0], xy[:, 1] - pivot[1]) - radius - pivot_r
     dist = np.where(exempt, np.inf, dist)
-    return float(np.min(dist)) if dist.size else 0.0
+    best = float(np.min(dist)) if dist.size else float("inf")
+    if seg_a is not None and seg_b is not None and seg_r is not None and seg_a.size:
+        pa = xy[seg_a]
+        pb = xy[seg_b]
+        ab = pb - pa
+        ab_sq = ab[:, 0] * ab[:, 0] + ab[:, 1] * ab[:, 1]
+        ap = pivot[None, :] - pa
+        denom = np.where(ab_sq > 1e-12, ab_sq, 1.0)
+        t = np.where(ab_sq > 1e-12, np.clip((ap[:, 0] * ab[:, 0] + ap[:, 1] * ab[:, 1]) / denom, 0.0, 1.0), 0.0)
+        closest = pa + t[:, None] * ab
+        seg_dist = np.hypot(closest[:, 0] - pivot[0], closest[:, 1] - pivot[1]) - seg_r - pivot_r
+        best = min(best, float(np.min(seg_dist)))
+    return 0.0 if not np.isfinite(best) else best
 
 
 def _member_segment_pairs(member_indices: List[List[int]]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -1039,6 +1103,10 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     t_cummax = np.maximum.accumulate(tp_full)
     s_cummax = np.maximum.accumulate(sp_full)
 
+    dy_end = float(yp_full[-1] - yp_full[-2]) if yp_full.size >= 2 else 0.0
+    dt_dy = float(t_cummax[-1] - t_cummax[-2]) / dy_end if dy_end > 1e-12 else 0.0
+    ds_dy = float(s_cummax[-1] - s_cummax[-2]) / dy_end if dy_end > 1e-12 else 0.0
+
     yield_y_mm, yi, y_frac = _first_crossing(yp_full, s_cummax, allowable_stress)
     if yield_y_mm is not None and yi is not None:
         if yi == 0:
@@ -1046,6 +1114,12 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
         else:
             thrust_to_yield_n = float(t_cummax[yi - 1] + y_frac * (t_cummax[yi] - t_cummax[yi - 1]))
         torque_to_yield_mnm: Optional[float] = float(thrust_to_yield_n * k_raise) if k_raise > 0.0 else None
+    elif yp_full.size >= 2 and ds_dy > 1e-9:
+        # Linearly extrapolate beyond y_phys so soft members that yield before motor stall are still caught.
+        extra_y_yield = max(0.0, (allowable_stress - float(s_cummax[-1])) / ds_dy)
+        yield_y_mm = float(yp_full[-1] + extra_y_yield)
+        thrust_to_yield_n = float(t_cummax[-1] + max(0.0, dt_dy) * extra_y_yield)
+        torque_to_yield_mnm = float(thrust_to_yield_n * k_raise) if k_raise > 0.0 else None
     else:
         thrust_to_yield_n = None
         torque_to_yield_mnm = None
@@ -1057,6 +1131,10 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
                 max_stress_to_stall = float(s_cummax[0])
             else:
                 max_stress_to_stall = float(s_cummax[si - 1] + s_frac * (s_cummax[si] - s_cummax[si - 1]))
+        elif yp_full.size >= 2 and dt_dy > 1e-9:
+            extra_y_stall = max(0.0, (thrust_avail - float(t_cummax[-1])) / dt_dy)
+            stall_y_mm = float(yp_full[-1] + extra_y_stall)
+            max_stress_to_stall = float(s_cummax[-1] + max(0.0, ds_dy) * extra_y_stall)
         else:
             max_stress_to_stall = float(s_cummax[-1]) if s_cummax.size else 0.0
     else:
@@ -1096,7 +1174,12 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
 
     if motor_limit_active:
         max_stress = max_stress_to_stall
-        plastic_ok = bool(max_stress_to_stall <= allowable_stress + 1e-9)
+        plastic_ok = bool(
+            stall_y_mm is not None
+            and np.isfinite(max_stress_to_stall)
+            and max_stress_to_stall <= allowable_stress + 1e-9
+            and (yield_y_mm is None or stall_y_mm <= yield_y_mm + 1e-9)
+        )
     else:
         max_stress = max_stress_op
         plastic_ok = bool(max_stress_op <= allowable_stress + 1e-9)
@@ -1121,13 +1204,30 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     for i in range(len(samples["l"])):
         if float(np.hypot(*(samples["l"][i] - anchor))) <= ANCHOR_EMBED:
             exempt_anchor[node_of[("l", i)]] = True
+    ceiling = 2.0 * float(pivot[1])
+    pin_r = max(p.carriage_pin_diameter / 2.0, PIVOT_ZONE_DIAMETER_MM / 2.0)
     exempt_eye = np.zeros(n, dtype=bool)
-    eye = max(p.carriage_pin_diameter * EYE_FACTOR, thickness["r"])
-    for i in range(len(samples["r"])):
+    eye = max(pin_r + thickness["r"] / 2.0 + c.min_pivot_clearance_mm, p.carriage_pin_diameter * EYE_FACTOR)
+    for i in range(len(samples["r"]) - 1, 0, -1):
         if float(np.hypot(*(samples["r"][i] - pivot))) <= eye:
             exempt_eye[node_of[("r", i)]] = True
-    ceiling = 2.0 * float(pivot[1])
-    pin_r = p.carriage_pin_diameter / 2.0
+        else:
+            break
+    piv_seg_a_l, piv_seg_b_l, piv_seg_r_l = [], [], []
+    for name in ("l", "r", "f"):
+        r_mem = thickness[name] / 2.0
+        pts_m = samples[name]
+        for i in range(len(pts_m) - 1):
+            na = node_of[(name, i)]
+            nb = node_of[(name, i + 1)]
+            if name == "r" and (exempt_eye[na] or exempt_eye[nb]):
+                continue
+            piv_seg_a_l.append(na)
+            piv_seg_b_l.append(nb)
+            piv_seg_r_l.append(r_mem)
+    piv_seg_a = np.array(piv_seg_a_l, dtype=int)
+    piv_seg_b = np.array(piv_seg_b_l, dtype=int)
+    piv_seg_r = np.array(piv_seg_r_l, dtype=float)
 
     def pose(at_y, at_force):
         return xy + u_y[:, :2] * at_y + u_n[:, :2] * (at_force - f_y0)
@@ -1157,14 +1257,30 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
     for name in ("l", "r"):
         for i in range(len(samples[name])):
             lr_mask[node_of[(name, i)]] = True
-    tube_open = _tube_clearance_lr(pose_open, radius, wall_x, p.tube_od, lr_mask)
-    tube_rest = _tube_clearance_lr(pose_rest, radius, wall_x, p.tube_od, lr_mask)
-    tube_closed = _tube_clearance_lr(pose_closed, radius, wall_x, p.tube_od, lr_mask)
-    tube_clearance = min(tube_open, tube_rest, tube_closed)
-    tube_ok = bool(c.min_tube_clearance_mm <= 0.0 or tube_clearance >= c.min_tube_clearance_mm - 1e-9)
-    pivot_clear = min(
-        _pivot_clearance(pose(yy, ff), radius, np.array([pivot[0], pivot[1] + sign * yy]), pin_r, exempt_eye)
+    foot_mask = np.zeros(n, dtype=bool)
+    for i in range(1, len(samples["f"])):
+        foot_mask[node_of[("f", i)]] = True
+    pinch_idx = node_of[("f", len(samples["f"]) - 1)]
+    tube_poses = [pose_open, pose_rest, pose_closed] + [
+        pose(yy, ff)
         for yy, ff in zip(y_reach_grid[:: max(1, len(y_reach_grid) // 9)], force_reach[:: max(1, len(force_reach) // 9)])
+    ]
+    tube_clearance = min(
+        _tube_clearance(ps, radius, wall_x, p.tube_od, lr_mask, foot_mask, pinch_idx, c.min_tube_clearance_mm)
+        for ps in tube_poses
+    )
+    tube_ok = bool(tube_clearance >= c.min_tube_clearance_mm - 1e-9)
+    pivot_checks = [
+        (effective_stroke_mm, force_at_open),
+        (0.0, f_y0),
+        (-effective_stroke_mm, force_at_closed),
+    ] + list(zip(y_reach_grid[:: max(1, len(y_reach_grid) // 9)], force_reach[:: max(1, len(force_reach) // 9)]))
+    pivot_clear = min(
+        _pivot_clearance(
+            pose(yy, ff), radius, np.array([pivot[0], pivot[1] + sign * yy]), pin_r, exempt_eye,
+            piv_seg_a, piv_seg_b, piv_seg_r,
+        )
+        for yy, ff in pivot_checks
     )
     pivot_ok = bool(pivot_clear > c.min_pivot_clearance_mm)
     pinch_ceiling_margin = float(ceiling - p.pinch_y)
@@ -1295,6 +1411,11 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
                 "Part reaches %s at Y = ±%.2f mm (%.1f N / %.1f mN·m) before motor stalls (%.1f N / %.1f mN·m)."
                 % (limit_desc, yield_y_mm, thrust_to_yield_n, torque_to_yield_mnm or 0.0, thrust_avail, p.motor_torque_mnm)
             )
+        elif c.motor_limited_stress and thrust_avail is not None and stall_y_mm is None:
+            notes.append(
+                "Motor never stalls before member yield (available %.1f N / %.1f mN·m)."
+                % (thrust_avail, p.motor_torque_mnm)
+            )
         else:
             notes.append("Stress reaches %.1f MPa, above the %s." % (max_stress, limit_desc))
     if not motor_ok:
@@ -1338,7 +1459,7 @@ def compute_compliant(p: CompliantParams, fast: bool = False, constraints: Optio
             notes.append("Foot bows past pinch point P toward the wall, violating preload geometry.")
     if not tube_ok:
         notes.append(
-            "Member L/R comes within %.2f mm of the tube (min %.2f mm)." % (tube_clearance, c.min_tube_clearance_mm)
+            "A member comes within %.2f mm of the tube (min %.2f mm)." % (tube_clearance, c.min_tube_clearance_mm)
         )
     if not crossing_ok:
         notes.append("Members cross each other.")
@@ -1701,6 +1822,7 @@ def solve_compliant(
 ) -> dict:
     """Search the shape and optional context bounds. Best mean flow slope passing all constraints wins."""
     c = constraints or CompliantConstraints()
+    c = replace(c, motor_limited_stress=True)
     budget = int(np.clip(budget, 1, 80))
     keys = ALL_SOLVER_KEYS
     lows, highs = [], []
@@ -1715,7 +1837,13 @@ def solve_compliant(
     idx_anchor = keys.index("anchor_distance")
     idx_pinch = keys.index("pinch_y")
     idx_h0 = keys.index("closed_carriage_height")
-    anchor_sym = bool(c.anchor_symmetric)
+    anchor_fixed = bool(c.anchor_fixed)
+    anchor_sym = bool(c.anchor_symmetric) and not anchor_fixed
+    if anchor_fixed:
+        lows[idx_anchor] = float(base.anchor_distance)
+        highs[idx_anchor] = float(base.anchor_distance)
+        span[idx_anchor] = 0.0
+        free[idx_anchor] = False
     a_lo, a_hi = anchor_symmetric_range(lows[idx_anchor], highs[idx_anchor])
     clip_lows = lows.copy()
     clip_highs = highs.copy()

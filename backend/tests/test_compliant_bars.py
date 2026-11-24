@@ -64,15 +64,32 @@ class ComputeTests(unittest.TestCase):
         result = compute_compliant(CompliantParams(junction_x=4.0, junction_y=8.0, pinch_y=7.0), fast=True)
         self.assertFalse(result.pivot_ok, result.message)
 
+    def test_pivot_2mm_exclusion_zone_rejects_member_collision(self):
+        # Pivot is at (4.0, 8.0); a 2 mm diameter exclusion zone has radius 1.0 mm even if pin diameter is smaller.
+        # Anchor at (-4.0, 0.5) -> Junction at (4.0, 12.0) passes straight through x=4.0, y=8.0 if bowed right.
+        bad = CompliantParams(
+            anchor_distance=-3.5,  # anchor at x = +3.5, y = 0.5
+            junction_x=4.2, junction_y=12.5,
+            l_v1=0.0, l_v2=0.0,
+            carriage_pin_diameter=0.8,
+        )
+        res = compute_compliant(bad, fast=True)
+        self.assertFalse(res.pivot_ok, res.message)
+        self.assertFalse(res.passes)
+        self.assertLess(res.pivot_clearance_mm, 0.05)
+
+        good = compute_compliant(CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0), fast=True)
+        self.assertTrue(good.pivot_ok, good.message)
+
     def test_admissible_slope_outranks_a_rejected_shape(self):
         # 5.0 mN·m motor clears the FEM operating stroke (~4.5 mN·m) and stalls before the default bar yields.
-        good = compute_compliant(CompliantParams(motor_torque_mnm=5.0), fast=True)
-        bad = compute_compliant(CompliantParams(motor_torque_mnm=5.0, member_strength_mpa=0.01), fast=True)
+        good = compute_compliant(CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0), fast=True)
+        bad = compute_compliant(CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0, member_strength_mpa=0.01), fast=True)
         self.assertGreater(admission_score(good), 0.0)
         self.assertLess(admission_score(bad), admission_score(good))
 
     def test_solver_keeps_a_fixed_shape(self):
-        params = CompliantParams(motor_torque_mnm=5.0)
+        params = CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0)
         bounds = {key: (getattr(params, key), getattr(params, key)) for key in (
             "anchor_distance", "junction_x", "junction_y", "pinch_y",
             "l_u1", "l_v1", "l_u2", "l_v2", "r_u1", "r_v1", "r_u2", "r_v2",
@@ -264,7 +281,7 @@ class ComputeTests(unittest.TestCase):
 
     def test_attack_angle_and_trajectory_target_goal(self):
         from backend.compliant_bars import admission_score
-        params = CompliantParams(motor_torque_mnm=5.0)
+        params = CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0)
         res = compute_compliant(params, fast=True)
         self.assertIsNotNone(res.attack_angle_deg)
         self.assertGreaterEqual(res.attack_angle_deg, -90.0)
@@ -300,7 +317,7 @@ class ComputeTests(unittest.TestCase):
         w = normalize_goal_weights("dx_at_025", {"dx_at_025": 70, "trajectory_target": 30})
         self.assertAlmostEqual(w["dx_at_025"], 0.7, places=6)
         self.assertAlmostEqual(w["trajectory_target"], 0.3, places=6)
-        res = compute_compliant(CompliantParams(motor_torque_mnm=5.0), fast=True)
+        res = compute_compliant(CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0), fast=True)
         sc = admission_score(res, CompliantConstraints(target_pinch_from_top_mm=5.5, target_attack_angle_deg=0.0), goal_weights=w)
         self.assertTrue(sc > 0.0)
 
@@ -313,6 +330,29 @@ class ComputeTests(unittest.TestCase):
         self.assertFalse(res.passes)
         self.assertLess(res.tube_clearance_mm, 0.5)
         self.assertIn("tube", res.message.lower())
+
+    def test_foot_tube_clearance_rejects_interference_and_allows_clean_pinch_p(self):
+        # Default constraints enforce 0.25 mm clearance for all members, including the Foot away from P.
+        default_cons = CompliantConstraints()
+        self.assertAlmostEqual(default_cons.min_tube_clearance_mm, 0.25)
+
+        good = compute_compliant(CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0), fast=True, constraints=default_cons)
+        self.assertTrue(good.tube_ok)
+        self.assertGreaterEqual(good.tube_clearance_mm, 0.25)
+
+        # Foot bowing into Tube A away from contact point P must be rejected.
+        bad_a = CompliantParams(junction_x=-5.2, junction_y=15.0, pinch_y=10.5, f_v1=-2.5, f_v2=-2.5)
+        res_a = compute_compliant(bad_a, fast=True, constraints=default_cons)
+        self.assertFalse(res_a.tube_ok)
+        self.assertFalse(res_a.passes)
+        self.assertLess(res_a.tube_clearance_mm, 0.25)
+
+        # Foot bowing right into Tube B must also be rejected.
+        bad_b = CompliantParams(junction_x=4.5, junction_y=4.0, pinch_y=14.0, f_v1=8.0, f_v2=8.0)
+        res_b = compute_compliant(bad_b, fast=True, constraints=default_cons)
+        self.assertFalse(res_b.tube_ok)
+        self.assertFalse(res_b.passes)
+        self.assertLess(res_b.tube_clearance_mm, 0.25)
 
     def test_pinch_locked_to_goal_and_contact_aligned_across_foot_thicknesses(self):
         from backend.compliant_solver import run_time_budgeted_solve
@@ -568,6 +608,31 @@ class ComputeTests(unittest.TestCase):
         self.assertTrue(any(x < 0 for x in seen_anchors))
         self.assertTrue(any(x > 0 for x in seen_anchors))
 
+    def test_anchor_fixed_pins_anchor_even_when_symmetric_and_bounds_wide(self):
+        from backend.compliant_solver import run_time_budgeted_solve
+
+        base = CompliantParams(anchor_distance=3.75)
+        bounds = {"anchor_distance": (1.0, 9.0), "junction_x": (-5.0, 2.0)}
+        cons = CompliantConstraints(anchor_fixed=True, anchor_symmetric=True)
+        out = run_time_budgeted_solve(
+            base,
+            bounds,
+            time_budget_s=0.5,
+            method="brute_force",
+            method_params={"sampling": "lhs", "target_evals": 25},
+            constraints=cons,
+            seed=7,
+        )
+        summary = out["summary"]
+        self.assertIn("anchor_distance", summary["fixed_vars"])
+        self.assertNotIn("anchor_distance", summary["free_vars"])
+        self.assertTrue(summary["active_constraints"]["anchor_fixed"])
+        self.assertFalse(summary["active_constraints"]["anchor_symmetric"])
+        for fr in summary.get("preview_timeline", []):
+            self.assertAlmostEqual(float(fr["a"][0]), -3.75, places=4)
+        for r in out.get("runners", []):
+            self.assertAlmostEqual(float(r["params"]["anchor_distance"]), 3.75, places=4)
+
     def test_pass_freq_bw_goal_scoring_and_solve(self):
         from dataclasses import replace
         from backend.compliant_bars import SOLVER_GOALS, admission_score, normalize_goal_weights
@@ -575,7 +640,7 @@ class ComputeTests(unittest.TestCase):
 
         self.assertIn("pass_freq_bw", SOLVER_GOALS)
 
-        res = compute_compliant(CompliantParams(motor_torque_mnm=5.0), fast=True)
+        res = compute_compliant(CompliantParams(junction_x=-5.0, motor_torque_mnm=5.0), fast=True)
         self.assertTrue(res.passes)
         self.assertIsNotNone(res.chamber_cycle_freq_hz)
 
@@ -684,6 +749,37 @@ class ComputeTests(unittest.TestCase):
         self.assertTrue(res_allow_stall.plastic_ok)
         self.assertTrue(res_allow_stall.motor_ok)
         self.assertTrue(res_allow_stall.passes, res_allow_stall.message)
+
+        # Case D: Soft member that does not yield or stall within y_phys (8 mm) but yields before stall
+        # when extrapolated beyond y_phys -> must still be rejected by absolute stall-before-yield!
+        soft = CompliantParams(
+            stroke=1.0, l_thickness=0.35, r_thickness=0.35, f_thickness=0.6,
+            junction_x=-4.8, junction_y=12.0, motor_torque_mnm=30.0,
+            member_modulus_mpa=200.0, member_strength_mpa=75.0,
+        )
+        res_soft = compute_compliant(soft, fast=True)
+        self.assertIsNotNone(res_soft.yield_y_mm)
+        self.assertIsNotNone(res_soft.stall_y_mm)
+        self.assertGreater(res_soft.yield_y_mm, soft.closed_carriage_height)
+        self.assertLess(res_soft.yield_y_mm, res_soft.stall_y_mm)
+        self.assertFalse(res_soft.plastic_ok)
+        self.assertFalse(res_soft.passes)
+
+        # Case E: Solver always enforces stall-before-yield even if motor_limited_stress=False is passed.
+        from backend.compliant_solver import run_time_budgeted_solve
+        flimsy_ok_tube = CompliantParams(junction_x=-5.0, stroke=1.0, motor_torque_mnm=30.0)
+        fixed_bounds = {k: (getattr(flimsy_ok_tube, k), getattr(flimsy_ok_tube, k)) for k in ("junction_x",)}
+        out = run_time_budgeted_solve(
+            flimsy_ok_tube,
+            fixed_bounds,
+            time_budget_s=0.5,
+            method="brute_force",
+            method_params={"sampling": "lhs", "target_evals": 3},
+            constraints=CompliantConstraints(motor_limited_stress=False),
+            seed=1,
+        )
+        self.assertFalse(out["found"])
+        self.assertTrue(out["summary"]["active_constraints"]["motor_limited_stress"])
 
     def test_min_energy_goal_scoring_and_solver(self):
         from dataclasses import replace

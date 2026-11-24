@@ -942,3 +942,411 @@ test('Ctrl+Z / Ctrl+Shift+Z undoes and redoes drag-and-drop edits on position no
   expect(readStore().params.junction_y).toBeCloseTo(initJy, 4);
   expect(undoBtn().disabled).toBe(true);
 });
+
+test('SolverModal chart icon beside Apply opens interactive tabbed tooltip defaulting to Stress vs carriage Y', async () => {
+  let simCalls = 0;
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/simulate')) {
+      simCalls += 1;
+      return new Response(
+        JSON.stringify({
+          feasible: true,
+          passes: true,
+          message: 'ok',
+          Y_positions: [-1.5, -0.75, 0, 0.75, 1.5],
+          flow_a: [0, 0, 0, 12, 24],
+          flow_b: [24, 12, 0, 0, 0],
+          gap_a: [0.6, 0.7, 0.8, 1.8, 2.8],
+          gap_b: [2.8, 1.8, 0.8, 0.7, 0.6],
+          gap_rigid_a: [0.6, 0.7, 0.8, 1.9, 2.9],
+          closed_gap: 0.8,
+          full_open_gap: 2.8,
+          flow_slope_mean: 16,
+          flow_slope_max: 20,
+          max_stress_mpa: 48,
+          stress_margin: 0.64,
+          plastic_ok: true,
+          shell_ok: true,
+          pivot_ok: true,
+          shell_clearance_mm: 0.8,
+          pivot_clearance_mm: 1.0,
+          max_rotation_deg: 6,
+          wall_x: 9.5,
+          pivot_height_y0: 8,
+          pinch_x: -7.5,
+          travel_sign: 1,
+          force_a: [4, 2, 1, 0.5, 0.2],
+          force_b: [0.2, 0.5, 1, 2, 4],
+          thrust: [8, 4, 2, 4, 8],
+          thrust_available_n: 18,
+          stall_y_mm: 1.85,
+          stress_a: [45, 22, 5, 18, 48],
+          stress_b: [48, 18, 5, 22, 45],
+          overtravel_y: [-2.0, -1.5, 0, 1.5, 2.0],
+          overtravel_stress_a: [68, 45, 5, 48, 70],
+          overtravel_stress_b: [70, 48, 5, 45, 68],
+          overtravel_force_a: [9, 4, 1, 0.2, 0.1],
+          overtravel_force_b: [0.1, 0.2, 1, 4, 9],
+          overtravel_thrust: [22, 8, 2, 8, 22],
+          time_ms: [0, 200, 400],
+          y_time: [0, 1.5, 0],
+          flow_in_l_min: [0, 20, 0],
+          flow_out_l_min: [0, 0, 18],
+          chamber_kpa: [0, 100, 0],
+          chamber_t50_ms: 80,
+          chamber_t90_ms: 150,
+          chamber_t100_ms: 200,
+          chamber_cycle_freq_hz: 2.5,
+          chamber_bandwidth_hz: 1.75,
+          lines: {
+            l: { x: [0, 1], y: [0, 1], x_per_y: [0, 0], y_per_y: [0, 0], x_per_n: [0, 0], y_per_n: [0, 0], thickness: 1 },
+            r: { x: [1, 2], y: [1, 2], x_per_y: [0, 0], y_per_y: [0, 0], x_per_n: [0, 0], y_per_n: [0, 0], thickness: 1 },
+            f: { x: [1, 0], y: [1, 2], x_per_y: [0, 0], y_per_y: [0, 0], x_per_n: [0, 0], y_per_n: [0, 0], thickness: 1 },
+          },
+          anchor: [-4.8, 0],
+          junction: [-5.5, 12],
+          pinch: [-7.5, 10.5],
+          pivot: [4, 8],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const runner: Runner = {
+    score: 0.9,
+    slope: 16,
+    dx_at_025_mm: 0.42,
+    max_stress_mpa: 48,
+    shell_clearance_mm: 0.8,
+    pivot_clearance_mm: 1.0,
+    stall_y_mm: 1.85,
+    stroke: 1.5,
+    params: { ...COMPLIANT_DEFAULTS, stroke: 1.5 },
+  };
+  const job: SolveJobState = {
+    job_id: 'job-charts',
+    experiment_id: 'exp-charts',
+    name: 'Tooltip Charts Test',
+    note: '',
+    status: 'completed',
+    goal: 'dx_at_025',
+    time_budget_s: 60,
+    summary: null,
+    found: true,
+    params: runner.params,
+    result: null,
+    runners: [runner],
+    message: 'ok',
+    error: null,
+  };
+
+  const { getByTestId, getByRole, queryByTestId } = render(
+    <SolverModal
+      open={true}
+      modalMode="live"
+      job={job}
+      baseParams={COMPLIANT_DEFAULTS}
+      constraints={DEFAULT_CONSTRAINTS}
+      goalConfig={DEFAULT_SOLVER_GOAL_CONFIG}
+      methodConfig={DEFAULT_SOLVER_METHOD_CONFIG}
+      timeBudgetS={60}
+      spaceSummary={{ freeCount: 4, lockedCount: 15, pivotBoth: false }}
+      onGoalConfigChange={() => {}}
+      onMethodConfigChange={() => {}}
+      onTimeBudgetChange={() => {}}
+      onLaunch={() => {}}
+      onSwitchToSetup={() => {}}
+      onClose={() => {}}
+      onCancel={() => {}}
+      onApplyRunner={() => {}}
+      onSaveMeta={async () => {}}
+    />,
+  );
+
+  const card1 = getByTestId('best-solution-card-1');
+  const chartBtn = card1.querySelector('button[aria-label="Inspect charts for solution #1"]')!;
+  expect(chartBtn).toBeTruthy();
+  expect(queryByTestId('runner-charts-tooltip-1')).toBeNull();
+
+  // Hover opens the tooltip, fetches simulation once, and defaults to Stress vs carriage Y.
+  fireEvent.mouseEnter(chartBtn);
+  const tooltip = getByTestId('runner-charts-tooltip-1');
+  await waitFor(() => expect(simCalls).toBe(1));
+  expect(tooltip.textContent).toContain('Worst stress in the part vs carriage Y');
+  expect(tooltip.textContent).toContain('Stroke ±1.50 mm');
+  expect(tooltip.textContent).toContain('Stall ±1.85 mm (after stroke)');
+  expect(tooltip.textContent).toContain('Safe 63.8 MPa · Break 75 MPa');
+  expect(getByRole('tab', { name: 'Stress' }).getAttribute('aria-selected')).toBe('true');
+
+  // Switching tabs displays every Explorer chart.
+  fireEvent.click(getByRole('tab', { name: 'Flow' }));
+  expect(tooltip.textContent).toContain('Static flow vs carriage Y');
+
+  fireEvent.click(getByRole('tab', { name: 'Chamber' }));
+  expect(tooltip.textContent).toContain('Chamber (10 mL): inflation & deflation');
+
+  fireEvent.click(getByRole('tab', { name: 'Gap' }));
+  expect(tooltip.textContent).toContain('Pinch gap vs carriage Y');
+
+  fireEvent.click(getByRole('tab', { name: 'Force' }));
+  expect(tooltip.textContent).toContain('Pinch force vs carriage Y');
+
+  fireEvent.click(getByRole('tab', { name: 'Torque' }));
+  expect(tooltip.textContent).toContain('Motor torque vs carriage Y');
+
+  // Closing and re-hovering reuses cached simulation without re-fetching.
+  fireEvent.click(getByRole('button', { name: 'Close chart preview' }));
+  expect(queryByTestId('runner-charts-tooltip-1')).toBeNull();
+  fireEvent.mouseEnter(chartBtn);
+  expect(getByTestId('runner-charts-tooltip-1')).toBeTruthy();
+  expect(simCalls).toBe(1);
+});
+
+test('CompliantBars reconnects to a server-side running session on mount and reports it to App', async () => {
+  const runningJob: SolveJobState = {
+    job_id: 'live-42',
+    experiment_id: 'live-42',
+    name: '[cmaes] max_flow (60s)',
+    note: '',
+    status: 'running',
+    goal: 'max_flow',
+    method: 'cmaes',
+    time_budget_s: 60,
+    summary: {
+      phase: 'CMA-ES gen 4',
+      wave: 1,
+      method: 'cmaes',
+      goal: 'max_flow',
+      tested: 120,
+      feasible: 9,
+      rejected: 111,
+      elapsed_s: 12.5,
+      time_budget_s: 60,
+      progress: 0.21,
+      evals_per_sec: 9.6,
+      best_score: 0.88,
+      best_dx_at_025_mm: 0.34,
+      best_slope: 8.2,
+      best_y_90_mm: 0.65,
+      best_attack_angle_deg: 2.1,
+      best_stress_mpa: 44.0,
+      rejection_stats: [],
+      bound_hits: [],
+      free_vars: ['anchor_distance'],
+      fixed_vars: [],
+      pivot_sides: [false],
+      active_constraints: {
+        member_strength_mpa: 75,
+        min_shell_clearance_mm: 0.05,
+        min_pivot_clearance_mm: 0.05,
+        pinch_ceiling_margin_mm: 2,
+        pinch_floor_margin_mm: 1,
+        max_rotation_deg: 15,
+        stroke_fixed: true,
+        stroke_mm: 1.5,
+      },
+      coverage: [],
+      scatter: [],
+      convergence: [],
+      runners: [],
+    },
+    found: false,
+    params: null,
+    result: null,
+    runners: [],
+    message: 'Running…',
+    error: null,
+  };
+
+  sessionStorage.setItem('cam-sim.compliant.activeJobId', 'live-42');
+  sessionStorage.setItem('cam-sim.compliant.liveModalOpen', '1');
+
+  const onActiveJobChange = vi.fn();
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/solve/jobs/active')) {
+      return new Response(JSON.stringify({ active: runningJob }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/compliant/solve/jobs/live-42')) {
+      return new Response(JSON.stringify(runningJob), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/compliant/experiments')) {
+      return new Response(JSON.stringify({ experiments: [] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { findByRole } = render(
+    <CompliantBars mode="finder" onOpenExplorer={() => {}} onActiveJobChange={onActiveJobChange} />,
+  );
+
+  // Live modal reopens automatically after refresh when it was open before.
+  const dialog = await findByRole('dialog', { name: 'Compliant Bars Solver' });
+  expect(dialog.textContent).toContain('[cmaes] max_flow (60s)');
+  expect(dialog.textContent).toContain('Stop & keep best');
+  expect(onActiveJobChange).toHaveBeenCalledWith(expect.objectContaining({ job_id: 'live-42', status: 'running' }));
+});
+
+test('CompliantBars settles an interrupted session cleanly after a server restart', async () => {
+  const interruptedJob: SolveJobState = {
+    job_id: 'old-99',
+    experiment_id: 'old-99',
+    name: 'Before redeploy',
+    note: '',
+    status: 'interrupted',
+    goal: 'dx_at_025',
+    method: 'cmaes',
+    time_budget_s: 60,
+    summary: {
+      phase: 'CMA-ES gen 8',
+      wave: 1,
+      method: 'cmaes',
+      goal: 'dx_at_025',
+      tested: 240,
+      feasible: 11,
+      rejected: 229,
+      elapsed_s: 28.0,
+      time_budget_s: 60,
+      progress: 0.47,
+      evals_per_sec: 8.5,
+      best_score: 1.15,
+      best_dx_at_025_mm: 0.31,
+      best_slope: 7.4,
+      best_y_90_mm: 0.72,
+      best_attack_angle_deg: 1.5,
+      best_stress_mpa: 48.0,
+      rejection_stats: [],
+      bound_hits: [],
+      free_vars: ['anchor_distance'],
+      fixed_vars: [],
+      pivot_sides: [false],
+      active_constraints: {
+        member_strength_mpa: 75,
+        min_shell_clearance_mm: 0.05,
+        min_pivot_clearance_mm: 0.05,
+        pinch_ceiling_margin_mm: 2,
+        pinch_floor_margin_mm: 1,
+        max_rotation_deg: 15,
+        stroke_fixed: true,
+        stroke_mm: 1.5,
+      },
+      coverage: [],
+      scatter: [],
+      convergence: [],
+      runners: [],
+    },
+    found: true,
+    params: { anchor_distance: 5.2 },
+    result: null,
+    runners: [],
+    message: 'Interrupted by server restart — last saved checkpoint preserved.',
+    error: null,
+  };
+
+  sessionStorage.setItem('cam-sim.compliant.activeJobId', 'old-99');
+  sessionStorage.setItem('cam-sim.compliant.liveModalOpen', '1');
+
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/solve/jobs/active')) {
+      return new Response(JSON.stringify({ active: null }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/compliant/solve/jobs/old-99')) {
+      return new Response(JSON.stringify(interruptedJob), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/compliant/experiments')) {
+      return new Response(JSON.stringify({ experiments: [] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { findByRole } = render(<CompliantBars mode="finder" onOpenExplorer={() => {}} />);
+  const dialog = await findByRole('dialog', { name: 'Compliant Bars Solver' });
+  expect(dialog.textContent).toContain('interrupted');
+  expect(dialog.textContent).toContain('last saved checkpoint');
+  expect(sessionStorage.getItem('cam-sim.compliant.activeJobId')).toBeNull();
+});
+
+test('anchor distance can be fixed in Spline bounds and pins bounds on Launch Solve', async () => {
+  const solveBodies: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/compliant/solve/jobs') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body));
+      solveBodies.push(body);
+      return new Response(JSON.stringify({
+        job_id: 'anchor-fix-1',
+        experiment_id: 'anchor-fix-1',
+        name: 'anchor-fix',
+        note: '',
+        status: 'completed',
+        created_at: '2026-11-23T00:00:00Z',
+        started_at: '2026-11-23T00:00:00Z',
+        finished_at: '2026-11-23T00:00:01Z',
+        elapsed_s: 1,
+        time_budget_s: 60,
+        method: 'cmaes',
+        goal: 'dx_at_025',
+        goal_weights: { dx_at_025: 1 },
+        summary: {
+          tested: 1, feasible_count: 1, feasible_rate: 1, elapsed_s: 1,
+          evals_per_sec: 1, best_score: 0.5, rejection_stats: [], bound_hits: [],
+          free_vars: ['junction_x'], fixed_vars: ['anchor_distance'], pivot_sides: [false],
+          active_constraints: {
+            member_strength_mpa: 75, stress_limit_factor: 0.85, allowable_stress_mpa: 63.75,
+            min_shell_clearance_mm: 0.05, min_pivot_clearance_mm: 0.05,
+            pinch_ceiling_margin_mm: 2, pinch_floor_margin_mm: 1, max_rotation_deg: 15,
+            stroke_fixed: true, stroke_mm: 1.5, anchor_fixed: true, anchor_symmetric: false,
+          },
+          coverage: [], scatter: [], convergence: [], runners: [],
+        },
+        found: false, params: null, result: null, runners: [], message: 'ok', error: null,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (url.endsWith('/api/compliant/solve/jobs/active')) {
+      return new Response(JSON.stringify({ active: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (url.endsWith('/api/compliant/experiments')) {
+      return new Response(JSON.stringify({ experiments: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+
+  const { getByRole, getByLabelText, queryByLabelText } = render(<CompliantBars mode="finder" onOpenExplorer={() => {}} />);
+
+  fireEvent.click(getByRole('button', { name: 'Spline bounds' }));
+  expect(getByLabelText('Anchor (A) min')).toBeTruthy();
+
+  const fixCheckbox = getByRole('checkbox', { name: 'Fix anchor distance' }) as HTMLInputElement;
+  expect(fixCheckbox.checked).toBe(false);
+  fireEvent.click(fixCheckbox);
+  expect(fixCheckbox.checked).toBe(true);
+  expect(queryByLabelText('Anchor (A) min')).toBeNull();
+
+  const fixedInput = getByLabelText('Fixed anchor distance') as HTMLInputElement;
+  fireEvent.change(fixedInput, { target: { value: '3.25' } });
+
+  fireEvent.click(getByRole('button', { name: /Solve…/ }));
+  fireEvent.click(getByRole('button', { name: /Launch Solve/ }));
+  await waitFor(() => expect(solveBodies.length).toBe(1));
+
+  const body = solveBodies[0] as {
+    params: { anchor_distance: number };
+    bounds: Record<string, [number, number]>;
+    constraints: { anchor_fixed?: boolean };
+  };
+  expect(body.params.anchor_distance).toBe(3.25);
+  expect(body.bounds.anchor_distance).toEqual([3.25, 3.25]);
+  expect(body.constraints.anchor_fixed).toBe(true);
+});

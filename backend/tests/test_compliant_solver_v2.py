@@ -1,7 +1,10 @@
 """Compliant Bars solver: physical goals, members merging at the junction, CMA-ES, pin-diameter grid."""
 
+import tempfile
+import time
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
+from pathlib import Path
 
 import numpy as np
 
@@ -11,8 +14,12 @@ from backend.compliant_bars import (
     _polyline_distances, admission_score, compute_compliant,
 )
 from backend.compliant_bars import _constraints_from_mapping
-from backend.compliant_solver import PARETO_CAP, SOLVER_METHODS, _classify_rejections, _pareto_insert, _trade_axes, run_time_budgeted_solve
+from backend.compliant_solver import (
+    PARETO_CAP, SOLVER_METHODS, CompliantSolveJobManager, SolverBusyError,
+    _classify_rejections, _pareto_insert, _trade_axes, run_time_budgeted_solve,
+)
 from backend.linkage import _pinch_force
+from backend.storage import CompliantExperimentStorage
 
 # A design drawn by hand on 2026-11-23: L and R leave the junction side by side for about 4 mm,
 # their centre lines weaving over each other inside the merged width.
@@ -226,6 +233,93 @@ class CmaesTests(unittest.TestCase):
         # The clock ended that one before its thousand evaluations, and it says so.
         self.assertEqual(thousands["summary"]["stop_reason"], "time")
         self.assertFalse(thousands["summary"]["repeatable"])
+
+
+class SolveSessionManagerTests(unittest.TestCase):
+    def test_single_instance_active_discovery_and_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = CompliantExperimentStorage(Path(tmp) / "sim.db")
+            mgr = CompliantSolveJobManager(storage, checkpoint_interval_s=0.5)
+            self.assertIsNone(mgr.get_active_job())
+
+            started = mgr.start_job(
+                params_dict=asdict(CompliantParams()),
+                bounds=BOUNDS,
+                constraints_dict={"motor_limited_stress": False},
+                pivot_side="current",
+                goal="max_flow",
+                time_budget_s=2.0,
+                method="cmaes",
+                method_params={"max_evals": 60, "seed": 3, "workers": 1},
+            )
+            job_id = started["job_id"]
+            self.assertEqual(started["status"], "running")
+            # Persisted immediately so crashes never drop the session.
+            stored_row = storage.get_experiment(job_id)
+            self.assertIsNotNone(stored_row)
+            self.assertEqual(stored_row["status"], "running")
+
+            # Discoverable via get_active_job(), and a second launch is rejected with SolverBusyError.
+            active = mgr.get_active_job()
+            self.assertIsNotNone(active)
+            self.assertEqual(active["job_id"], job_id)
+            with self.assertRaises(SolverBusyError) as ctx:
+                mgr.start_job(
+                    params_dict=asdict(CompliantParams()),
+                    bounds=BOUNDS,
+                    constraints_dict={"motor_limited_stress": False},
+                    pivot_side="current",
+                    goal="max_flow",
+                    time_budget_s=1.0,
+                    method="cmaes",
+                    method_params={"max_evals": 10, "workers": 1},
+                )
+            self.assertEqual(ctx.exception.active_job_id, job_id)
+
+            # Wait for completion and confirm clean finalization.
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                cur = mgr.get_job(job_id)
+                if cur is not None and cur["status"] != "running":
+                    break
+                time.sleep(0.05)
+            final = mgr.get_job(job_id)
+            self.assertIsNotNone(final)
+            self.assertEqual(final["status"], "completed")
+            self.assertIsNone(mgr.get_active_job())
+            saved = storage.get_experiment(job_id)
+            self.assertEqual(saved["status"], "completed")
+            self.assertGreater(saved["tested"], 0)
+
+    def test_startup_marks_stale_running_jobs_as_interrupted_preserving_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "sim.db"
+            storage = CompliantExperimentStorage(db_path)
+            storage.save_experiment(
+                exp_id="stale123",
+                name="Mid-run before redeploy",
+                note="checkpoint test",
+                status="running",
+                goal="dx_at_025",
+                time_budget_s=60.0,
+                elapsed_s=22.5,
+                tested=320,
+                feasible=14,
+                best_score=1.42,
+                request={"method": "cmaes", "goal": "dx_at_025"},
+                summary={"tested": 320, "feasible": 14, "elapsed_s": 22.5, "runners": [{"score": 1.42}]},
+                best_params={"anchor_distance": 5.2},
+                best_result={"passes": True, "dx_at_025_mm": 0.45},
+            )
+            # Simulate a fresh backend startup after container restart/redeploy.
+            mgr = CompliantSolveJobManager(storage)
+            self.assertIsNone(mgr.get_active_job())
+            recovered = storage.get_experiment("stale123")
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered["status"], "interrupted")
+            self.assertEqual(recovered["tested"], 320)
+            self.assertEqual(recovered["best_params"], {"anchor_distance": 5.2})
+            self.assertEqual(recovered["summary"]["runners"], [{"score": 1.42}])
 
 
 if __name__ == "__main__":

@@ -333,9 +333,13 @@ def run_time_budgeted_solve(
     seed: Optional[int] = None,
     cancel_event: Optional[threading.Event] = None,
     on_progress: Optional[Callable[[dict], None]] = None,
+    on_checkpoint: Optional[Callable[[dict, Optional[dict], Optional[dict]], None]] = None,
+    checkpoint_interval_s: float = 10.0,
 ) -> dict:
     """Run time-budgeted optimization using the chosen search method up to time_budget_s."""
     c = constraints or CompliantConstraints()
+    # Absolute solver invariant: the motor must always stall before any member yields, even outside ±stroke.
+    c = replace(c, motor_limited_stress=True)
     _, _, base_thrust_avail, _ = _screw_factors(base)
     goal = goal if goal in SOLVER_GOALS else "dx_at_025"
     method = method if method in SOLVER_METHODS else "hybrid"
@@ -364,7 +368,13 @@ def run_time_budgeted_solve(
     idx_h0 = keys.index("closed_carriage_height")
     idx_jx = keys.index("junction_x")
     idx_jy = keys.index("junction_y")
-    anchor_sym = bool(c.anchor_symmetric)
+    anchor_fixed = bool(c.anchor_fixed)
+    anchor_sym = bool(c.anchor_symmetric) and not anchor_fixed
+    if anchor_fixed:
+        lows[idx_anchor] = float(base.anchor_distance)
+        highs[idx_anchor] = float(base.anchor_distance)
+        span[idx_anchor] = 0.0
+        free_mask[idx_anchor] = False
     a_lo, a_hi = anchor_symmetric_range(lows[idx_anchor], highs[idx_anchor])
     anchor_sym_active = anchor_sym and a_hi > 1e-9
     clip_lows = lows.copy()
@@ -393,6 +403,7 @@ def run_time_budgeted_solve(
 
     rng = np.random.default_rng(seed)
     t_start = time.monotonic()
+    last_checkpoint = t_start
 
     # Telemetry accumulators
     tested = 0
@@ -656,6 +667,7 @@ def run_time_budgeted_solve(
                 "min_buckling_margin": c.min_buckling_margin,
                 "stroke_fixed": "stroke" in fixed_vars,
                 "stroke_mm": base.stroke,
+                "anchor_fixed": anchor_fixed,
                 "anchor_symmetric": anchor_sym,
             },
             "coverage": coverage,
@@ -699,7 +711,7 @@ def run_time_budgeted_solve(
         side_base: CompliantParams,
         scored: Optional[Tuple[CompliantParams, CompliantResult, float]] = None,
     ) -> Tuple[float, CompliantParams, CompliantResult]:
-        nonlocal tested, feasible_count, best_overall, best_feasible, last_emit
+        nonlocal tested, feasible_count, best_overall, best_feasible, last_emit, last_checkpoint
         nonlocal best_preview, last_live_invalid_t, last_live_valid_t
         if scored is None:
             params = candidate(z, side_base)
@@ -816,9 +828,18 @@ def run_time_budgeted_solve(
                 infeas_pts = [pt for pt in scatter if not pt["feasible"]][-150:]
                 scatter[:] = infeas_pts + feas_pts
 
+        snap_emitted: Optional[dict] = None
         if on_progress is not None and (now - last_emit >= 0.35 or tested <= 2):
             last_emit = now
-            on_progress(build_snapshot(final=False))
+            snap_emitted = build_snapshot(final=False)
+            on_progress(snap_emitted)
+
+        if on_checkpoint is not None and (now - last_checkpoint >= checkpoint_interval_s):
+            last_checkpoint = now
+            ckpt_snap = snap_emitted if snap_emitted is not None else build_snapshot(final=False)
+            best_p_dict = asdict(best_feasible[1]) if best_feasible is not None else None
+            best_r_dict = asdict(best_feasible[2]) if best_feasible is not None else None
+            on_checkpoint(ckpt_snap, best_p_dict, best_r_dict)
 
         return score, params, result
 
@@ -1381,14 +1402,25 @@ def run_time_budgeted_solve(
     }
 
 
-class CompliantSolveJobManager:
-    """In-memory background job runner with SQLite persistence for finished solve experiments."""
+class SolverBusyError(RuntimeError):
+    """Raised when a new compliant solve is requested while another session is already running."""
 
-    def __init__(self, exp_storage: CompliantExperimentStorage):
+    def __init__(self, active_job_id: str):
+        super().__init__(f"A solver session ({active_job_id}) is already running.")
+        self.active_job_id = active_job_id
+
+
+class CompliantSolveJobManager:
+    """Single-instance background job runner with live SQLite checkpointing and crash recovery."""
+
+    def __init__(self, exp_storage: CompliantExperimentStorage, checkpoint_interval_s: float = 10.0):
         self._storage = exp_storage
+        self._checkpoint_interval_s = float(max(0.5, checkpoint_interval_s))
         self._lock = threading.Lock()
         self._jobs: Dict[str, dict] = {}
         self._cancels: Dict[str, threading.Event] = {}
+        # Any experiment left 'running' in SQLite belonged to a previous server process.
+        self._storage.mark_stale_running_as_interrupted()
 
     def start_job(
         self,
@@ -1442,20 +1474,91 @@ class CompliantSolveJobManager:
             "error": None,
         }
         with self._lock:
+            for existing in self._jobs.values():
+                if existing.get("status") == "running":
+                    raise SolverBusyError(existing["job_id"])
             self._jobs[job_id] = job_state
             self._cancels[job_id] = cancel_ev
 
+        # Persist the running session immediately so restarts/crashes never silently drop it.
+        initial_summary = {
+            "phase": "Starting solver…",
+            "wave": 0,
+            "method": method,
+            "method_params": dict(method_params or {}),
+            "goal": goal,
+            "goal_weights": {k: round(v, 4) for k, v in norm_w.items()},
+            "tested": 0,
+            "feasible": 0,
+            "rejected": 0,
+            "elapsed_s": 0.0,
+            "time_budget_s": time_budget_s,
+            "progress": 0.0,
+            "evals_per_sec": 0.0,
+            "best_score": None,
+            "runners": [],
+        }
+        try:
+            self._storage.save_experiment(
+                exp_id=job_id,
+                name=exp_name,
+                note=note,
+                status="running",
+                goal=goal,
+                time_budget_s=time_budget_s,
+                elapsed_s=0.0,
+                tested=0,
+                feasible=0,
+                best_score=None,
+                request=request_payload,
+                summary=initial_summary,
+                best_params=None,
+                best_result=None,
+            )
+        except Exception:
+            pass
+
         def _worker():
+            latest_summary: dict = initial_summary
+            latest_best_params: Optional[dict] = None
+            latest_best_result: Optional[dict] = None
             try:
                 base_p = _params_from_mapping(params_dict)
                 cons = _constraints_from_mapping(constraints_dict)
 
                 def _on_progress(snap: dict):
+                    nonlocal latest_summary
+                    latest_summary = snap
                     with self._lock:
                         j = self._jobs.get(job_id)
                         if j is not None:
                             j["summary"] = snap
                             j["runners"] = snap.get("runners", [])
+
+                def _on_checkpoint(snap: dict, best_p: Optional[dict], best_r: Optional[dict]):
+                    nonlocal latest_summary, latest_best_params, latest_best_result
+                    latest_summary = snap
+                    latest_best_params = best_p
+                    latest_best_result = best_r
+                    try:
+                        self._storage.save_experiment(
+                            exp_id=job_id,
+                            name=exp_name,
+                            note=note,
+                            status="running",
+                            goal=goal,
+                            time_budget_s=time_budget_s,
+                            elapsed_s=float(snap.get("elapsed_s") or 0.0),
+                            tested=int(snap.get("tested") or 0),
+                            feasible=int(snap.get("feasible") or 0),
+                            best_score=snap.get("best_score"),
+                            request=request_payload,
+                            summary=snap,
+                            best_params=best_p,
+                            best_result=best_r,
+                        )
+                    except Exception:
+                        pass
 
                 outcome = run_time_budgeted_solve(
                     base=base_p,
@@ -1470,6 +1573,8 @@ class CompliantSolveJobManager:
                     seed=None,                      # method_params["seed"], when set, makes the run repeatable
                     cancel_event=cancel_ev,
                     on_progress=_on_progress,
+                    on_checkpoint=_on_checkpoint,
+                    checkpoint_interval_s=self._checkpoint_interval_s,
                 )
                 final_status = "cancelled" if cancel_ev.is_set() else "completed"
                 summary = outcome["summary"]
@@ -1500,6 +1605,25 @@ class CompliantSolveJobManager:
                         j["summary"] = summary
                         j["message"] = outcome["message"]
             except Exception as exc:
+                try:
+                    self._storage.save_experiment(
+                        exp_id=job_id,
+                        name=exp_name,
+                        note=note,
+                        status="failed",
+                        goal=goal,
+                        time_budget_s=time_budget_s,
+                        elapsed_s=float(latest_summary.get("elapsed_s") or 0.0),
+                        tested=int(latest_summary.get("tested") or 0),
+                        feasible=int(latest_summary.get("feasible") or 0),
+                        best_score=latest_summary.get("best_score"),
+                        request=request_payload,
+                        summary=latest_summary,
+                        best_params=latest_best_params,
+                        best_result=latest_best_result,
+                    )
+                except Exception:
+                    pass
                 with self._lock:
                     j = self._jobs.get(job_id)
                     if j is not None:
@@ -1517,6 +1641,22 @@ class CompliantSolveJobManager:
             if j is not None:
                 return dict(j)
         return None
+
+    def get_active_job(self) -> Optional[dict]:
+        with self._lock:
+            for j in self._jobs.values():
+                if j.get("status") == "running":
+                    return dict(j)
+        return None
+
+    def list_active_jobs(self) -> List[dict]:
+        with self._lock:
+            return [dict(j) for j in self._jobs.values() if j.get("status") == "running"]
+
+    def is_running(self, job_id: str) -> bool:
+        with self._lock:
+            j = self._jobs.get(job_id)
+            return j is not None and j.get("status") == "running"
 
     def cancel_job(self, job_id: str) -> bool:
         with self._lock:

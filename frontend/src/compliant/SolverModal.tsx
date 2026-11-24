@@ -12,6 +12,7 @@ import type {
   SolverGoal, SolverGoalConfig, SolverMethod, SolverMethodConfig,
 } from './types';
 import { SolverGoalBudgetControls } from './CompliantControls';
+import { RunnerChartsTooltip } from './RunnerChartsTooltip';
 import { RunnerMiniSchematic } from './RunnerMiniSchematic';
 import { SolvePreviewPanel } from './SolvePreviewPanel';
 
@@ -20,7 +21,7 @@ const CONSTRAINT_LABELS: Record<string, string> = {
   stall_no_flow: 'Motor stalls before airflow (< 2% bore)',
   motor_stall: 'Motor stalls inside ±stroke (optional)',
   seal_y0: 'Y = 0 pinch geometry / pre-flex',
-  tube: 'Member L/R hits tube (< clearance)',
+  tube: 'Member hits tube (< clearance)',
   crossing: 'Members cross each other',
   buckling: 'Member too close to its Euler buckling load',
   shell: 'Shell housing clearance',
@@ -706,7 +707,9 @@ export function SolverModal({
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                         : job.status === 'cancelled'
                           ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                          : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          : job.status === 'interrupted'
+                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                            : 'bg-red-500/20 text-red-300 border border-red-500/40'
                   }`}
                 >
                   {job.status}
@@ -789,10 +792,21 @@ export function SolverModal({
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-950">
               <div
-                className={`h-full transition-all duration-300 ${running ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                className={`h-full transition-all duration-300 ${
+                  running ? 'bg-amber-400' : job.status === 'interrupted' ? 'bg-orange-400' : 'bg-emerald-400'
+                }`}
                 style={{ width: `${Math.max(2, pct)}%` }}
               />
             </div>
+
+            {job.status === 'interrupted' && (
+              <div className="flex items-start gap-2 rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-xs text-orange-200">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-orange-400" />
+                <span>
+                  This session was interrupted by a server restart or redeploy. The last saved checkpoint and best candidates found so far were preserved below.
+                </span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-2.5 pt-1">
               <div className="rounded-lg bg-neutral-900/80 px-3 py-2 border border-neutral-800">
@@ -886,11 +900,9 @@ export function SolverModal({
                   <span className="rounded bg-neutral-900 px-2 py-0.5 text-neutral-300 border border-neutral-700">
                     Shell ≥ {s.active_constraints.min_shell_clearance_mm} mm
                   </span>
-                  {(s.active_constraints.min_tube_clearance_mm ?? 0) > 0 && (
-                    <span className="rounded bg-neutral-900 px-2 py-0.5 text-neutral-300 border border-neutral-700">
-                      Tube L/R ≥ {s.active_constraints.min_tube_clearance_mm} mm
-                    </span>
-                  )}
+                  <span className="rounded bg-neutral-900 px-2 py-0.5 text-neutral-300 border border-neutral-700">
+                    Tube ≥ {s.active_constraints.min_tube_clearance_mm ?? 0.25} mm
+                  </span>
                   <span className="rounded bg-neutral-900 px-2 py-0.5 text-neutral-300 border border-neutral-700">
                     Pivot ≥ {s.active_constraints.min_pivot_clearance_mm} mm
                   </span>
@@ -1203,13 +1215,23 @@ export function SolverModal({
                               Pivot: {pivotLabel}
                             </span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => onApplyRunner(r)}
-                            className="shrink-0 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/25"
-                          >
-                            Apply
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <RunnerChartsTooltip
+                              runner={r}
+                              runnerKey={key}
+                              rank={idx + 1}
+                              baseParams={baseParams}
+                              constraints={constraints}
+                              resultCache={simCacheRef}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => onApplyRunner(r)}
+                              className="shrink-0 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/25"
+                            >
+                              Apply
+                            </button>
+                          </div>
                         </div>
 
                         {/* Structured 2-column metrics */}

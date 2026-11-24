@@ -234,6 +234,7 @@ export interface SolverConstraints {
   junction_exclude_y?: [number, number] | null;
   target_pinch_from_top_mm?: number | null;
   target_attack_angle_deg?: number;
+  anchor_fixed?: boolean;
   anchor_symmetric?: boolean;
 }
 
@@ -242,7 +243,7 @@ export const DEFAULT_CONSTRAINTS: SolverConstraints = {
   pinch_floor_margin_mm: 1.0,
   min_shell_clearance_mm: 0.05,
   min_pivot_clearance_mm: 0.05,
-  min_tube_clearance_mm: 0.5,
+  min_tube_clearance_mm: 0.25,
   max_y0_flex_mm: 0,
   max_rotation_deg: 15,
   min_buckling_margin: 2,
@@ -254,6 +255,7 @@ export const DEFAULT_CONSTRAINTS: SolverConstraints = {
   junction_exclude_y: null,
   target_pinch_from_top_mm: 5.5,
   target_attack_angle_deg: 0,
+  anchor_fixed: false,
   anchor_symmetric: true,
 };
 
@@ -769,6 +771,7 @@ export interface SolveSummary {
     max_rotation_deg: number;
     stroke_fixed: boolean;
     stroke_mm: number;
+    anchor_fixed?: boolean;
     anchor_symmetric?: boolean;
   };
   coverage: CoverageVar[];
@@ -785,7 +788,7 @@ export interface SolveJobState {
   experiment_id: string;
   name: string;
   note: string;
-  status: 'running' | 'completed' | 'cancelled' | 'failed';
+  status: 'running' | 'completed' | 'cancelled' | 'failed' | 'interrupted';
   goal: SolverGoal;
   goal_weights?: Record<string, number>;
   method?: SolverMethod;
@@ -1030,6 +1033,9 @@ export function fromCompliantProfilePayload(raw: Record<string, unknown>): Compl
       if (Array.isArray(pair) && pair.length === 2 && Number.isFinite(Number(pair[0])) && Number.isFinite(Number(pair[1]))) {
         constraints[key] = [Number(pair[0]), Number(pair[1])];
       }
+    }
+    if (typeof map.anchor_fixed === 'boolean') {
+      constraints.anchor_fixed = map.anchor_fixed;
     }
     if (typeof map.anchor_symmetric === 'boolean') {
       constraints.anchor_symmetric = map.anchor_symmetric;

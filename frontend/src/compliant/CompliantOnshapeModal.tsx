@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@blain-projects/ui';
-import { UploadCloud } from 'lucide-react';
+import { Check, Copy, UploadCloud } from 'lucide-react';
 import { apiFetch } from '../components';
+import { buildOnshapeFallbackPrompt, copyTextToClipboard } from '../lib/onshapeFallbackPrompt';
 import type { CompliantParams, SolverConstraints } from './types';
 
 /** One variable of a table (backend `onshape_variables.Row`). */
@@ -13,6 +14,7 @@ export interface CompliantOnshapeRow {
 interface TableState {
   rows: CompliantOnshapeRow[]; table_name: string; table_exists: boolean; table_created: boolean;
   element_id: string | null; table_url: string | null; write_error?: string | null;
+  document_id?: string | null; workspace_id?: string | null; document_url?: string | null;
 }
 interface InputCheck {
   configured: boolean; valid: boolean; error: string | null; part_studio_url: string | null;
@@ -31,6 +33,7 @@ interface SkinCheck {
 export interface CompliantOnshapeReply {
   tables: TableState[]; api_calls: number; input_check: InputCheck; cad_check: CadCheck; skin_check?: SkinCheck;
   write_error?: string | null;
+  document_id?: string | null; workspace_id?: string | null; document_url?: string | null;
 }
 
 /** What each table holds: the window says it so the split is visible. */
@@ -70,14 +73,20 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
   const [busy, setBusy] = useState<'read' | 'write' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const staleRef = useRef(0);
   const writingRef = useRef(false);
   const recheckRef = useRef(false);
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current);
+  }, []);
 
   // One read per opening (or after a sync), never per change on screen: each read costs Onshape API calls.
   const read = () => {
     const ticket = ++staleRef.current;
-    setReply(null); setError(null); setDone(false); setBusy('read');
+    setReply(null); setError(null); setDone(false); setCopyState('idle'); setBusy('read');
     call('/api/compliant/onshape/preview', { ...params, constraints })
       .then((r) => {
         if (ticket !== staleRef.current) return;
@@ -116,7 +125,7 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
   const write = async () => {
     if (!reply || writingRef.current) return;
     writingRef.current = true;
-    setBusy('write'); setError(null);
+    setBusy('write'); setError(null); setCopyState('idle');
     try {
       const r = await call('/api/compliant/onshape/apply', { ...params, constraints, names: chosen.map((row) => row.name) });
       setReply(r);
@@ -130,6 +139,24 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
     }
   };
 
+  const copyAgentPrompt = async (errorMessage: string) => {
+    const prompt = buildOnshapeFallbackPrompt({
+      mechanism: 'Compliant Bars',
+      error: errorMessage,
+      tables: reply?.tables ?? [],
+      selectedNames: picked,
+      fallbackTableNames: Object.keys(TABLE_ROLE),
+      documentId: reply?.document_id,
+      workspaceId: reply?.workspace_id,
+      documentUrl: reply?.document_url,
+      partStudioUrl: reply?.input_check?.part_studio_url,
+    });
+    const ok = await copyTextToClipboard(prompt);
+    setCopyState(ok ? 'copied' : 'failed');
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopyState('idle'), 2500);
+  };
+
   return (
     <Modal open={open} onClose={onClose} size="lg" closeOnOverlayClick={busy == null} closeOnEsc={busy == null} showClose={busy == null}
       title="Write this design to the Onshape variable tables">
@@ -139,7 +166,16 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
           the out-of-plane depth are not written: the CAD decides them, and the write is allowed only when the design starts from them.
         </p>
         {busy === 'read' && <p className="text-neutral-400" role="status">Reading the tables in Onshape…</p>}
-        {error && <p className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">{error}</p>}
+        {error && (
+          <div className="rounded-lg border border-red-500/50 bg-red-900/30 p-2 text-xs text-red-200" role="alert">
+            <p>{error}</p>
+            <Button variant="ghost" type="button" onClick={() => copyAgentPrompt(error)}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 hover:bg-red-900/50">
+              {copyState === 'copied' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              {copyState === 'copied' ? 'Copied prompt' : copyState === 'failed' ? 'Copy failed' : 'Copy prompt for agent'}
+            </Button>
+          </div>
+        )}
         {reply && (
           <>
             {skins && !skins.valid && (
@@ -165,10 +201,19 @@ export function CompliantOnshapeModal({ open, onClose, params, constraints, onSy
                   </p>
                 ))}
                 {!check.valid && (
-                  <Button variant="ghost" type="button" onClick={sync} disabled={busy != null}
-                    className="mt-2 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 disabled:opacity-40">
-                    Load CAD values and check again
-                  </Button>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button variant="ghost" type="button" onClick={sync} disabled={busy != null}
+                      className="rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 disabled:opacity-40">
+                      Load CAD values and check again
+                    </Button>
+                    {check.error && !error && (
+                      <Button variant="ghost" type="button" onClick={() => copyAgentPrompt(check.error!)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/60 px-2 py-1 text-xs font-bold text-red-100 hover:bg-red-900/50">
+                        {copyState === 'copied' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copyState === 'copied' ? 'Copied prompt' : copyState === 'failed' ? 'Copy failed' : 'Copy prompt for agent'}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             )}

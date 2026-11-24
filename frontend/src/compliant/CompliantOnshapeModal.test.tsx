@@ -72,3 +72,45 @@ test('a member Onshape cannot skin is named with its radius and blocks the write
   expect((button as HTMLButtonElement).disabled).toBe(true);
   expect(getByText(/R \(junction to carriage pivot eye\): tightest radius 0\.312 mm, half of #cb_r_thickness 0\.375 mm/)).toBeTruthy();
 });
+
+test('offers a button to copy a manual agent prompt when writing fails', async () => {
+  const writeText = vi.fn<(text: string) => Promise<void>>(async () => {});
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith('/api/compliant/onshape/apply')) {
+      return new Response(JSON.stringify({
+        ...reply(true),
+        document_id: 'DOC1',
+        workspace_id: 'WS1',
+        document_url: 'https://cad.onshape.com/documents/DOC1/w/WS1',
+        write_error: 'HTTP 500: Onshape busy',
+        tables: [
+          {
+            table_name: 'cam_sim_compliant', table_exists: true, table_created: false, element_id: 'E1',
+            table_url: 'https://cad.onshape.com/documents/DOC1/w/WS1/e/E1', write_error: 'HTTP 500: Onshape busy',
+            rows: [
+              { name: 'cb_junction_x', key: 'junction_x', label: 'Junction x', new_expression: '1 mm', current_expression: '2 mm', status: 'error', detail: 'HTTP 500: Onshape busy' },
+            ],
+          },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify(reply(true)), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const { findByRole, getByRole } = render(
+    <CompliantOnshapeModal open onClose={() => {}} params={COMPLIANT_DEFAULTS} constraints={DEFAULT_CONSTRAINTS} onSyncMeasured={() => {}} />);
+  fireEvent.click(await findByRole('button', { name: /Write 2 variables/ }));
+
+  const copyBtn = await findByRole('button', { name: /Copy prompt for agent/ });
+  fireEvent.click(copyBtn);
+
+  await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+  const copied = writeText.mock.calls[0][0];
+  expect(copied).toContain('https://cad.onshape.com/documents/DOC1/w/WS1');
+  expect(copied).toContain('cam_sim_compliant');
+  expect(copied).toContain('`#cb_junction_x`: `2 mm` -> `1 mm`');
+  expect(copied).toContain('HTTP 500: Onshape busy');
+  expect(getByRole('button', { name: /Copied prompt/ })).toBeTruthy();
+});

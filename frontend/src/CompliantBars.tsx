@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import { Button } from '@blain-projects/ui';
-import { RefreshCw, Settings, Target, UploadCloud } from 'lucide-react';
+import { Download, RefreshCw, Settings, Target, UploadCloud } from 'lucide-react';
 import { useTubeSweep } from './lib/tubeSweep';
 import { sameDomainSettings } from './lib/chartDomain';
 import { formatKpa } from './lib/pressure';
 import { getProfile, stableJson, useReportProfileState } from './lib/profiles';
+import { buildCompliantMvccDocument, downloadMvccDocument } from './lib/mvcc';
 import type { ProfileHandle, ProfileState } from './lib/profiles';
 import { Accordion, AccordionScope, ParameterSlider, apiFetch } from './components';
 import type { ChartDomainSettings } from './components';
@@ -93,6 +94,18 @@ export function CompliantProfilePreview({ payload }: { payload: Record<string, u
 }
 
 const MAX_UNDO_HISTORY = 100;
+const ACTIVE_JOB_SESSION_KEY = 'cam-sim.compliant.activeJobId';
+const ACTIVE_MODAL_SESSION_KEY = 'cam-sim.compliant.liveModalOpen';
+
+function readSession(key: string): string | null {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+function writeSession(key: string, val: string | null) {
+  try {
+    if (val === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, val);
+  } catch { /* ignore */ }
+}
 
 interface ShapeHistorySnapshot {
   params: CompliantParams;
@@ -107,12 +120,16 @@ function sameShapeSnapshot(a: ShapeHistorySnapshot, b: ShapeHistorySnapshot): bo
   return true;
 }
 
-export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChange, profileRef }: {
+export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChange, profileRef, openLiveJobSignal, onActiveJobChange }: {
   mode: SubTab;
   onOpenExplorer: () => void;
   /** The header pill's view of the loaded profile (type = 'compliant'). */
   onProfileStateChange?: (state: ProfileState) => void;
   profileRef?: Ref<ProfileHandle>;
+  /** Incremented by the global live-solver banner when the user asks to watch the active session. */
+  openLiveJobSignal?: number;
+  /** Reports active running session changes back to App for the global live banner. */
+  onActiveJobChange?: (job: SolveJobState | null) => void;
 }) {
   const [initial] = useState(loadStore);
   const [params, setParams] = useState<CompliantParams>(initial.params);
@@ -525,6 +542,116 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
     setPlaying(!playing);
   };
 
+  const settleFinishedJob = useCallback((data: SolveJobState, applyBest: boolean) => {
+    setSolving(false);
+    setRunners(data.runners ?? []);
+    writeSession(ACTIVE_JOB_SESSION_KEY, null);
+    writeSession(ACTIVE_MODAL_SESSION_KEY, null);
+    onActiveJobChange?.(null);
+    const s = data.summary;
+    if (data.status === 'interrupted') {
+      setSolveNote(data.found
+        ? `Session interrupted by server restart (${s?.tested ?? 0} tested, ${s?.feasible ?? 0} valid). Last checkpoint preserved.`
+        : `Session interrupted by server restart (${s?.tested ?? 0} tested).`);
+    } else {
+      setSolveNote(data.found
+        ? `Tested ${s?.tested ?? 0}. ${s?.feasible ?? 0} valid. Best ΔX₀.₂₅ ${s?.best_dx_at_025_mm?.toFixed(3) ?? '—'} mm.`
+        : `Tested ${s?.tested ?? 0}. None passed. ${data.message ?? ''}`);
+    }
+    if (applyBest && data.found && data.params && (data.status === 'completed' || data.status === 'cancelled')) {
+      setParams((prev) => ({ ...prev, ...data.params }));
+      if (data.result) setResult(data.result);
+    }
+    refreshExperiments();
+  }, [onActiveJobChange, refreshExperiments]);
+
+  // Reconnect to any server-side running solve session on mount (handles refresh & cross-device),
+  // or settle a previously tracked session that finished / was interrupted while away.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/compliant/solve/jobs/active');
+        if (!res.ok || !alive) return;
+        const payload = await res.json();
+        if (!alive) return;
+        const active = (payload?.active ?? null) as SolveJobState | null;
+        const lastTrackedId = readSession(ACTIVE_JOB_SESSION_KEY);
+        const wasModalOpen = readSession(ACTIVE_MODAL_SESSION_KEY) === '1';
+        if (active && active.status === 'running') {
+          setActiveJob(active);
+          setSolving(true);
+          setRunners(active.runners ?? []);
+          writeSession(ACTIVE_JOB_SESSION_KEY, active.job_id);
+          onActiveJobChange?.(active);
+          if (wasModalOpen && lastTrackedId === active.job_id) {
+            setModalMode('live');
+            setModalOpen(true);
+          }
+          return;
+        }
+        if (lastTrackedId) {
+          const prevRes = await apiFetch(`/api/compliant/solve/jobs/${lastTrackedId}`);
+          if (!alive) return;
+          if (prevRes.ok) {
+            const finished = (await prevRes.json()) as SolveJobState;
+            if (!alive) return;
+            setActiveJob(finished);
+            if (finished.status === 'running') {
+              setSolving(true);
+              onActiveJobChange?.(finished);
+            } else {
+              settleFinishedJob(finished, true);
+              if (wasModalOpen) {
+                setModalMode('live');
+                setModalOpen(true);
+              }
+            }
+          } else {
+            writeSession(ACTIVE_JOB_SESSION_KEY, null);
+            writeSession(ACTIVE_MODAL_SESSION_KEY, null);
+          }
+        }
+      } catch { /* server unreachable on mount; will retry if user interacts */ }
+    })();
+    return () => { alive = false; };
+  }, [onActiveJobChange, settleFinishedJob]);
+
+  // Remember whether the live modal is open while a job is running so a page refresh restores it.
+  useEffect(() => {
+    if (activeJob?.status === 'running') {
+      writeSession(ACTIVE_JOB_SESSION_KEY, activeJob.job_id);
+      writeSession(ACTIVE_MODAL_SESSION_KEY, modalOpen && modalMode === 'live' ? '1' : '0');
+    }
+  }, [activeJob?.job_id, activeJob?.status, modalOpen, modalMode]);
+
+  // Open the live modal when triggered from the global solver status banner.
+  useEffect(() => {
+    if (!openLiveJobSignal) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/compliant/solve/jobs/active');
+        if (!res.ok || !alive) return;
+        const payload = await res.json();
+        const active = (payload?.active ?? null) as SolveJobState | null;
+        if (!alive) return;
+        if (active) {
+          setActiveJob(active);
+          setSolving(active.status === 'running');
+          setRunners(active.runners ?? []);
+          onActiveJobChange?.(active.status === 'running' ? active : null);
+          setModalMode('live');
+          setModalOpen(true);
+        } else if (activeJob) {
+          setModalMode('live');
+          setModalOpen(true);
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, [openLiveJobSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Poll active background solve job while running
   useEffect(() => {
     if (!activeJob || activeJob.status !== 'running') return;
@@ -537,23 +664,15 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
         const data = (await res.json()) as SolveJobState;
         if (!alive) return;
         setActiveJob(data);
-        if (data.status !== 'running') {
-          setSolving(false);
-          setRunners(data.runners ?? []);
-          const s = data.summary;
-          setSolveNote(data.found
-            ? `Tested ${s?.tested ?? 0}. ${s?.feasible ?? 0} valid. Best ΔX₀.₂₅ ${s?.best_dx_at_025_mm?.toFixed(3) ?? '—'} mm.`
-            : `Tested ${s?.tested ?? 0}. None passed. ${data.message ?? ''}`);
-          if (data.found && data.params) {
-            setParams((prev) => ({ ...prev, ...data.params }));
-            if (data.result) setResult(data.result);
-          }
-          refreshExperiments();
+        if (data.status === 'running') {
+          onActiveJobChange?.(data);
+        } else {
+          settleFinishedJob(data, true);
         }
-      } catch { /* retry next tick */ }
+      } catch { /* retry next tick (survives brief network drops / redeploy restart) */ }
     }, 500);
     return () => { alive = false; clearInterval(interval); };
-  }, [activeJob?.job_id, activeJob?.status, refreshExperiments]);
+  }, [activeJob?.job_id, activeJob?.status, onActiveJobChange, settleFinishedJob]);
 
   const openSolveSetup = () => {
     setModalMode(solving ? 'live' : 'setup');
@@ -569,6 +688,9 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
       const yGoal = effectivePinchY(params, constraints);
       if (constraints.target_pinch_from_top_mm != null) {
         boundPayload.pinch_y = [yGoal, yGoal];
+      }
+      if (constraints.anchor_fixed) {
+        boundPayload.anchor_distance = [params.anchor_distance, params.anchor_distance];
       }
       for (const key of CONTEXT_VAR_KEYS) {
         boundPayload[key] = contextFixed[key] ? [params[key], params[key]] : contextBounds[key];
@@ -597,12 +719,31 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
         }),
       });
       const data = await res.json();
+      if (res.status === 409 && typeof data?.active_job_id === 'string') {
+        const activeRes = await apiFetch(`/api/compliant/solve/jobs/${data.active_job_id}`);
+        if (activeRes.ok) {
+          const runningJob = (await activeRes.json()) as SolveJobState;
+          setActiveJob(runningJob);
+          setSolving(runningJob.status === 'running');
+          setRunners(runningJob.runners ?? []);
+          onActiveJobChange?.(runningJob.status === 'running' ? runningJob : null);
+          setSolveNote('Reconnected to the solver session already running on the server.');
+          setModalMode('live');
+          setModalOpen(true);
+          return;
+        }
+      }
       if (!res.ok) {
         setSolveNote(typeof data?.detail === 'string' ? data.detail : 'The solver failed to start.');
         setSolving(false);
         return;
       }
-      setActiveJob(data as SolveJobState);
+      const started = data as SolveJobState;
+      setActiveJob(started);
+      writeSession(ACTIVE_JOB_SESSION_KEY, started.job_id);
+      writeSession(ACTIVE_MODAL_SESSION_KEY, '1');
+      onActiveJobChange?.(started);
+      refreshExperiments();
       setModalMode('live');
       setModalOpen(true);
     } catch {
@@ -622,7 +763,9 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
       if (!res.ok) return;
       const data = (await res.json()) as SolveJobState;
       setActiveJob(data);
+      setSolving(data.status === 'running');
       setRunners(data.runners ?? []);
+      if (data.status === 'running') onActiveJobChange?.(data);
       setModalMode('live');
       setModalOpen(true);
     } catch { /* ignore */ }
@@ -687,6 +830,16 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
             <UploadCloud className="w-3.5 h-3.5" />
             Write to Onshape variables
           </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => downloadMvccDocument(buildCompliantMvccDocument(activeProfile, params, { constraints }))}
+            title="Export this Compliant Bars configuration as a .mvcc file for SR_Unit_Cluster"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-600 px-3 py-1.5 text-xs font-bold text-neutral-200 hover:border-emerald-500/60 hover:text-emerald-300"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export .mvcc
+          </Button>
           <CompliantOnshapeModal open={onshapeOpen} onClose={() => setOnshapeOpen(false)} params={params} constraints={constraints}
             onSyncMeasured={() => { void syncMeasured(); }} />
           {measure.text && (
@@ -702,12 +855,30 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
               <Accordion title="Skeleton" defaultOpen={true}>
                 <div className="space-y-4 pt-2">
                   {(['anchor_distance', 'junction_x', 'junction_y', 'pinch_y'] as ShapeKey[]).map((key) => (
-                    <ParameterSlider
-                      key={key}
-                      value={key === 'pinch_y' ? effectivePinchY(params, constraints) : (params[key] as number)}
-                      {...LIMITS[key]}
-                      onChange={(v) => setShape(key, v)}
-                    />
+                    <div key={key} className="space-y-1">
+                      {key === 'anchor_distance' && (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-medium text-neutral-400">
+                            {constraints.anchor_fixed ? 'Pinned' : <span className="text-amber-300">Varied by solver</span>}
+                          </span>
+                          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-300 select-none">
+                            <input
+                              type="checkbox"
+                              checked={constraints.anchor_fixed === true}
+                              aria-label="Fix Anchor distance"
+                              onChange={(e) => patchConstraints({ anchor_fixed: e.target.checked })}
+                              className="accent-amber-500"
+                            />
+                            Fixed
+                          </label>
+                        </div>
+                      )}
+                      <ParameterSlider
+                        value={key === 'pinch_y' ? effectivePinchY(params, constraints) : (params[key] as number)}
+                        {...LIMITS[key]}
+                        onChange={(v) => setShape(key, v)}
+                      />
+                    </div>
                   ))}
                 </div>
               </Accordion>
@@ -794,6 +965,7 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
                     bounds={bounds}
                     quadrantMap={quadrantMap}
                     constraints={constraints}
+                    onPatchParams={patchParams}
                     onPatchBounds={(patch) => setBounds((prev) => ({ ...prev, ...patch }))}
                     onQuadrantChange={(key: QuadrantKey, next: QuadrantConfig) =>
                       setQuadrantMap((prev) => ({ ...prev, [key]: next }))
@@ -910,6 +1082,8 @@ export default function CompliantBars({ mode, onOpenExplorer, onProfileStateChan
           let lockedCount = 0;
           for (const key of SHAPE_KEYS) {
             if (key === 'pinch_y' && constraints.target_pinch_from_top_mm != null) {
+              lockedCount += 1;
+            } else if (key === 'anchor_distance' && constraints.anchor_fixed) {
               lockedCount += 1;
             } else if (
               key === 'anchor_distance'

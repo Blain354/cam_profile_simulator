@@ -118,7 +118,10 @@ def preview(params: CompliantParams, constraints: Optional[CompliantConstraints]
         ov._locate(trs, studio, frozenset(referenced))
         tables.append(ov._summary(t, name, eid, trs, 0))
     cad, cad_calls = ov.cad_check([r for trs in rows.values() for r in trs], t, KIND)
-    return {"tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad, "skin_check": skins}
+    return {
+        "tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad, "skin_check": skins,
+        "document_id": t.document_id, "workspace_id": t.workspace_id, "document_url": ov.document_url(t),
+    }
 
 
 def apply(params: CompliantParams, names: list[str], constraints: Optional[CompliantConstraints] = None,
@@ -151,5 +154,8 @@ def apply(params: CompliantParams, names: list[str], constraints: Optional[Compl
     else:
         written = [r for trs in rows.values() for r in trs if r.status in ("written", "created", "same")]
         cad, cad_calls = ov.cad_check(written, t, KIND)
-    return {"tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad,
-            "skin_check": skins, "write_error": write_error}
+    return {
+        "tables": tables, "api_calls": calls + cad_calls, "input_check": check, "cad_check": cad,
+        "skin_check": skins, "write_error": write_error,
+        "document_id": t.document_id, "workspace_id": t.workspace_id, "document_url": ov.document_url(t),
+    }

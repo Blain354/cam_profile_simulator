@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import {
   Settings, Download, Disc3, CircleHelp, Box, Waypoints, Spline, Anchor, PenLine,
-  SlidersHorizontal, Eye, ChartLine, MoreHorizontal
+  SlidersHorizontal, Eye, ChartLine, MoreHorizontal, Sparkles
 } from 'lucide-react';
 import StlExportModal from './StlExportModal';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
@@ -28,6 +28,7 @@ import type { ChartCardView } from './ChartCard';
 import ProfileBuilder, { FinderProfilePreview } from './ProfileBuilder';
 import LinkageExplorer, { LinkageProfilePreview } from './LinkageExplorer';
 import CompliantBars, { CompliantProfilePreview } from './CompliantBars';
+import type { SolveJobState } from './compliant/types';
 import { SubTabs } from './SubTabs';
 import type { SubTab } from './SubTabs';
 import {
@@ -152,6 +153,31 @@ export default function App() {
   const [showStlExport, setShowStlExport] = useState(false);
   const [mobilePane, setMobilePane] = useState<MobilePane>('controls');
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [globalActiveSolve, setGlobalActiveSolve] = useState<SolveJobState | null>(null);
+  const [openLiveSolveSignal, setOpenLiveSolveSignal] = useState(0);
+
+  // Discover any active server-side Compliant Bars solver session across tabs and devices.
+  useEffect(() => {
+    let alive = true;
+    const checkActive = async () => {
+      try {
+        const res = await apiFetch('/api/compliant/solve/jobs/active');
+        if (!res.ok || !alive) return;
+        const payload = await res.json();
+        if (!alive) return;
+        const active = (payload?.active ?? null) as SolveJobState | null;
+        setGlobalActiveSolve(active && active.status === 'running' ? active : null);
+      } catch { /* ignore transient network failures */ }
+    };
+    void checkActive();
+    const interval = setInterval(() => { void checkActive(); }, 3000);
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  const openGlobalLiveSolve = useCallback(() => {
+    setActiveTab('compliant');
+    setOpenLiveSolveSignal((n) => n + 1);
+  }, []);
 
   const getExplorerChartSettings = useCallback((key: ExplorerChartKey): ChartDomainSettings => {
     const root = (params.chart_settings ?? {}) as Record<string, unknown>;
@@ -672,6 +698,44 @@ export default function App() {
         </div>
       </Header>
 
+      {globalActiveSolve && globalActiveSolve.status === 'running' && (() => {
+        const s = globalActiveSolve.summary;
+        const pct = Math.round((s?.progress ?? 0) * 100);
+        const tested = s?.tested ?? 0;
+        const feasible = s?.feasible ?? 0;
+        return (
+          <div
+            role="status"
+            aria-live="polite"
+            className="shrink-0 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
+          >
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Sparkles className="w-4 h-4 shrink-0 text-amber-400 animate-pulse" />
+              <span className="shrink-0 rounded-full border border-amber-500/50 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
+                Solver live
+              </span>
+              <span className="font-semibold text-white truncate">{globalActiveSolve.name}</span>
+              <span className="hidden md:inline font-mono text-[11px] text-amber-200/90 shrink-0">
+                {pct}% · {tested.toLocaleString()} evals · {feasible} valid
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 ml-auto">
+              <span className="md:hidden font-mono text-[11px] text-amber-200/90">
+                {pct}% · {feasible}/{tested}
+              </span>
+              <button
+                type="button"
+                onClick={openGlobalLiveSolve}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/60 bg-amber-500/25 px-2.5 py-1 text-xs font-bold text-amber-100 hover:bg-amber-500/35 transition-colors"
+              >
+                <Eye className="w-3.5 h-3.5 shrink-0" />
+                Watch live
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {error && (
         <div className="shrink-0 bg-red-900/50 border border-red-500 text-red-200 p-3 rounded-lg text-sm">{error}</div>
       )}
@@ -824,6 +888,8 @@ export default function App() {
           onOpenExplorer={() => { setSubTab('compliant', 'explorer'); setMobilePane('schematic'); }}
           onProfileStateChange={setCompliantProfile}
           profileRef={compliantRef}
+          openLiveJobSignal={openLiveSolveSignal}
+          onActiveJobChange={setGlobalActiveSolve}
         />
       ) : activeTab !== 'cam' ? (
         <LinkageExplorer
